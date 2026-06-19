@@ -1,196 +1,134 @@
-**Update: Due to many automatically generated and irrelevant issues submitted to this repo (that have been deleted now) and our limited capacity to properly maintain this repo, we have to temporaliy archive (make read-only) this and several other repos.**
+# Are Your Reasoning Models Reasoning or Guessing? A Mechanistic Analysis of HRM
 
+<img width="993" height="359" alt="image" src="https://github.com/user-attachments/assets/2425608d-f56f-4c7a-b426-f7e1227202dc" />
 
-# Less is More: Recursive Reasoning with Tiny Networks
+Mechanistic analysis of **Hierarchical Reasoning Models (HRM)** on the *Sudoku-Extreme* dataset.  
+This repository provides the **official PyTorch implementation** of our 2026 paper:
 
-This is the codebase for the paper: "Less is More: Recursive Reasoning with Tiny Networks". TRM is a recursive reasoning approach that achieves amazing scores of 45% on ARC-AGI-1 and 8% on ARC-AGI-2 using a tiny 7M parameters neural network.
+> **"Are Your Reasoning Models Reasoning or Guessing? A Mechanistic Analysis of Hierarchical Reasoning Models"**  
+> *Zirui Ren, Ziming Liu*  
+> arXiv:2601.10679 | [PDF](https://arxiv.org/abs/2601.10679)
 
-[Paper](https://arxiv.org/abs/2510.04871)
+## Quick Start 🚀
 
-### Motivation
+### Prerequisites ⚙️
 
-Tiny Recursion Model (TRM) is a recursive reasoning model that achieves amazing scores of 45% on ARC-AGI-1 and 8% on ARC-AGI-2 with a tiny 7M parameters neural network. The idea that one must rely on massive foundational models trained for millions of dollars by some big corporation in order to achieve success on hard tasks is a trap. Currently, there is too much focus on exploiting LLMs rather than devising and expanding new lines of direction. With recursive reasoning, it turns out that “less is more”: you don’t always need to crank up model size in order for a model to reason and solve hard problems. A tiny model pretrained from scratch, recursing on itself and updating its answers over time, can achieve a lot without breaking the bank.
+We use Git LFS to store the example checkpoints; so if you want to use them, install via
+~~~
+git lfs install
+~~~
+and **clone this repository with the variable set as below**, so that you don't download all large files all at once.
+~~~
+export GIT_LFS_SKIP_SMUDGE=1
+git clone git@github.com:renrua52/hrm-mechanistic-analysis.git
+~~~
 
-This work came to be after I learned about the recent innovative Hierarchical Reasoning Model (HRM). I was amazed that an approach using small models could do so well on hard tasks like the ARC-AGI competition (reaching 40% accuracy when normally only Large Language Models could compete). But I kept thinking that it is too complicated, relying too much on biological arguments about the human brain, and that this recursive reasoning process could be greatly simplified and improved. Tiny Recursion Model (TRM) simplifies recursive reasoning to its core essence, which ultimately has nothing to do with the human brain, does not require any mathematical (fixed-point) theorem, nor any hierarchy.
+Make sure you have PyTorch, CUDA and FlashAttention installed (see the official guide of [HRM](https://github.com/sapientinc/HRM)). Then install the python dependencies:
+~~~
+pip install -r requirements.txt
+~~~
 
-### How TRM works
+### Dataset Preparation 📊
 
-<p align="center">
-  <img src="https://AlexiaJM.github.io/assets/images/TRM_fig.png" alt="TRM"  style="width: 30%;">
-</p>
+Run the following commands to build vanilla and augmented sudoku dataset, respectively.
 
-Tiny Recursion Model (TRM) recursively improves its predicted answer y with a tiny network. It starts with the embedded input question x and initial embedded answer y and latent z. For up to K improvements steps, it tries to improve its answer y. It does so by i) recursively updating n times its latent z given the question x, current answer y, and current latent z (recursive reasoning), and then ii) updating its answer y given the current answer y and current latent z. This recursive process allows the model to progressively improve its answer (potentially addressing any errors from its previous answer) in an extremely parameter-efficient manner while minimizing overfitting.
+~~~
+python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000 --subsample-size 1000 --num-aug 1000
+python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000-hint --subsample-size 1000 --num-aug 1000 --hint
+~~~
 
-### Requirements
+The latter is an augmented version of the former, with easier sudoku puzzles mixed in. In our paper, we showed that this augmentation helps to restore inference stability.
 
-Installation should take a few minutes. For the smallest experiments on Sudoku-Extreme (pretrain_mlp_t_sudoku), you need 1 GPU with enough memory. With 1 L40S (48Gb Ram), it takes around 18h to finish. In case that you run into issues due to library versions, here is the requirements with the exact versions used: [specific_requirements.txt](https://github.com/SamsungSAILMontreal/TinyRecursiveModels/blob/main/specific_requirements.txt).
+### Example Checkpoints 🚧
 
-- Python 3.10 (or similar)
-- Cuda 12.6.0 (or similar)
+For those not interested in training models themselves, we provide two sets of trained checkpoints for evaluation. Run the following commands to download them (**you only need the first one to run the demo**):
+~~~
+# 1 single vanilla HRM ckpt
+git lfs pull --include="checkpoint_example/Sudoku-extreme-1k-aug-1000 ACT-torch/**"
+# 10 ckpts of HRM trained on augmented dataset. This is for the model boostrapping technique.
+git lfs pull --include="checkpoint_example/Sudoku-extreme-1k-aug-1000-hint ACT-torch/**"  
+~~~
 
-```bash
-pip install --upgrade pip wheel setuptools
-pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126 # install torch based on your cuda version
-pip install -r requirements.txt # install requirements
-pip install --no-cache-dir --no-build-isolation adam-atan2 
-wandb login YOUR-LOGIN # login if you want the logger to sync results to your Weights & Biases (https://wandb.ai/)
-```
+### Quick Demo of Reasoning Trajectory & Visualization 🎨
 
-### Dataset Preparation
+Check out our [demo notebook](./demo.ipynb) to understand how most results in the paper were attained!
 
-```bash
-# ARC-AGI-1
-python -m dataset.build_arc_dataset \
-  --input-file-prefix kaggle/combined/arc-agi \
-  --output-dir data/arc1concept-aug-1000 \
-  --subsets training evaluation concept \
-  --test-set-name evaluation
+We added a `require_trace` argument to the HRM model forwarding process, with the intermediate z_H states returned as a list. The `visualization` module is used to visualize both reasoning trajectory and error landscape. 
 
-# ARC-AGI-2
-python -m dataset.build_arc_dataset \
-  --input-file-prefix kaggle/combined/arc-agi \
-  --output-dir data/arc2concept-aug-1000 \
-  --subsets training2 evaluation2 concept \
-  --test-set-name evaluation2
+## Model Evaluation 📈
 
-## Note: You cannot train on both ARC-AGI-1 and ARC-AGI-2 and evaluate them both because ARC-AGI-2 training data contains some ARC-AGI-1 eval data
+Most of the utilities for testing are implemented in `eval_utils.py`.
 
-# Sudoku-Extreme
-python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000  --subsample-size 1000 --num-aug 1000  # 1000 examples, 1000 augments
+For evaluating trained checkpoints, we provide a quick-and-dirty implementation of batched inference in `batch_inference.py`, which runs on a single GPU. It supports the evaluation on *Sudoku-Extreme* of ensembled checkpoints, with or without the permuting token augmentation. For example, to do a full evaluation of the example checkpoint, run:
+~~~
+python batch_inference.py \
+--checkpoints "checkpoint_example/Sudoku-extreme-1k-aug-1000 ACT-torch/HierarchicalReasoningModel_ACTV1 pastel-lorikeet/example_checkpoint"
+~~~
+which typically takes 30 mins on an A10 GPU to reproduces the ~55% accuracy in the original HRM paper.
 
-# Maze-Hard
-python dataset/build_maze_dataset.py # 1000 examples, 8 augments
-```
+Multiple forwarding requires way more time. To get a taste of the accuracies of Table 1 in the paper, we recommend running the single-GPU script on a small portion of test samples. You can do something like:
+~~~
+python batch_inference.py \
+--checkpoints "checkpoint_example/Sudoku-extreme-1k-aug-1000 ACT-torch/HierarchicalReasoningModel_ACTV1 pastel-lorikeet/example_checkpoint" \
+--permutes 9 --num_batch 10 --batch_size 100
+~~~
+which tests the designated ckpt on 1000 test samples, applying 9 token permutations to each.
 
-## Experiments
+For the full result of **Augmented HRM**, do one of the following:
+- Download the second set of example checkpoints.
+- Train your own series of checkpoints on the *augmented* dataset with ckpt interval 1000. Replace the checkpoints in `scripts/example_evaluation.sh` with your own.
 
-### Sudoku-Extreme (assuming 1 L40S GPU):
+Then run the script
+~~~
+bash ./scripts/example_evaluation.sh
+~~~
+This is a snapshot evaluation for you to understand how augmentation works. The full evaluation (see the [script](/scripts/example_evaluation.sh)) process takes around 500 GPU hours, due to the cost of multiple forward processes. Parallelization should speed up the evaluation significantly - contributions are welcome!
 
-```bash
-run_name="pretrain_mlp_t_sudoku"
-python pretrain.py \
-arch=trm \
-data_paths="[data/sudoku-extreme-1k-aug-1000]" \
-evaluators="[]" \
-epochs=50000 eval_interval=5000 \
-lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 \
-arch.mlp_t=True arch.pos_encodings=none \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=6 \
-+run_name=${run_name} ema=True
+Due to large variances in small-sample training, a ~2% discrepancy in single ckpt results and ~4% in multiple ckpt results are considered acceptable.
 
-Expected: Around 87% exact-accuracy (+- 2%)
+## Training ⚡️
 
-run_name="pretrain_att_sudoku"
-python pretrain.py \
-arch=trm \
-data_paths="[data/sudoku-extreme-1k-aug-1000]" \
-evaluators="[]" \
-epochs=50000 eval_interval=5000 \
-lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=6 \
-+run_name=${run_name} ema=True
-```
+Log in [Weights & Biases](https://wandb.ai) via
+~~~
+wandb login
+~~~
 
-Expected: Around 75% exact-accuracy (+- 2%)
+Run the following commands to train HRM on both version of the datasets.
 
-*Runtime:* < 20 hours
+~~~
+OMP_NUM_THREADS=8 torchrun --nproc-per-node 8 pretrain.py data_path=data/sudoku-extreme-1k-aug-1000 epochs=40000 eval_interval=1000 lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0
+OMP_NUM_THREADS=8 torchrun --nproc-per-node 8 pretrain.py data_path=data/sudoku-extreme-1k-aug-1000-hint epochs=40000 eval_interval=1000 lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0
+~~~
 
-### Maze-Hard (assuming 4 L40S GPUs):
+Training randomness has observable impact on the outcome, so we recommend inspecting the `exact_accuracy` in W&B and choosing the best checkpoint for evaluation.
 
-```bash
-run_name="pretrain_att_maze30x30"
-torchrun --nproc-per-node 4 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 --nnodes=1 pretrain.py \
-arch=trm \
-data_paths="[data/maze-30x30-hard-1k]" \
-evaluators="[]" \
-epochs=50000 eval_interval=5000 \
-lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=4 \
-+run_name=${run_name} ema=True
-```
+The `eval_interval` option does not influence training process. Evaluation typically takes considerable time, so set it wisely. If you wish to ensemble ckpts, however, we recommend checkpointing more frequently in the final stage of training.
 
-*Runtime:* < 24 hours
+## Acknowledgement 🧑‍🎓
 
-Actually, you can run Maze-Hard with 1 L40S GPU by reducing the batch-size with no noticable loss in performance:
+This repository was forked-and-hacked from [sapientai/HRM](https://github.com/sapientinc/HRM) (Apache-2.0).
+I kept most upstream code intact and mostly layered on evaluation, augmentation and visualisation.  
 
-```bash
-run_name="pretrain_att_maze30x30_1gpu"
-python pretrain.py \
-arch=trm \
-data_paths="[data/maze-30x30-hard-1k]" \
-evaluators="[]" \
-epochs=50000 eval_interval=5000 \
-lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 global_batch_size=128 \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=4 \
-+run_name=${run_name} ema=True
-```
+Core files I worked on include:
+- `eval_utils.py`
+- `batch_inference.py`  
+- `visualization/`
+- `demo.ipynb`
 
-*Runtime:* < 24 hours
+Besides, I slightly modified the dataset building code for augmentation, and modeling code for reasoning trace extraction.
 
+Most original logic remains unchanged; see the upstream repo for the core implementation.  
 
-### ARC-AGI-1 (assuming 4 H-100 GPUs):
+## Citation 📜
 
-```bash
-run_name="pretrain_att_arc1concept_4"
-torchrun --nproc-per-node 4 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 --nnodes=1 pretrain.py \
-arch=trm \
-data_paths="[data/arc1concept-aug-1000]" \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=4 \
-+run_name=${run_name} ema=True
-
-```
-
-*Runtime:* ~3 days
-
-### ARC-AGI-2 (assuming 4 H-100 GPUs):
-
-```bash
-run_name="pretrain_att_arc2concept_4"
-torchrun --nproc-per-node 4 --rdzv_backend=c10d --rdzv_endpoint=localhost:0 --nnodes=1 pretrain.py \
-arch=trm \
-data_paths="[data/arc2concept-aug-1000]" \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=4 \
-+run_name=${run_name} ema=True
-
-```
-
-*Runtime:* ~3 days
-
-
-## Reference
-
-If you find our work useful, please consider citing:
-
-```bibtex
-@misc{jolicoeurmartineau2025morerecursivereasoningtiny,
-      title={Less is More: Recursive Reasoning with Tiny Networks}, 
-      author={Alexia Jolicoeur-Martineau},
-      year={2025},
-      eprint={2510.04871},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2510.04871}, 
-}
-```
-
-and the Hierarchical Reasoning Model (HRM):
-
-```bibtex
-@misc{wang2025hierarchicalreasoningmodel,
-      title={Hierarchical Reasoning Model}, 
-      author={Guan Wang and Jin Li and Yuhao Sun and Xing Chen and Changling Liu and Yue Wu and Meng Lu and Sen Song and Yasin Abbasi Yadkori},
-      year={2025},
-      eprint={2506.21734},
+~~~
+@misc{ren2026reasoningmodelsreasoningguessing,
+      title={Are Your Reasoning Models Reasoning or Guessing? A Mechanistic Analysis of Hierarchical Reasoning Models}, 
+      author={Zirui Ren and Ziming Liu},
+      year={2026},
+      eprint={2601.10679},
       archivePrefix={arXiv},
       primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2506.21734}, 
+      url={https://arxiv.org/abs/2601.10679}, 
 }
-```
-
-This code is based on the Hierarchical Reasoning Model [code](https://github.com/sapientinc/HRM) and the Hierarchical Reasoning Model Analysis [code](https://github.com/arcprize/hierarchical-reasoning-model-analysis).
+~~~

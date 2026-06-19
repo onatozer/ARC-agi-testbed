@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Tuple, List, Dict, Optional
+
 import numpy as np
 import pydantic
 
@@ -10,8 +10,6 @@ from torch.utils.data import IterableDataset, get_worker_info
 from models.losses import IGNORE_LABEL_ID
 from dataset.common import PuzzleDatasetMetadata
 
-from argdantic import ArgParser
-from pydantic import BaseModel
 
 def _sample_batch(rng: np.random.Generator, group_order: np.ndarray, puzzle_indices: np.ndarray, group_indices: np.ndarray, start_index: int, global_batch_size: int):
     # Pack examples into a full batch
@@ -42,68 +40,23 @@ def _sample_batch(rng: np.random.Generator, group_order: np.ndarray, puzzle_indi
 
 class PuzzleDatasetConfig(pydantic.BaseModel):
     seed: int
-    dataset_paths: List[str]
+    dataset_path: str
     global_batch_size: int
     test_set_mode: bool
+
     epochs_per_iter: int  # Batch X epochs in an iteration to reduce overhead.
+
     rank: int
     num_replicas: int
+
 
 class PuzzleDataset(IterableDataset):
     def __init__(self, config: PuzzleDatasetConfig, split: str = "train"):
         super().__init__()
         self.config = config
         self.split = split
-
-        # Merge multiple metadata
-        prev_seq_len = None
-        prev_vocab_size = None
-        prev_pad_id = None
-        prev_ignore_label_id = None
-        prev_blank_identifier_id = None
-        prev_sets = None
-        prev_num_identifiers = None
-        mean_puzzle_examples = 0
-        total_puzzles = 0
-        total_groups = 0
-        num_identifiers = 0
-        for dataset_path in config.dataset_paths:
-            current_metadata = self._load_metadata(dataset_path)
-            if prev_seq_len is None:
-                prev_seq_len = current_metadata.seq_len
-                prev_vocab_size = current_metadata.vocab_size
-                prev_pad_id = current_metadata.pad_id
-                prev_ignore_label_id = current_metadata.ignore_label_id
-                prev_blank_identifier_id = current_metadata.blank_identifier_id
-                prev_sets = current_metadata.sets
-                prev_num_identifiers = current_metadata.num_puzzle_identifiers
-            else:
-                assert prev_seq_len == current_metadata.seq_len
-                assert prev_vocab_size == current_metadata.vocab_size
-                assert prev_pad_id == current_metadata.pad_id
-                assert prev_ignore_label_id == current_metadata.ignore_label_id
-                assert prev_blank_identifier_id == current_metadata.blank_identifier_id
-                assert prev_sets == current_metadata.sets
-                assert prev_num_identifiers == current_metadata.num_puzzle_identifiers
-            mean_puzzle_examples += current_metadata.mean_puzzle_examples*current_metadata.total_puzzles
-            total_puzzles += current_metadata.total_puzzles
-            total_groups += current_metadata.total_groups
-            num_identifiers += current_metadata.num_puzzle_identifiers
-        mean_puzzle_examples = mean_puzzle_examples / total_puzzles
-
-        self.metadata = PuzzleDatasetMetadata(
-            seq_len=prev_seq_len,
-            vocab_size=prev_vocab_size,
-            pad_id=prev_pad_id,
-            ignore_label_id=prev_ignore_label_id,
-            blank_identifier_id=prev_blank_identifier_id,
-            num_puzzle_identifiers=num_identifiers,
-            total_groups=total_groups,
-            mean_puzzle_examples=mean_puzzle_examples,
-            total_puzzles=total_puzzles,
-            sets=prev_sets
-        )
-
+        self.metadata = self._load_metadata()
+        
         # Checks
         assert self.config.global_batch_size % self.config.num_replicas == 0, f"Global batch size {self.config.global_batch_size} must be multiples of nodes {self.config.num_replicas}."
         self.local_batch_size = self.config.global_batch_size // self.config.num_replicas
@@ -112,8 +65,8 @@ class PuzzleDataset(IterableDataset):
         self._data = None
         self._iters = 0
 
-    def _load_metadata(self, dataset_path) -> PuzzleDatasetMetadata:
-        with open(os.path.join(dataset_path, self.split, "dataset.json"), "r") as f:
+    def _load_metadata(self) -> PuzzleDatasetMetadata:
+        with open(os.path.join(self.config.dataset_path, self.split, "dataset.json"), "r") as f:
             return PuzzleDatasetMetadata(**json.load(f))
 
     def _lazy_load_dataset(self):
@@ -132,17 +85,12 @@ class PuzzleDataset(IterableDataset):
 
         # Load data
         self._data = {}
-        for set_name in self.metadata.sets: # Load subset
-            for i, dataset_path in enumerate(self.config.dataset_paths):
-                if i > 0:
-                    set_name_ = set_name + str(i)
-                else:
-                    set_name_ = set_name
-                self._data[set_name_] = {
-                    field_name: np.load(os.path.join(dataset_path, self.split, f"{set_name}__{field_name}.npy"), mmap_mode=mmap_mode)
-                    for field_name, mmap_mode in field_mmap_modes.items()
-                }
-
+        for set_name in self.metadata.sets:
+            # Load subset
+            self._data[set_name] = {
+                field_name: np.load(os.path.join(self.config.dataset_path, self.split, f"{set_name}__{field_name}.npy"), mmap_mode=mmap_mode)
+                for field_name, mmap_mode in field_mmap_modes.items()
+            }
 
     def _collate_batch(self, batch):
         # Convert dtype
@@ -155,9 +103,11 @@ class PuzzleDataset(IterableDataset):
         # Pad
         if batch["puzzle_identifiers"].size < self.local_batch_size:
             pad_size = self.local_batch_size - batch["puzzle_identifiers"].size
+
             pad_values = {
                 "inputs": self.metadata.pad_id,
                 "labels": IGNORE_LABEL_ID,
+
                 "puzzle_identifiers": self.metadata.blank_identifier_id
             }
             batch = {k: np.pad(v, ((0, pad_size), ) + ((0, 0), ) * (v.ndim - 1), constant_values=pad_values[k]) for k, v in batch.items()}
@@ -166,7 +116,7 @@ class PuzzleDataset(IterableDataset):
         return {k: torch.from_numpy(v) for k, v in batch.items()}
     
     def _iter_test(self):
-        for set_i, (set_name, dataset) in enumerate(self._data.items()):  # type: ignore
+        for set_name, dataset in self._data.items():  # type: ignore
             total_examples = len(dataset["inputs"])
 
             # Load examples one by one
@@ -247,4 +197,3 @@ class PuzzleDataset(IterableDataset):
             yield from self._iter_test()
         else:
             yield from self._iter_train()
-
