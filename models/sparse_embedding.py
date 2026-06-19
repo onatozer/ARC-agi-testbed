@@ -78,21 +78,21 @@ class CastedSparseEmbeddingSignSGD_Distributed(Optimizer):
                 else:
                     assert False
                 
+            assert local_weights_grad is not None
             assert local_ids is not None
             assert weights is not None
         
             # Apply SignSGD
             # Adam ≈ SignSGD if gradient is very sparse
-            if local_weights_grad is not None:
-                _sparse_emb_signsgd_dist(
-                    local_weights_grad,
-                    local_ids,
-                    weights,
-                    
-                    lr=group["lr"],
-                    weight_decay=group["weight_decay"],
-                    world_size=group["world_size"]
-                )
+            _sparse_emb_signsgd_dist(
+                local_weights_grad,
+                local_ids,
+                weights,
+                
+                lr=group["lr"],
+                weight_decay=group["weight_decay"],
+                world_size=group["world_size"]
+            )
 
 
 def _sparse_emb_signsgd_dist(

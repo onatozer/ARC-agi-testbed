@@ -104,13 +104,15 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     metadata = PuzzleDatasetMetadata(
         seq_len=int(math.prod(grid_size)),  # type: ignore
         vocab_size=len(CHARSET) + 1,  # PAD + Charset
+        
         pad_id=0,
         ignore_label_id=0,
+        
         blank_identifier_id=0,
         num_puzzle_identifiers=1,
+        
         total_groups=len(results["group_indices"]) - 1,
         mean_puzzle_examples=1,
-        total_puzzles=len(results["group_indices"]) - 1,
         sets=["all"]
     )
 

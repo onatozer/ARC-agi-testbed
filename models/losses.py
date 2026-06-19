@@ -3,7 +3,7 @@ from typing import Any, Tuple, Dict, Sequence, Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
-import math
+
 
 IGNORE_LABEL_ID = -100
 
@@ -21,11 +21,10 @@ def log_stablemax(x, dim=-1):
     return torch.log(s_x/torch.sum(s_x, dim=dim, keepdim=True))
 
 
-def stablemax_cross_entropy(logits, labels, ignore_index: int = -100, valid_mask=None):
+def stablemax_cross_entropy(logits, labels, ignore_index: int = -100):
     logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
 
-    if valid_mask is None:
-        valid_mask = (labels != ignore_index)
+    valid_mask = labels != ignore_index
     transformed_labels = torch.where(valid_mask, labels, 0)
     prediction_logprobs = torch.gather(logprobs, index=transformed_labels.to(torch.long).unsqueeze(-1), dim=-1).squeeze(-1)
 
@@ -50,28 +49,34 @@ class ACTLossHead(nn.Module):
     def forward(
         self,
         return_keys: Sequence[str],
+        require_trace=False,
         # Model args
         **model_kwargs,
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
         # Model logits
         # B x SeqLen x D
-        new_carry, outputs = self.model(**model_kwargs)
+        if require_trace:
+            new_carry, outputs, steps, act_halt, z_H_trace = self.model(**model_kwargs, require_trace=require_trace)
+        else:
+            new_carry, outputs, steps, act_halt = self.model(**model_kwargs)
         labels = new_carry.current_data["labels"]
+        alpha = 1.0
+        ds_mask = (alpha ** (16-steps.detach())).unsqueeze(dim=1)
+        # print(ds_mask.shape)
 
+        # Correctness
         with torch.no_grad():
-            # Preds
-            outputs["preds"] = torch.argmax(outputs["logits"], dim=-1)
-
-            # Correctness
-            mask = (labels != IGNORE_LABEL_ID)
+            mask = labels != IGNORE_LABEL_ID
             loss_counts = mask.sum(-1)
             loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)  # Avoid NaNs in division
 
             is_correct = mask & (torch.argmax(outputs["logits"], dim=-1) == labels)
             seq_is_correct = is_correct.sum(-1) == loss_counts
             
-            # Metrics (halted)
-            valid_metrics = new_carry.halted & (loss_counts > 0)
+            # # Metrics (halted)
+            # valid_metrics = new_carry.halted & (loss_counts > 0)
+            valid_metrics = (loss_counts > 0)
+
             metrics = {
                 "count": valid_metrics.sum(),
                 
@@ -83,21 +88,28 @@ class ACTLossHead(nn.Module):
             }
 
         # Losses
-
-        lm_loss = (self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor).sum()
+        # FIXME: Assuming the batch is always full
+        loss = self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID)
+        # print(loss.shape)
+        lm_loss = (ds_mask * loss / loss_divisor).sum()
         q_halt_loss = F.binary_cross_entropy_with_logits(outputs["q_halt_logits"], seq_is_correct.to(outputs["q_halt_logits"].dtype), reduction="sum")
+
         metrics.update({
             "lm_loss": lm_loss.detach(),
             "q_halt_loss": q_halt_loss.detach(),
         })
-        # Q continue (bootstrapping target loss); Alexia: This fits Q-learning, but seems totally unecessary
+
+        # Q continue (bootstrapping target loss)
         q_continue_loss = 0
         if "target_q_continue" in outputs:
             q_continue_loss = F.binary_cross_entropy_with_logits(outputs["q_continue_logits"], outputs["target_q_continue"], reduction="sum")
 
             metrics["q_continue_loss"] = q_continue_loss.detach()
+
         # Filter outputs for return
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
 
-        return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all()
-
+        if require_trace:
+            return z_H_trace, new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt
+        else:
+            return new_carry, lm_loss + 0.5 * (q_halt_loss + q_continue_loss), metrics, detached_outputs, new_carry.halted.all(), new_carry.halted & act_halt

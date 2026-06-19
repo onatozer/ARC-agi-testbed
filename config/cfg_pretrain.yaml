@@ -1,18 +1,14 @@
 # ARC training config
 
 defaults:
-  - arch: trm
+  - arch: hrm_v1
   - _self_
 
 hydra:
   output_subdir: null
 
 # Data path
-data_paths: ['data/arc-aug-1000']
-data_paths_test: []
-
-evaluators:
-  - name: arc@ARC
+data_path: data/arc-aug-1000
 
 # Hyperparams - Training
 global_batch_size: 768
@@ -33,10 +29,3 @@ puzzle_emb_weight_decay: 0.1
 
 # Hyperparams - Puzzle embeddings training
 puzzle_emb_lr: 1e-2
-
-seed: 0
-min_eval_interval: 0 # when to start the eval
-
-ema: False # use Exponential-Moving-Average
-ema_rate: 0.999 # EMA-rate
-freeze_weights: False # If True, freeze weights and only learn the embeddings
