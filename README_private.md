@@ -17,3 +17,21 @@
 # For simple 4x4 sudoku problem
 python3 TRM/dataset/build_sudoku_dataset.py --output-dir data/4x4-sudoku  --num-train 100 --num-test 10 --num-aug 0
 ```
+
+## Running the dataset
+
+### Magic command for running the dataset:
+```bash
+# Simple sudoku
+run_name="pretrain_mlp_t_sudoku"
+python TRM/pretrain.py \
+arch=trm \
+data_paths="[data/4x4-sudoku]" \
+evaluators="[]" \
+epochs=50000 eval_interval=5000 \
+lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 \
+arch.mlp_t=True arch.pos_encodings=none \
+arch.L_layers=2 \
+arch.H_cycles=3 arch.L_cycles=6 \
++run_name=${run_name} ema=True
+```
