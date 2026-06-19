@@ -264,7 +264,7 @@ class HierarchicalReasoningModel_ACTV1(nn.Module):
             current_data={k: torch.empty_like(v) for k, v in batch.items()}
         )
         
-    def forward(self, carry: HierarchicalReasoningModel_ACTV1Carry, batch: Dict[str, torch.Tensor], require_trace=False):
+    def forward(self, carry: HierarchicalReasoningModel_ACTV1Carry, batch: Dict[str, torch.Tensor], require_trace=False)-> Tuple[HierarchicalReasoningModel_ACTV1Carry, Dict[str, torch.Tensor]]:
         # Update data, carry (removing halted sequences)
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
         
