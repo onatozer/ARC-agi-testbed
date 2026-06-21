@@ -1,0 +1,12 @@
+defaults:
+  - cfg_pretrain
+  - _self_
+
+# In the case where we're using the standard create dataset function that automatically generates train/test split in the same directory
+# no need to specify the paths_test
+data_paths: data/nqueens
+data_paths_test: []
+  
+evaluators:
+  - name: nqueens@NQueens
+

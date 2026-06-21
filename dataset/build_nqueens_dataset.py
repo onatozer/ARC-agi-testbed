@@ -18,6 +18,8 @@ import numpy as np
 from argdantic import ArgParser
 from pydantic import BaseModel
 from tqdm import tqdm
+import hydra
+from omegaconf import DictConfig
 
 from common import PuzzleDatasetMetadata, dihedral_transform
 
@@ -310,14 +312,17 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     print(f"  - Vocabulary size: {metadata.vocab_size}")
 
 
-@cli.command(singleton=True)
-def preprocess_data(config: DataProcessConfig):
+@hydra.main(config_path = "../config/dataset", config_name = "nqueens", version_base = None)
+def launch(config: DictConfig):
     """
     Main entry point for dataset generation
     
     Usage:
         python dataset/build_nqueens_dataset.py --board-size 8 --num-train 800 --num-test 200
     """
+    rng = np.random.default_rng()
+    config.seed = int(rng.integers(low=1, high = 1e8, size = 1))
+    
     print("=" * 80)
     print("N-Queens Dataset Builder for Tiny Recursive Models")
     print("=" * 80)
@@ -327,11 +332,9 @@ def preprocess_data(config: DataProcessConfig):
     print(f"  - Test puzzles: {config.num_test}")
     print(f"  - Augmentation factor: {config.num_aug + 1}")
     print(f"  - Output directory: {config.output_dir}")
+    print(f"  - Num given queens: {config.num_given_queens}")
     print(f"  - Random seed: {config.seed}")
     print("=" * 80)
-    
-    # Set random seed
-    np.random.seed(config.seed)
     
     # Generate train and test sets
     convert_subset("train", config)
@@ -343,4 +346,4 @@ def preprocess_data(config: DataProcessConfig):
 
 
 if __name__ == "__main__":
-    cli()
+    launch()

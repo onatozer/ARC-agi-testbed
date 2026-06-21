@@ -1,0 +1,15 @@
+# ARC training config
+
+defaults:
+  - cfg_pretrain
+  - _self_
+
+hydra:
+  output_subdir: null
+
+# Data path
+data_paths: ['data/arc-aug-1000']
+data_paths_test: []
+
+evaluators:
+  - name: arc@ARC

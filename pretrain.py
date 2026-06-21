@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch.utils.data import DataLoader
+import numpy as np
 
 import tqdm
 import wandb
@@ -538,6 +539,12 @@ def launch(hydra_config: DictConfig):
     WORLD_SIZE = 1
     CPU_PROCESS_GROUP = None
 
+    # Randomly generate the seed if not explicitly defined
+    if hydra_config.seed is None:
+        rng = np.random.default_rng()
+        seed = int(rng.randint(low = 1, high = 1e8, size = 1))
+        hydra_config.seed = seed
+
     # Initialize distributed training if in distributed environment (e.g. torchrun)
     if "LOCAL_RANK" in os.environ:
         # Initialize distributed, default device and dtype
@@ -556,8 +563,7 @@ def launch(hydra_config: DictConfig):
 
     # Load sync'ed config
     config = load_synced_config(hydra_config, rank=RANK, world_size=WORLD_SIZE)
-
-    # Seed RNGs to ensure consistency
+    
     torch.random.manual_seed(config.seed + RANK)
 
     # Dataset

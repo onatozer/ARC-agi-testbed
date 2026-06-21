@@ -8,11 +8,10 @@ hydra:
   output_subdir: null
 
 # Data path
-data_paths: ['data/arc-aug-1000']
+data_paths: ??
 data_paths_test: []
 
-evaluators:
-  - name: arc@ARC
+evaluators: null
 
 # Hyperparams - Training
 global_batch_size: 768
@@ -34,7 +33,7 @@ puzzle_emb_weight_decay: 0.1
 # Hyperparams - Puzzle embeddings training
 puzzle_emb_lr: 1e-2
 
-seed: 0
+seed: null
 min_eval_interval: 0 # when to start the eval
 
 ema: False # use Exponential-Moving-Average

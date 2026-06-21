@@ -1,0 +1,10 @@
+board_size: 8
+
+num_train: 800
+num_test: 200
+
+num_aug: 8
+
+num_given_queens: null
+seed: null
+output_dir: "data/nqueens"
