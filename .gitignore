@@ -3,6 +3,10 @@ wandb
 queens
 outputs
 
+# Both the ARC and min-arc datasets have to be on the repo history itself, bc there's no function that can just make them on the fly
+!data/MiniArc
+!data/MiniArc_traces
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
