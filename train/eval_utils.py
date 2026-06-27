@@ -54,7 +54,7 @@ def load_checkpoint_and_config(checkpoint_path: str):
     
     print(f"Loaded config from: {config_path}")
     print(f"Model: {config.arch.name}")
-    print(f"Data path: {config.data_path}")
+    print(f"Data path: {config.data_paths}")
     
     return checkpoint_file, config, checkpoint_dir
 

@@ -67,8 +67,8 @@ def main():
         models.append(train_state.model)
     
     print("Loading data...")
-    all_inputs = torch.from_numpy(np.load(f"{config.data_path}/test/all__inputs.npy")).long().cuda()
-    all_labels = torch.from_numpy(np.load(f"{config.data_path}/test/all__labels.npy")).long().cuda()
+    all_inputs = torch.from_numpy(np.load(f"{config.data_paths}/test/all__inputs.npy")).long().cuda()
+    all_labels = torch.from_numpy(np.load(f"{config.data_paths}/test/all__labels.npy")).long().cuda()
     print("Data loaded successfully!")
     
     correct = 0
