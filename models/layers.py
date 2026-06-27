@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Union
 import einops
 import torch
 from torch import nn
@@ -14,11 +14,16 @@ from torch.nn.functional import scaled_dot_product_attention
 from models.common import trunc_normal_init_
 
 
-CosSin = Tuple[torch.Tensor, torch.Tensor]
+
+CosSin = Union[
+    Tuple[torch.Tensor, torch.Tensor],
+    Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
+    None,
+]
 
 
-def _find_multiple(a, b):
-    return (-(a // -b)) * b
+def _find_multiple(value: int, divisor: int) -> int:
+    return (-(value // -divisor)) * divisor
 
 
 def rotate_half(x: torch.Tensor):
@@ -39,6 +44,26 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     k_embed = (k * cos.unsqueeze(-2)) + (rotate_half(k) * sin.unsqueeze(-2))
 
     return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
+
+def apply_rotary_pos_emb_2d(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos_h: torch.Tensor,
+    sin_h: torch.Tensor,
+    cos_w: torch.Tensor,
+    sin_w: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    dtype = q.dtype
+    q, k = q.to(cos_h.dtype), k.to(cos_h.dtype)
+    d = q.size(-1) // 2
+    q_h, q_w = q[..., :d], q[..., d:]
+    k_h, k_w = k[..., :d], k[..., d:]
+    cos_h, sin_h = cos_h[None, :, None, None, :], sin_h[None, :, None, None, :]
+    cos_w, sin_w = cos_w[None, None, :, None, :], sin_w[None, None, :, None, :]
+    q_h, k_h = q_h * cos_h + rotate_half(q_h) * sin_h, k_h * cos_h + rotate_half(k_h) * sin_h
+    q_w, k_w = q_w * cos_w + rotate_half(q_w) * sin_w, k_w * cos_w + rotate_half(k_w) * sin_w
+    return torch.cat([q_h, q_w], dim=-1).to(dtype), torch.cat([k_h, k_w], dim=-1).to(dtype)
+
 
 
 class CastedLinear(nn.Module):
@@ -94,6 +119,22 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self):
         return self.cos_cached, self.sin_cached
+
+class RotaryEmbedding2D(nn.Module):
+    def __init__(self, dim: int, max_height: int, max_width: int, base: float, device=None) -> None:
+        super().__init__()
+        dim_half = dim // 2
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim_half, 2, dtype=torch.float32, device=device) / dim_half))
+        freqs_h = torch.outer(torch.arange(max_height, dtype=torch.float32, device=device), inv_freq)
+        freqs_w = torch.outer(torch.arange(max_width, dtype=torch.float32, device=device), inv_freq)
+        emb_h, emb_w = torch.cat((freqs_h, freqs_h), dim=-1), torch.cat((freqs_w, freqs_w), dim=-1)
+        self.cos_cached_height = nn.Buffer(emb_h.cos(), persistent=False)
+        self.sin_cached_height = nn.Buffer(emb_h.sin(), persistent=False)
+        self.cos_cached_width = nn.Buffer(emb_w.cos(), persistent=False)
+        self.sin_cached_width = nn.Buffer(emb_w.sin(), persistent=False)
+
+    def forward(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
+        return (self.cos_cached_height, self.cos_cached_width), (self.sin_cached_height, self.sin_cached_width)
 
 
 class Attention(nn.Module):

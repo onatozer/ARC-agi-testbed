@@ -1,5 +1,6 @@
 import copy
 import torch.nn as nn
+from utils.printing import rank_zero_print_warning
 
 class EMAHelper(object):
     def __init__(self, mu=0.999):
@@ -7,6 +8,7 @@ class EMAHelper(object):
         self.shadow = {}
 
     def register(self, module):
+        self.shadow = {} # clean slate
         if isinstance(module, nn.DataParallel):
             module = module.module
         for name, param in module.named_parameters():
@@ -18,6 +20,13 @@ class EMAHelper(object):
             module = module.module
         for name, param in module.named_parameters():
             if param.requires_grad:
+                # Be robust to parameters that are intentionally not tracked by EMA
+                # (e.g. batch-size dependent caches) or new params added after
+                # loading an EMA state_dict.
+                if name not in self.shadow:
+                    rank_zero_print_warning(f"EMAHelper: registering new parameter '{name}' for EMA tracking.")
+                    self.shadow[name] = param.data.clone()
+                    continue
                 self.shadow[name].data = (1. - self.mu) * param.data + self.mu * self.shadow[name].data
 
     def ema(self, module):
@@ -25,7 +34,13 @@ class EMAHelper(object):
             module = module.module
         for name, param in module.named_parameters():
             if param.requires_grad:
-                param.data.copy_(self.shadow[name].data)
+                # If a param is not tracked in the EMA shadow (e.g. was dropped
+                # from checkpoint for shape compatibility), leave it as-is.
+                v = self.shadow.get(name)
+                if v is None:
+                    rank_zero_print_warning(f"EMAHelper: parameter '{name}' not found in EMA shadow; skipping EMA copy.")
+                    continue
+                param.data.copy_(v.data)
 
     def ema_copy(self, module):
         module_copy = copy.deepcopy(module)
@@ -37,4 +52,3 @@ class EMAHelper(object):
 
     def load_state_dict(self, state_dict):
         self.shadow = state_dict
-

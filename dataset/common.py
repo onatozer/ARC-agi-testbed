@@ -22,6 +22,7 @@ class PuzzleDatasetMetadata(pydantic.BaseModel):
     mean_puzzle_examples: float
 
     sets: List[str]
+    total_samples: Optional[int] = None
 
 
 def dihedral_transform(arr: np.ndarray, tid: int) -> np.ndarray:

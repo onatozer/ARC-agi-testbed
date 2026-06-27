@@ -35,3 +35,20 @@ arch.L_layers=2 \
 arch.H_cycles=3 arch.L_cycles=6 \
 +run_name=${run_name} ema=True
 ```
+
+## Notes on codebase
+
+Models is structured so that the base architecture is wrapped around by the loss head. This allows for us to experiment with different types of loss functions on the same architecture. The loss head also defines the metrics that are output for logging. 
+
+
+A PuzzleDataset can be initialized with 'shared_sampler_state', which is just a dictionary (created by instantiating a 'Manager' from the mp library and calling .dict() ), that contains the following entries:
+```python
+# From the PuzzleDataset class in puzzle_dataset.py
+def _build_state_snapshot(self) -> Dict[str, Any]:
+    return {
+        "split": self.split,
+        "_iters": self._iters,
+        "train_state": self._normalize_train_state(self._train_state),
+    }
+```
+This gives the necessary information for distributed training to be resumed from any state.

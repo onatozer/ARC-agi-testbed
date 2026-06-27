@@ -1,6 +1,7 @@
 import importlib
 import inspect
 
+__all__ = ["load_model_class", "get_model_source_path"] # Pretty sure line's not needed
 
 def load_model_class(identifier: str, prefix: str = "models."):
     module_path, class_name = identifier.split('@')
