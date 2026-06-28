@@ -38,7 +38,7 @@ arch.H_cycles=3 arch.L_cycles=6 \
 
 ## Notes on codebase
 
-Models is structured so that the base architecture is wrapped around by the loss head. This allows for us to experiment with different types of loss functions on the same architecture. The loss head also defines the metrics that are output for logging. 
+Models is structured so that the base architecture is wrapped around by the loss head. This allows for us to experiment with different types of loss functions on the same architecture. The loss head also defines the metrics that are output for logging. General configs, ie for the dataset and training are defined in the config directory, whereas the model specific configs are defined in their respective files. Specific model configs can still be set my the yaml files in the config directory
 
 
 A PuzzleDataset can be initialized with 'shared_sampler_state', which is just a dictionary (created by instantiating a 'Manager' from the mp library and calling .dict() ), that contains the following entries:
@@ -52,3 +52,6 @@ def _build_state_snapshot(self) -> Dict[str, Any]:
     }
 ```
 This gives the necessary information for distributed training to be resumed from any state.
+
+## Things to clean up:
+Not all of the files in the utils directory are being used atm. Train directory, I'm pretty sure doesn't need to be used at all, some of the scripts are likely no longer relevant, maybe we want to move the ARC and mini-ARC datasets into the same directory. 

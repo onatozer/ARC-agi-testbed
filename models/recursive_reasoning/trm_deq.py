@@ -33,8 +33,8 @@ import torch.nn.functional as F
 from pydantic import BaseModel
 from torch import nn
 
-from .common import trunc_normal_init_
-from .layers import (
+from common import trunc_normal_init_
+from layers import (
     Attention,
     CastedEmbedding,
     CastedLinear,
@@ -43,7 +43,7 @@ from .layers import (
     SwiGLU,
     rms_norm,
 )
-from .sparse_embedding import CastedSparseEmbedding
+from sparse_embedding import CastedSparseEmbedding
 from .trm import (
     TinyRecursiveReasoningModel_ACTV1Block,
     TinyRecursiveReasoningModel_ACTV1ReasoningModule,

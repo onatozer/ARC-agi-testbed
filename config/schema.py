@@ -3,17 +3,18 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import pydantic
+from pydantic import BaseModel
 
 from utils.printing import colored_exception
 
 
-class LossConfig(pydantic.BaseModel):
+class LossConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     name: str
 
 
-class ArchConfig(pydantic.BaseModel):
+class ArchConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     name: str
@@ -21,13 +22,13 @@ class ArchConfig(pydantic.BaseModel):
     loss: LossConfig
 
 
-class EvaluatorConfig(pydantic.BaseModel):
+class EvaluatorConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     name: str
 
 
-class DatasetConfig(pydantic.BaseModel):
+class DatasetConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     name: str
@@ -35,7 +36,7 @@ class DatasetConfig(pydantic.BaseModel):
     evaluators: List[EvaluatorConfig] = []
 
 
-class PretrainConfig(pydantic.BaseModel):
+class PretrainConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     arch: ArchConfig
