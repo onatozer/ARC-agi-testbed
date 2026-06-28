@@ -1,4 +1,4 @@
-# @package _global_
+# ARC training config
 
 defaults:
   - /arch: eqr
@@ -22,9 +22,15 @@ lr_warmup_steps: 2000
 target_q_update_every: 4
 beta1: 0.9
 beta2: 0.95
-weight_decay: 1.0
-load_weights_only: false
-ema: true
-ema_rate: 0.999
-gradient_checkpoint: false
-grad_norm_log_interval_steps: null
+weight_decay: 0.1
+puzzle_emb_weight_decay: 0.1
+
+# Hyperparams - Puzzle embeddings training
+puzzle_emb_lr: 1e-2
+
+seed: null
+min_eval_interval: 0 # when to start the eval
+
+ema: False # use Exponential-Moving-Average
+ema_rate: 0.999 # EMA-rate
+freeze_weights: False # If True, freeze weights and only learn the embeddings
