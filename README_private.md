@@ -1,3 +1,48 @@
+## Directory structure
+ATM, the directory structure looks like this. 
+```bash
+├── DIS
+├── assets
+├── config # Hydra configs for any possible setting you would want to tweak in the model run
+│   ├── arch
+│   ├── dataset
+│   ├── eval
+│   └── train
+├── data
+│   ├── 4x4-sudoku
+│   ├── MiniARC
+│   ├── MiniARC_traces
+│   ├── arc1concept-aug-1000
+│   ├── nqueens
+│   └── sudoku-extreme-1k-aug-0
+├── dataset
+│   └── __pycache__
+├── evaluators
+├── kaggle
+│   └── combined
+# This is where the actual model architecture itself gets defined. recursive_reasoning contains the recursive architectures, which are wrapped around by the various loss heads defined in losses, and outside the directory are the other miscellaneous stuff used throughout, ie the layers
+├── models
+│   ├── losses
+│   └── recursive_reasoning
+├── outputs
+│   └── 2026-06-21
+├── queens
+├── runs
+├── scripts
+├── train
+├── utils
+├── venv
+│   ├── bin
+│   ├── lib
+│   └── share
+├── visualization
+└── wandb
+    ├── latest-run -> run-20260617_134706-cpaz0iss
+    └── run-20260617_134706-cpaz0iss
+├── pretrain.py
+├── evaluate.py
+```
+
 ## Building the dataset
 ### Build Dataset args:
 | Argument | Default | What it does |
@@ -52,6 +97,40 @@ def _build_state_snapshot(self) -> Dict[str, Any]:
     }
 ```
 This gives the necessary information for distributed training to be resumed from any state.
+
+
+### Scripts Directory
+Basically just wrappers that make it more convinient to train, eval and setup the dataset/model weights of the model. 
+
+Basic usage for 'train.sh' is:
+```bash
+train.sh <pretrain_cfg> any_additional_cfg_params=1
+```
+The train.sh is written so that pretrain cfg can be passed in as the exact path, or just the config file name itself, and the script will still work. If you want to alter any of the config arguments, you can simply pass them in through the terminal, and hydra manages them so that they properly override the cfg value. You can also specify the torchrun kwargs, such as:
+
+```bash
+train.sh <pretrain_cfg> --standalone # Use to tell Pytorch that you're running the code on single device 
+--nproc-per-node=1 # Use to tell pytorch how many GPUs you're using per device  
+```
+
+Similar design process goes into the usage of eval.sh
+```bash
+scripts/eval.sh <checkpoint-path> <eval_cfg> [evaluate.py overrides...]
+``` 
+
+downlaod_arifacts.sh downloads the model & dataset paths from hugging-face, containing the following args:
+| Flag                  | Effect                                            |
+| --------------------- | ------------------------------------------------- |
+| `--with-ckpts`        | Download checkpoints **in addition to** data      |
+| `--ckpts-only`        | Download **only** checkpoints                     |
+| `--skip-data`         | Skip data download                                |
+| `--ckpt-pattern GLOB` | Regex that allows you to specify which checkpoints to accept |
+| `--data-repo REPO`    | Override HF dataset repo                          |
+| `--ckpt-repo REPO`    | Override HF model repo                            |
+| `--cache-dir DIR`     | Override cache location                           |
+| `--data-dir DIR`      | Override data destination                         |
+| `--ckpt-dir DIR`      | Override checkpoint destination                   |
+
 
 ## Things to clean up:
 Not all of the files in the utils directory are being used atm. Train directory, I'm pretty sure doesn't need to be used at all, some of the scripts are likely no longer relevant, maybe we want to move the ARC and mini-ARC datasets into the same directory. 
