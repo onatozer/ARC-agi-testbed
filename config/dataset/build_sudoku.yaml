@@ -1,9 +1,3 @@
-# Build config for dataset/build_sudoku_dataset.py
-#
-# Run:  python dataset/build_sudoku_dataset.py
-# Override on the CLI, e.g.:
-#   python dataset/build_sudoku_dataset.py grid_size=4 num_train=5000 output_dir=data/sudoku-4x4
-
 # HuggingFace source for the 9x9 grid (ignored for smaller grid sizes)
 source_repo: sapientinc/sudoku-extreme
 output_dir: data/sudoku-extreme-full
@@ -25,4 +19,4 @@ clue_ratio: 0.3
 num_aug: 0
 
 # Random seed for reproducibility (null -> nondeterministic)
-seed: 42
+seed: null

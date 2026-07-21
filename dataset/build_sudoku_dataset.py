@@ -164,7 +164,7 @@ def convert_subset(set_name: str, config: DictConfig):
     grid_size = config.grid_size
 
     if config.source_repo is not None:
-        inputs, labels - _load_from_hf(set_name, config)
+        inputs, labels = _load_from_hf(set_name, config)
     else:
         inputs, labels = _generate_subset(set_name, config)
     

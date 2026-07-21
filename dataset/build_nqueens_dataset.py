@@ -11,44 +11,17 @@ Dataset Format:
 - Vocab: 0 (PAD), 1 (empty cell), 2 (queen)
 """
 
-from typing import Optional, List, Tuple
+from typing import List, Tuple
 import os
+import csv
 import json
 import numpy as np
-from argdantic import ArgParser
-from pydantic import BaseModel
 from tqdm import tqdm
 import hydra
 from omegaconf import DictConfig
+from huggingface_hub import hf_hub_download
 
 from common import PuzzleDatasetMetadata, dihedral_transform
-
-
-cli = ArgParser()
-
-
-class DataProcessConfig(BaseModel):
-    """Configuration for N-Queens dataset generation"""
-    output_dir: str = "data/nqueens-8x8-1k-aug-8"
-    
-    # Board size (N in N-Queens)
-    board_size: int = 8
-    
-    # Number of puzzles to generate
-    num_train: int = 800
-    num_test: int = 200
-    
-    # Augmentation: use dihedral symmetries (rotations + reflections)
-    # This creates 8 variants of each puzzle
-    num_aug: int = 8
-    
-    # Difficulty settings
-    # num_given_queens: Number of queens to place in the input (0 = empty board)
-    # If None, randomly choose between 0 and N-1
-    num_given_queens: Optional[int] = None
-    
-    # Random seed for reproducibility
-    seed: int = 42
 
 
 def is_safe(board: np.ndarray, row: int, col: int) -> bool:
@@ -187,42 +160,80 @@ def create_partial_input(solution: np.ndarray, num_given: int, rng: np.random.Ge
         return partial
 
 
-def convert_subset(set_name: str, config: DataProcessConfig):
-    """
-    Generate N-Queens dataset for train or test set
-    
-    Args:
-        set_name: "train" or "test"
-        config: Configuration object
-    """
-    rng = np.random.default_rng(config.seed + (0 if set_name == "train" else 1000))
-    
+# ---------------------------------------------------------------------------
+# Dataset loaders
+# ---------------------------------------------------------------------------
+
+def _generate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Generate N-Queens puzzles locally via randomized backtracking."""
+    rng = np.random.default_rng(config.seed)
+
     N = config.board_size
     num_puzzles = config.num_train if set_name == "train" else config.num_test
-    
-    print(f"Generating {num_puzzles} {N}x{N} N-Queens puzzles for {set_name} set...")
-    
-    # Generate puzzles
-    inputs = []
-    labels = []
-    
-    for _ in tqdm(range(num_puzzles), desc=f"Generating {set_name} puzzles"):
+
+    inputs, labels = [], []
+    for _ in tqdm(range(num_puzzles), desc=f"Generating {N}x{N} {set_name} puzzles"):
         # Generate a valid solution
         solution = generate_nqueens_solution(N, rng)
-        
+
         # Determine how many queens to give in the input
         if config.num_given_queens is not None:
             num_given = config.num_given_queens
         else:
             # Randomly choose between 0 and N-1 queens
             num_given = rng.integers(0, N)
-        
+
         # Create partial input
         partial = create_partial_input(solution, num_given, rng)
-        
+
         inputs.append(partial)
         labels.append(solution)
-    
+
+    return inputs, labels
+
+
+def _load_from_hf(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Load pre-built N-Queens puzzles from a HuggingFace dataset repo.
+
+    Expects a ``{set_name}.csv`` with a header row followed by rows whose first
+    two columns are the flattened input board and the flattened solution board,
+    each a length-(N*N) string of '0' (empty) / '1' (queen).
+    """
+    N = config.board_size
+    inputs, labels = [], []
+    path = hf_hub_download(config.source_repo, f"{set_name}.csv", repo_type="dataset")
+    with open(path, newline="") as csvfile:
+        reader = csv.reader(csvfile)
+        next(reader)  # Skip header
+        for row in reader:
+            q, a = row[0], row[1]
+            assert len(q) == N * N and len(a) == N * N
+            inputs.append(np.frombuffer(q.encode(), dtype=np.uint8).reshape(N, N) - ord('0'))
+            labels.append(np.frombuffer(a.encode(), dtype=np.uint8).reshape(N, N) - ord('0'))
+
+    return inputs, labels
+
+
+# ---------------------------------------------------------------------------
+# Main conversion
+# ---------------------------------------------------------------------------
+
+def convert_subset(set_name: str, config: DictConfig):
+    """
+    Build the N-Queens dataset for the train or test set.
+
+    Args:
+        set_name: "train" or "test"
+        config: Hydra config
+    """
+    N = config.board_size
+
+    # source_repo set -> load from HuggingFace; otherwise generate on the fly
+    if config.source_repo is not None:
+        inputs, labels = _load_from_hf(set_name, config)
+    else:
+        inputs, labels = _generate_subset(set_name, config)
+
     # Generate dataset with augmentation
     num_augments = config.num_aug if set_name == "train" else 0
     
@@ -312,27 +323,36 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     print(f"  - Vocabulary size: {metadata.vocab_size}")
 
 
+# NOTE: I'm pretty sure we're doing the seeding here incorrectly, don't think we're using the rng. On the other mind might not really matter
+# If we're just loading from hugging face anyways
 @hydra.main(config_path = "../config/dataset", config_name = "nqueens", version_base = None)
 def launch(config: DictConfig):
     """
     Main entry point for dataset generation
-    
-    Usage:
-        python dataset/build_nqueens_dataset.py --board-size 8 --num-train 800 --num-test 200
+
+    Run:
+        python dataset/build_nqueens_dataset.py
+    Override on the CLI, e.g.:
+        python dataset/build_nqueens_dataset.py board_size=6 num_train=5000
     """
-    rng = np.random.default_rng()
-    config.seed = int(rng.integers(low=1, high = 1e8, size = 1))
-    
+    # Use the provided seed, or draw a random one when unspecified
+    if config.seed is None:
+        rng = np.random.default_rng()
+        config.seed = int(rng.integers(low=0, high=1e8))
+
     print("=" * 80)
-    print("N-Queens Dataset Builder for Tiny Recursive Models")
+    print("N-Queens Dataset Builder")
     print("=" * 80)
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  - Board size: {config.board_size}x{config.board_size}")
-    print(f"  - Training puzzles: {config.num_train}")
-    print(f"  - Test puzzles: {config.num_test}")
+    if config.source_repo is not None:
+        print(f"  - Source repo: {config.source_repo}")
+    else:
+        print(f"  - Training puzzles: {config.num_train}")
+        print(f"  - Test puzzles: {config.num_test}")
+        print(f"  - Num given queens: {config.num_given_queens}")
     print(f"  - Augmentation factor: {config.num_aug + 1}")
     print(f"  - Output directory: {config.output_dir}")
-    print(f"  - Num given queens: {config.num_given_queens}")
     print(f"  - Random seed: {config.seed}")
     print("=" * 80)
     

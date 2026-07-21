@@ -1,10 +1,17 @@
 board_size: 8
 
+source_repo: null
+output_dir: "data/nqueens"
+
+# Generated puzzle counts (used when source_repo is null)
 num_train: 800
 num_test: 200
 
 num_aug: 8
 
+# Number of queens revealed in the input; null -> random per puzzle
 num_given_queens: null
+
+# Random seed for reproducibility (null -> nondeterministic)
 seed: null
-output_dir: "data/nqueens"
+

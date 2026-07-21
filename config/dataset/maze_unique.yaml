@@ -1,4 +1,32 @@
 name: Maze-30x30-unique-1k
-data_path: data/maze-30x30-unique-1k
+data_path: data/maze-30x30-unique-1k # I'm not sure if this entry is used at all, think it's just output_dir
 
 evaluators: []
+
+# Config values for loading in the dataset
+source_repo: sapientinc/maze-30x30-hard-1k
+output_dir: data/maze-30x30-hard-1k
+subsample_size: null
+aug: false
+
+# Config values for generating the dataset
+grid_size: 30
+train_samples: 1000
+test_samples: 1000
+maze_mode: random  # random | perfect
+wall_prob: 0.37
+dedupe: false
+length_distribution: uniform  # uniform | normal | fixed | list
+min_path_length: 20
+max_path_length: 300
+length_mean: 120.0
+length_std: 30.0
+length_value: 120
+length_values: null
+length_weights: null
+strict_length: true
+require_unique: false
+max_length_resamples: 50
+max_grid_attempts: 200
+max_start_attempts: 200
+seed: null
