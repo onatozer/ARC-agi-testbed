@@ -1,46 +1,20 @@
-## Directory structure
-ATM, the directory structure looks like this. 
+# Installing and running the code
+
+## Requirements
+
+Running the code requires the following python and Cuda versions. If any version error occurs during installation, specific_requirements.txt is also provided. 
+
+- Python 3.10 (or similar)
+- Cuda 12.6.0 (or similar)
+
+Run the following commands after setting up your python virtual environment:
+
 ```bash
-├── DIS
-├── assets
-├── config # Hydra configs for any possible setting you would want to tweak in the model run
-│   ├── arch
-│   ├── dataset
-│   ├── eval
-│   └── train
-├── data
-│   ├── 4x4-sudoku
-│   ├── MiniARC
-│   ├── MiniARC_traces
-│   ├── arc1concept-aug-1000
-│   ├── nqueens
-│   └── sudoku-extreme-1k-aug-0
-├── dataset
-│   └── __pycache__
-├── evaluators
-├── kaggle
-│   └── combined
-# This is where the actual model architecture itself gets defined. recursive_reasoning contains the recursive architectures, which are wrapped around by the various loss heads defined in losses, and outside the directory are the other miscellaneous stuff used throughout, ie the layers
-├── models
-│   ├── losses
-│   └── recursive_reasoning
-├── outputs
-│   └── 2026-06-21
-├── queens
-├── runs
-├── scripts
-├── train
-├── utils
-├── venv
-│   ├── bin
-│   ├── lib
-│   └── share
-├── visualization
-└── wandb
-    ├── latest-run -> run-20260617_134706-cpaz0iss
-    └── run-20260617_134706-cpaz0iss
-├── pretrain.py
-├── evaluate.py
+pip install --upgrade pip wheel setuptools
+pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126 # install torch based on your cuda version
+pip install -r requirements.txt # install requirements
+pip install --no-cache-dir --no-build-isolation adam-atan2 
+wandb login YOUR-LOGIN # login if you want the logger to sync results to your Weights & Biases (https://wandb.ai/)
 ```
 
 ## Building the dataset
@@ -81,7 +55,7 @@ arch.H_cycles=3 arch.L_cycles=6 \
 +run_name=${run_name} ema=True
 ```
 
-## Notes on codebase
+# Notes on codebase
 
 Models is structured so that the base architecture is wrapped around by the loss head. This allows for us to experiment with different types of loss functions on the same architecture. The loss head also defines the metrics that are output for logging. General configs, ie for the dataset and training are defined in the config directory, whereas the model specific configs are defined in their respective files. Specific model configs can still be set my the yaml files in the config directory
 
@@ -98,8 +72,53 @@ def _build_state_snapshot(self) -> Dict[str, Any]:
 ```
 This gives the necessary information for distributed training to be resumed from any state.
 
+## Directory structure
+ATM, the directory structure looks like this. 
+```bash
+├── DIS
+├── assets
+├── config # Hydra configs for any possible setting you would want to tweak in the model run
+│   ├── arch
+│   ├── dataset
+│   ├── eval
+│   └── train
+├── data
+│   ├── 4x4-sudoku
+│   ├── MiniARC
+│   ├── MiniARC_traces
+│   ├── arc1concept-aug-1000
+│   ├── nqueens
+│   └── sudoku-extreme-1k-aug-0
+├── dataset
+├── evaluators
+├── kaggle
+│   └── combined
+# This is where the actual model architecture itself gets defined. recursive_reasoning contains the recursive architectures, which are wrapped around by the various loss heads defined in losses, and outside the directory are the other miscellaneous stuff used throughout, ie the layers
+├── models
+│   ├── losses
+│   └── recursive_reasoning
+├── outputs
+│   └── 2026-06-21
+├── queens
+├── runs
+├── scripts
+├── train
+├── utils
+├── venv
+│   ├── bin
+│   ├── lib
+│   └── share
+├── visualization
+└── wandb
+    ├── latest-run -> run-20260617_134706-cpaz0iss
+    └── run-20260617_134706-cpaz0iss
+├── pretrain.py
+├── evaluate.py
+```
 
-### Scripts Directory
+
+
+## Scripts Directory
 Basically just wrappers that make it more convinient to train, eval and setup the dataset/model weights of the model. 
 
 Basic usage for 'train.sh' is:
