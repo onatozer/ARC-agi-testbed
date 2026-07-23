@@ -6,7 +6,7 @@ import torch
 from pydantic import BaseModel
 from torch import nn
 
-from common import trunc_normal_init_
+from  ..common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
 
@@ -249,13 +249,16 @@ class EqRModel(nn.Module):
         config_dict = dict(config_dict)
         puzzle_emb_ndim = int(config_dict.get("puzzle_emb_ndim", 0) or 0)
         puzzle_emb_len = int(config_dict.get("puzzle_emb_len", 0) or 0)
+        
         if puzzle_emb_ndim > 0 and puzzle_emb_len <= 0:
             hidden_size = int(config_dict["hidden_size"])
             puzzle_emb_len = -(puzzle_emb_ndim // -hidden_size)
             config_dict["puzzle_emb_len"] = puzzle_emb_len
+
         if puzzle_emb_len > 0 and config_dict.get("input_seq_len") is None:
             config_dict["input_seq_len"] = config_dict["seq_len"]
             config_dict["seq_len"] = int(config_dict["seq_len"]) + puzzle_emb_len
+
         self.config = EqRConfig(**config_dict)
         self.inner = InnerNetwork(self.config)
 
@@ -271,6 +274,10 @@ class EqRModel(nn.Module):
 
     def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
         del kwargs
+
+        if carry is None:
+            carry = self.initial_carry(batch)
+        
         device = batch["inputs"].device
         reset = carry.halted.to(device=device)
         inner_carry, current_data = _reset_rows(
@@ -283,6 +290,7 @@ class EqRModel(nn.Module):
         )
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
         inner_carry, logits, q_halt = self.inner(inner_carry, current_data)
+        
         with torch.no_grad():
             steps = steps + 1
             halted = steps >= self.config.halt_max_steps

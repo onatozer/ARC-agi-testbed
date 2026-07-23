@@ -153,3 +153,5 @@ downlaod_arifacts.sh downloads the model & dataset paths from hugging-face, cont
 
 ## Things to clean up:
 Not all of the files in the utils directory are being used atm. Train directory, I'm pretty sure doesn't need to be used at all, some of the scripts are likely no longer relevant, maybe we want to move the ARC and mini-ARC datasets into the same directory. 
+
+Losses directory can likely just be consolidated into a single file, don't clearly see a reason atm for why it should be structured the way it is rn. 

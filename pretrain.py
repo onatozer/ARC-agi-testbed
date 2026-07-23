@@ -234,6 +234,7 @@ def create_model(
     # In general, AdamATan2 is used as the optimizer, the other optimizers are for the embedding trick thing that Sapient did in their paper,
     # where they created an embedding for each type of puzzle and trained on those. I think this process can be removed, even for the ARC puzzles, but keeping for now
 
+    # Set to 0 to avoid using the puzzle embedding trick at all
     if config.arch.puzzle_emb_ndim == 0:
         optimizers = [
             AdamATan2(
@@ -279,7 +280,6 @@ def create_model(
             config.puzzle_emb_lr,
             config.lr
         ]
-
     return model, optimizers, optimizer_lrs
 
 def init_train_state(
@@ -343,7 +343,7 @@ Estimated total training steps: {estimated_steps}""")
         carry=None,
         ema_helper=ema_helper,
     )
-    
+
 # Maybe: Save_train_state, load_checkpoint, compute_lr
 
 def create_evaluators(config: PretrainConfig, eval_metadata: PuzzleDatasetMetadata) -> List[Any]:
@@ -371,19 +371,24 @@ def train_batch(
         return
     
     # I feel like this try except blocks are unecessary, but can't say fs until I run the code
-    
-    # try:
-    device = next(train_state.model.parameters()).device
-    # except StopIteration:
-    #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    try:
+        device = next(train_state.model.parameters()).device
+    except StopIteration:
+        print("*"*80)
+        print("Stop iteration reached")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch = tree_to_device(batch, device)
 
         
-    # try:
-    train_state.carry.global_step = int(train_state.step)
-    # except Exception:
-    #     pass
+    try:
+        train_state.carry.global_step = int(train_state.step)
+    except Exception:
+        print("*"*80)
+        print("Glob step exception")
+        pass
 
+    print("*"*80)
+    print(train_state, train_state.carry)
     steps_per_epoch = max(train_state.steps_per_epoch, 1)
     current_epoch = (train_state.step - 1) // steps_per_epoch
 
@@ -561,6 +566,11 @@ def launch(hydra_config: DictConfig):
         assert (
             dist.get_rank(CPU_PROCESS_GROUP) == RANK and dist.get_world_size(CPU_PROCESS_GROUP) == WORLD_SIZE
         )
+
+    # Generate seed value if not set before loading in config so program doesn't crash
+    if hydra_config.seed is None:
+        rng = np.random.default_rng()
+        hydra_config.seed = int(rng.integers(low=0, high = 1e8))
 
     config = load_synced_config(hydra_config, rank=RANK, world_size=WORLD_SIZE)
 

@@ -1,10 +1,11 @@
+# Config values for training/evaluating on the dataset
 name: Maze-30x30-unique-1k
-data_path: data/maze-30x30-unique-1k # I'm not sure if this entry is used at all, think it's just output_dir
+data_path: data/maze-30x30-unique-1k 
 
 evaluators: []
 
-# Config values for loading in the dataset
-source_repo: sapientinc/maze-30x30-hard-1k
+# Config values for loading in pre-made dataset
+source_repo: sapientinc/maze-30x30-hard-1k # null to build on the spot
 output_dir: data/maze-30x30-hard-1k
 subsample_size: null
 aug: false

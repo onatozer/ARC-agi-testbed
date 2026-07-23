@@ -5,8 +5,8 @@ data_path: data/sudoku-extreme-1k-aug-1000
 evaluators: []
 
 # Configs for building the dataset itself.
-source_repo: null
-output_dir: data/sudoku-extreme-full
+source_repo: sapientinc/sudoku-extreme 
+output_dir: data/sudoku-extreme-1k-aug-1000
 
 # Grid size: 4, 6, or 9
 grid_size: 9

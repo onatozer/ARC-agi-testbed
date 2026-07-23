@@ -234,7 +234,7 @@ def convert_subset(set_name: str, config: DictConfig):
         json.dump(["<blank>"], f)
 
 
-@hydra.main(config_path="../config/dataset", config_name="build_sudoku", version_base=None)
+@hydra.main(config_path="../config/dataset", config_name="sudoku", version_base=None)
 def launch(config: DictConfig):
     if config.seed is not None:
         np.random.seed(config.seed)

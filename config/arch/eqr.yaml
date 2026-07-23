@@ -1,7 +1,7 @@
-name: eqr@EqRModel
+name: recursive_reasoning.eqr@EqRModel
 short_name: EqR
 loss:
-  name: losses@ACTLossHead
+  name: losses.loss_heads@ACTLossHead
   loss_type: stablemax_cross_entropy
 
 halt_exploration_prob: 0.1
@@ -16,6 +16,8 @@ L_layers: 2
 hidden_size: 512
 num_heads: 8
 expansion: 4
+
+puzzle_emb_ndim: 0
 
 pos_encodings: rope
 board_height: 9
