@@ -44,11 +44,11 @@ from layers import (
     rms_norm,
 )
 from sparse_embedding import CastedSparseEmbedding
-from .trm import (
-    TinyRecursiveReasoningModel_ACTV1Block,
-    TinyRecursiveReasoningModel_ACTV1ReasoningModule,
-    TinyRecursiveReasoningModel_ACTV1Carry,
-    TinyRecursiveReasoningModel_ACTV1InnerCarry,
+from .merged_arch import (
+    Block,
+    Blocks,
+    ModelCarry,
+    LatentCarry,
 )
 
 
@@ -88,7 +88,6 @@ class TRMDEQConfig(BaseModel):
 
     mlp_t: bool = False
     puzzle_emb_len: int = 16
-    no_ACT_continue: bool = True
 
     # ---- DEQ-specific knobs --------------------------------------------- #
     deq_inner: bool = True            # if False, this acts as plain TRM
@@ -285,8 +284,8 @@ class TRMDEQ_Inner(nn.Module):
 
         # Reasoning layer (one shared L_level used for both z_L update and
         # the explicit z_H update -- this matches TRM's "single network" choice)
-        self.L_level = TinyRecursiveReasoningModel_ACTV1ReasoningModule(layers=[
-            TinyRecursiveReasoningModel_ACTV1Block(config) for _ in range(config.L_layers)
+        self.L_level = Blocks(layers=[
+            Block(config) for _ in range(config.L_layers)
         ])
 
         # Initial states
@@ -327,7 +326,7 @@ class TRMDEQ_Inner(nn.Module):
         return self.embed_scale * embedding
 
     def empty_carry(self, batch_size: int):
-        return TinyRecursiveReasoningModel_ACTV1InnerCarry(
+        return LatentCarry(
             z_H=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len,
                             self.config.hidden_size, dtype=self.forward_dtype),
             z_L=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len,
@@ -335,7 +334,7 @@ class TRMDEQ_Inner(nn.Module):
         )
 
     def reset_carry(self, reset_flag: torch.Tensor, carry):
-        return TinyRecursiveReasoningModel_ACTV1InnerCarry(
+        return LatentCarry(
             z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
             z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
         )
@@ -370,7 +369,7 @@ class TRMDEQ_Inner(nn.Module):
         z_L = z_L_star
         z_H = self.L_level(z_H, z_L, **seq_info)
 
-        new_carry = TinyRecursiveReasoningModel_ACTV1InnerCarry(
+        new_carry = LatentCarry(
             z_H=z_H.detach(), z_L=z_L.detach(),
         )
         output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
@@ -398,7 +397,7 @@ class TRMDEQ(nn.Module):
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]):
         bsz = batch["inputs"].shape[0]
-        return TinyRecursiveReasoningModel_ACTV1Carry(
+        return ModelCarry(
             inner_carry=self.inner.empty_carry(bsz),
             steps=torch.zeros((bsz,), dtype=torch.int32),
             halted=torch.ones((bsz,), dtype=torch.bool),
@@ -445,6 +444,6 @@ class TRMDEQ(nn.Module):
                         torch.where(is_last_step, next_qh, torch.maximum(next_qh, next_qc))
                     )
 
-        return TinyRecursiveReasoningModel_ACTV1Carry(
+        return ModelCarry(
             new_inner_carry, new_steps, halted, new_current_data
         ), outputs

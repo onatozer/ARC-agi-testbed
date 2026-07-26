@@ -1,7 +1,7 @@
 # ARC training config
 
 defaults:
-  - /arch: eqr
+  - /arch: trm
   - /dataset: sudoku
   - _self_
 

@@ -1,4 +1,4 @@
-name: recursive_reasoning.eqr@EqRModel
+name: recursive_reasoning.merged_arch@TRMModel
 short_name: EqR
 loss:
   name: losses.loss_heads@ACTLossHead
@@ -29,3 +29,5 @@ lambda_: 0.95
 noise_scale: 0.01
 H_init_std: 1.0
 L_init_std: 1.0
+
+random_initilization: true
