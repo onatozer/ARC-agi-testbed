@@ -33,8 +33,8 @@ import torch.nn.functional as F
 from pydantic import BaseModel
 from torch import nn
 
-from common import trunc_normal_init_
-from layers import (
+from ..common import trunc_normal_init_
+from ..layers import (
     Attention,
     CastedEmbedding,
     CastedLinear,
@@ -43,7 +43,7 @@ from layers import (
     SwiGLU,
     rms_norm,
 )
-from sparse_embedding import CastedSparseEmbedding
+from ..sparse_embedding import CastedSparseEmbedding
 from .merged_arch import (
     Block,
     Blocks,
@@ -88,6 +88,13 @@ class TRMDEQConfig(BaseModel):
 
     mlp_t: bool = False
     puzzle_emb_len: int = 16
+
+    # ---- Eqr params --------------------------------------------- #
+    lambda_: float =  0.95
+    noise_scale: float = 0.01
+    H_init_std: float =  1.0
+    L_init_std: float = 1.0
+    random_initilization: bool = True
 
     # ---- DEQ-specific knobs --------------------------------------------- #
     deq_inner: bool = True            # if False, this acts as plain TRM
@@ -284,9 +291,10 @@ class TRMDEQ_Inner(nn.Module):
 
         # Reasoning layer (one shared L_level used for both z_L update and
         # the explicit z_H update -- this matches TRM's "single network" choice)
-        self.L_level = Blocks(layers=[
-            Block(config) for _ in range(config.L_layers)
-        ])
+        self.L_level = Blocks(
+            layers=[Block(config) for _ in range(config.L_layers)], 
+            config=config,
+        )
 
         # Initial states
         self.H_init = nn.Buffer(

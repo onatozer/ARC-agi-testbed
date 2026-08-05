@@ -208,6 +208,8 @@ def create_model(
         num_puzzle_identifiers=train_metadata.num_puzzle_identifiers,
         causal=False,
     )
+    print("*"*80)
+    print(model_cfg, type(model_cfg))
 
     # Instantiate model with loss head
     model_cls = load_model_class(config.arch.name)
@@ -616,6 +618,8 @@ def launch(hydra_config: DictConfig):
         torch.cuda.manual_seed_all(config.seed)
 
     torch.manual_seed(config.seed)
+    print('*'*80)
+    print(config, type(config))
     train_state = init_train_state(
         config,
         train_metadata,

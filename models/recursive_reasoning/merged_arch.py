@@ -142,7 +142,7 @@ class InnerNetwork(nn.Module):
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
         self.q_head = CastedLinear(config.hidden_size, 2, bias=True)
 
-        self.L_level = Blocks([Block(config) for _ in range(config.L_layers)])
+        self.L_level = Blocks(layers = [Block(config) for _ in range(config.L_layers)], config = self.config)
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         
@@ -195,9 +195,10 @@ class InnerNetwork(nn.Module):
     def empty_carry(self, batch_size: int) -> LatentCarry:
         """Creates a LatentCarry containing no values"""
         shape = (batch_size, self.config.seq_len, self.config.hidden_size)
+        print("Intended shape", shape)
         return LatentCarry(torch.empty(shape, dtype=self.forward_dtype), torch.empty(shape, dtype=self.forward_dtype))
 
-    def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry) -> LatentCarry:
+    def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
         """
         Resets the initial carry before the recursion process begins. If random initilization is on, samples from guassian distribution.
         Otherwise, loads identical distribution from initilazation.
@@ -220,10 +221,16 @@ class InnerNetwork(nn.Module):
                 shape = state.shape[1:]
                 buf_name = f"_random_reset_{name}_buffer"
                 buf = getattr(self, buf_name)
+
+                # Deciding whether or not to reinitialize the buffer
                 if buf is None or buf.device != state.device or buf.dtype != state.dtype or buf.shape[1:] != shape or buf.shape[0] < n:
                     buf = torch.empty((n if buf is None else max(n, buf.shape[0] * 2),) + shape, dtype=state.dtype, device=state.device)
                     setattr(self, buf_name, buf)
+                
                 init = trunc_normal_init_(buf[:n], std=float(self._random_reset_field_stds[name]))
+                print("x"*80)
+                print(state.shape, reset_indices.shape, init.shape)
+                print(reset_indices[:20])
                 state[reset_indices.to(device=state.device)] = init
             return carry
 
@@ -305,7 +312,7 @@ class TRMModel(nn.Module):
     def __init__(self, config_dict: dict) -> None:
         super().__init__()
         self.config = TRMConfig(**config_dict)
-        print(config)
+        print(config_dict)
         self.inner = InnerNetwork(self.config)
         print("*"*80)
         print("Merged arch live!!")
@@ -313,15 +320,18 @@ class TRMModel(nn.Module):
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]) -> ModelCarry:
         """Creates the an empty 'ModelCarry' object, which contains all the information the class needs throughout the recursion process"""
-        b, device = batch["inputs"].shape[0], batch["inputs"].device
-        c = self.inner.empty_carry(b)
+        batch_size, device = batch["inputs"].shape[0], batch["inputs"].device
+        c = self.inner.empty_carry(batch_size)
+
+        c.z_H.to(device)
+        c.z_L.to(device)
 
         return ModelCarry(
-            inner_carry=LatentCarry(c.z_H.to(device), c.z_L.to(device)),
-            steps=torch.zeros((b,), dtype=torch.int32, device=device),
-            halted=torch.ones((b,), dtype=torch.bool, device=device),
+            inner_carry=c,
+            steps=torch.zeros((batch_size,), dtype=torch.int32, device=device),
+            halted=torch.ones((batch_size,), dtype=torch.bool, device=device),
             current_data={k: torch.empty_like(v, device=device) for k, v in batch.items()},
-            halt_counter=torch.zeros((b,), dtype=torch.int32, device=device),
+            halt_counter=torch.zeros((batch_size,), dtype=torch.int32, device=device),
         )
 
     def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
@@ -333,6 +343,11 @@ class TRMModel(nn.Module):
         # Bring everything from the carry onto the same device used by the batch
         device = batch["inputs"].device
         reset = carry.halted.to(device=device)
+
+        print("&"*80)
+        print(batch.keys(), carry.inner_carry.z_H.shape, carry.inner_carry.z_L.shape)
+        [print(batch[key].shape) for key in batch.keys()]
+        print(self.config.seq_len, self.config.hidden_size)
 
         # Call the helper function that replaces all the problems in the batch that have been halted on and replaced them with new ones
         inner_carry, current_data = _reset_rows(
@@ -347,6 +362,7 @@ class TRMModel(nn.Module):
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
         inner_carry, logits, q_halt = self.inner(inner_carry, current_data)
         
+        # ACT decision with ranomdizer that continues according to some exploration probability
         with torch.no_grad():
             steps = steps + 1
             halted = steps >= self.config.halt_max_steps

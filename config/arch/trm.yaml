@@ -1,4 +1,5 @@
-name: recursive_reasoning.trm@TinyRecursiveReasoningModel_ACTV1
+# name: recursive_reasoning.trm@TinyRecursiveReasoningModel_ACTV1
+name: recursive_reasoning.merged_arch@TRMModel
 loss:
   name: losses@ACTLossHead
   loss_type: stablemax_cross_entropy
