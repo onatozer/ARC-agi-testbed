@@ -30,4 +30,4 @@ noise_scale: 0.01
 H_init_std: 1.0
 L_init_std: 1.0
 
-random_initilization: true
+random_initialization: true

@@ -31,7 +31,7 @@ lambda_: 0.95
 noise_scale: 0.01
 H_init_std: 1.0
 L_init_std: 1.0
-random_initilization: true
+random_initialization: true
 
 # ---- DEQ-specific knobs --------------------------------------------- #
 deq_inner: true            # if false, this acts as plain TRM

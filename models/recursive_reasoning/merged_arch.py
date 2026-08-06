@@ -65,7 +65,7 @@ class TRMConfig(BaseModel):
     H_init_std: float = 1.0
     L_init_std: float = 1.0
 
-    random_initilization: bool = True
+    random_initialization: bool = True
 
 
 
@@ -118,14 +118,13 @@ class Blocks(nn.Module):
         self.noise_scale = config.noise_scale
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-        hidden_states = hidden_states + input_injection
-        hidden_states = hidden_states + torch.random()
+        updated_states = hidden_states + input_injection
 
         for layer in self.layers:
-            hidden_states = layer(hidden_states=hidden_states, **kwargs)
-        noise = torch.randn_like(hidden_states) * self.noise_scale
+            updated_states = layer(hidden_states=updated_states, **kwargs)
+        noise = torch.randn_like(updated_states) * self.noise_scale
     
-        return (1 - self.lambda_) * hidden_states + self.lambda_*(hidden_states + noise)
+        return (1 - self.lambda_) * hidden_states + self.lambda_*(updated_states) + noise
 
 
 class InnerNetwork(nn.Module):
@@ -149,7 +148,7 @@ class InnerNetwork(nn.Module):
         self._random_reset_field_stds = {"z_H": float(config.H_init_std), "z_L": float(config.L_init_std)}
         self._random_reset_z_H_buffer: Optional[torch.Tensor] = None
         self._random_reset_z_L_buffer: Optional[torch.Tensor] = None
-        self.random_initialization = config.random_initilization
+        self.random_initialization = config.random_initialization
         
         with torch.no_grad():
             self.q_head.weight.zero_()
@@ -195,7 +194,7 @@ class InnerNetwork(nn.Module):
     def empty_carry(self, batch_size: int) -> LatentCarry:
         """Creates a LatentCarry containing no values"""
         shape = (batch_size, self.config.seq_len, self.config.hidden_size)
-        print("Intended shape", shape)
+        print("Shape of the latent", shape)
         return LatentCarry(torch.empty(shape, dtype=self.forward_dtype), torch.empty(shape, dtype=self.forward_dtype))
 
     def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
@@ -209,6 +208,7 @@ class InnerNetwork(nn.Module):
             mask = reset_flag.to(device=carry.z_H.device).view(-1, 1, 1)
             
             return LatentCarry(torch.where(mask, h, carry.z_H), torch.where(mask, l, carry.z_L))
+        
         else:
             reset_indices = reset_flag.nonzero(as_tuple=False).flatten() if reset_indices is None else reset_indices
             n = int(reset_indices.numel())
@@ -228,10 +228,8 @@ class InnerNetwork(nn.Module):
                     setattr(self, buf_name, buf)
                 
                 init = trunc_normal_init_(buf[:n], std=float(self._random_reset_field_stds[name]))
-                print("x"*80)
-                print(state.shape, reset_indices.shape, init.shape)
-                print(reset_indices[:20])
                 state[reset_indices.to(device=state.device)] = init
+                
             return carry
 
 
@@ -260,17 +258,33 @@ class InnerNetwork(nn.Module):
             self._input_embeddings(batch["inputs"]),
             {"cos_sin": self._cos_sin()},
         )
-        logits = self.lm_head(z_H)
+        
+        # Clip out the puzzle embedding dims from the decoder
+        if self.config.puzzle_emb_ndim != 0:
+            # The slice [:, puzzle_emb_len:] strips the prepended summary slot(s) (the [CLS]-like position 0 that the q_head reads),
+            # so the logits line up 1:1 with actual puzzle cells.
+            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+        else:
+            logits = self.lm_head(z_H).contiguous()
+
         # Struggling to find a super good reason for why z_H[:,0] is being passed in and not z_H. When there's a puzzle embedding, its added to the front of z_H, 
         # so z_H[:,0] is just running on the puzzle embedding of each batch, but otherwise it's hard to interpert exactly what z_H[0] is supposed to be
         q = self.q_head(z_H[:, 0]).to(torch.float32) 
-        return LatentCarry(z_H.detach(), z_L.detach()), logits, (q[..., 0], q[..., 1])
+        return LatentCarry(z_H.detach(), z_L.detach()), logits, q[..., 0]
 
     def forward_no_carry(self, z_H: torch.Tensor, z_L: torch.Tensor, batch: Dict[str, torch.Tensor]) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Identical function to forward, but passes the z_H, z_L, and q-head values directy instead of LatentCarry object"""
         z_H, z_L = self.deep_recursion(z_H, z_L, self._input_embeddings(batch["inputs"]), {"cos_sin": self._cos_sin()})
+
+        # Same pattern as in the InnerNewwork forward
+        if self.config.puzzle_emb_ndim != 0:
+            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+        else:
+            logits = self.lm_head(z_H).contiguous()
+
         q = self.q_head(z_H[:, 0]).to(torch.float32)
-        return (z_H, z_L), self.lm_head(z_H), (q[..., 0], q[..., 1])
+        
+        return (z_H, z_L), logits, (q[..., 0], q[..., 1])
 
     def concat_states(self, z_H: torch.Tensor, z_L: torch.Tensor) -> torch.Tensor:
         return torch.cat((z_H, z_L), dim=1)
@@ -343,11 +357,6 @@ class TRMModel(nn.Module):
         # Bring everything from the carry onto the same device used by the batch
         device = batch["inputs"].device
         reset = carry.halted.to(device=device)
-
-        print("&"*80)
-        print(batch.keys(), carry.inner_carry.z_H.shape, carry.inner_carry.z_L.shape)
-        [print(batch[key].shape) for key in batch.keys()]
-        print(self.config.seq_len, self.config.hidden_size)
 
         # Call the helper function that replaces all the problems in the batch that have been halted on and replaced them with new ones
         inner_carry, current_data = _reset_rows(
