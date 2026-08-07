@@ -56,8 +56,8 @@ class TRMConfig(BaseModel):
     mlp_t: bool = False
     no_ACT_continue: bool = True
 
-    puzzle_emb_len: int = 0
-    puzzle_emb_ndim: int = 0
+    puzzle_emb_len: int = 16
+    puzzle_emb_ndim: int
 
     # Noise injection params
     lambda_: float = 0.95
@@ -339,6 +339,7 @@ class TRMModel(nn.Module):
 
         c.z_H.to(device)
         c.z_L.to(device)
+        print(f"Initial carry creating latents with size z_H: {c.z_H.shape}, z_L: {c.z_L.shape}")
 
         return ModelCarry(
             inner_carry=c,

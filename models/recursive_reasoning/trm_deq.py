@@ -49,6 +49,8 @@ from .merged_arch import (
     Blocks,
     ModelCarry,
     LatentCarry,
+    _reset_rows,
+    TRMModel,
 )
 
 
@@ -87,14 +89,14 @@ class TRMDEQConfig(BaseModel):
     forward_dtype: str = "bfloat16"
 
     mlp_t: bool = False
-    puzzle_emb_len: int = 16
+    puzzle_emb_len: int = 0
 
     # ---- Eqr params --------------------------------------------- #
     lambda_: float =  0.95
     noise_scale: float = 0.01
     H_init_std: float =  1.0
     L_init_std: float = 1.0
-    random_initilization: bool = True
+    random_initialization: bool = True
 
     # ---- DEQ-specific knobs --------------------------------------------- #
     deq_inner: bool = True            # if False, this acts as plain TRM
@@ -266,16 +268,20 @@ class TRMDEQ_Inner(nn.Module):
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
         self.q_head = CastedLinear(config.hidden_size, 2, bias=True)
 
-        self.puzzle_emb_len = (
-            -(config.puzzle_emb_ndim // -config.hidden_size)
-            if config.puzzle_emb_len == 0 else config.puzzle_emb_len
-        )
         if config.puzzle_emb_ndim > 0:
             self.puzzle_emb = CastedSparseEmbedding(
                 config.num_puzzle_identifiers, config.puzzle_emb_ndim,
                 batch_size=config.batch_size, init_std=0,
                 cast_to=self.forward_dtype,
             )
+        
+            self.puzzle_emb_len = (
+                -(config.puzzle_emb_ndim // -config.hidden_size)
+                if config.puzzle_emb_len == 0 else config.puzzle_emb_len
+            ) # Extra insurance that the puzzle_emb_len is always a reasonable value even if never specified, while still allowing for it to be
+
+        else:
+            self.puzzle_emb_len = 0
 
         if config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(
@@ -317,6 +323,11 @@ class TRMDEQ_Inner(nn.Module):
         # Track the most recent jacobian-reg value for the loss head to grab
         self._last_jac_reg: torch.Tensor = torch.zeros(())
 
+        self._random_reset_field_stds = {"z_H": float(config.H_init_std), "z_L": float(config.L_init_std)}
+        self._random_reset_z_H_buffer: Optional[torch.Tensor] = None
+        self._random_reset_z_L_buffer: Optional[torch.Tensor] = None
+        self.random_initialization = config.random_initialization
+
     # --- helpers (verbatim from TRM) ------------------------------------- #
     def _input_embeddings(self, input: torch.Tensor, puzzle_identifiers: torch.Tensor):
         embedding = self.embed_tokens(input.to(torch.int32))
@@ -334,19 +345,45 @@ class TRMDEQ_Inner(nn.Module):
         return self.embed_scale * embedding
 
     def empty_carry(self, batch_size: int):
-        return LatentCarry(
-            z_H=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len,
-                            self.config.hidden_size, dtype=self.forward_dtype),
-            z_L=torch.empty(batch_size, self.config.seq_len + self.puzzle_emb_len,
-                            self.config.hidden_size, dtype=self.forward_dtype),
-        )
+        shape = (batch_size, self.config.seq_len, self.config.hidden_size)
+        print("Shape of the latent", shape)
+        return LatentCarry(torch.empty(shape, dtype=self.forward_dtype), torch.empty(shape, dtype=self.forward_dtype))
 
-    def reset_carry(self, reset_flag: torch.Tensor, carry):
-        return LatentCarry(
-            z_H=torch.where(reset_flag.view(-1, 1, 1), self.H_init, carry.z_H),
-            z_L=torch.where(reset_flag.view(-1, 1, 1), self.L_init, carry.z_L),
-        )
 
+    def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
+        """
+        Exact same as TRM reset carry. Resets to the initial value if no
+        """
+        if not self.random_initialization:
+            h = self.H_init.to(device=carry.z_H.device, dtype=carry.z_H.dtype).view(1, 1, -1)
+            l = self.L_init.to(device=carry.z_L.device, dtype=carry.z_L.dtype).view(1, 1, -1)
+            mask = reset_flag.to(device=carry.z_H.device).view(-1, 1, 1)
+            
+            return LatentCarry(torch.where(mask, h, carry.z_H), torch.where(mask, l, carry.z_L))
+        
+        else:
+            reset_indices = reset_flag.nonzero(as_tuple=False).flatten() if reset_indices is None else reset_indices
+            n = int(reset_indices.numel())
+            
+            if n == 0: # Nothing to reset
+                return carry
+            
+            for name in ("z_H", "z_L"):
+                state = getattr(carry, name)
+                shape = state.shape[1:]
+                buf_name = f"_random_reset_{name}_buffer"
+                buf = getattr(self, buf_name)
+
+                # Deciding whether or not to reinitialize the buffer
+                if buf is None or buf.device != state.device or buf.dtype != state.dtype or buf.shape[1:] != shape or buf.shape[0] < n:
+                    buf = torch.empty((n if buf is None else max(n, buf.shape[0] * 2),) + shape, dtype=state.dtype, device=state.device)
+                    setattr(self, buf_name, buf)
+                
+                print(state.shape, reset_indices.shape)
+                init = trunc_normal_init_(buf[:n], std=float(self._random_reset_field_stds[name]))
+                state[reset_indices.to(device=state.device)] = init
+                
+            return carry
     # --- main forward: DEQ on inner L-cycles ----------------------------- #
     def forward(self, carry, batch: Dict[str, torch.Tensor]):
         seq_info = dict(
@@ -380,22 +417,29 @@ class TRMDEQ_Inner(nn.Module):
         new_carry = LatentCarry(
             z_H=z_H.detach(), z_L=z_L.detach(),
         )
-        output = self.lm_head(z_H)[:, self.puzzle_emb_len:]
+        # Clip out the puzzle embedding dims from the decoder
+        if self.config.puzzle_emb_ndim != 0:
+            output = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+        else:
+            output = self.lm_head(z_H).contiguous()
+
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32)
 
         # Stash for the outer loss head to read.
         self._last_jac_reg = jac_reg_total
 
-        return new_carry, output, (q_logits[..., 0], q_logits[..., 1])
+        return new_carry, output, q_logits[..., 0]
 
 
 # --------------------------------------------------------------------------- #
 # ACT wrapper (mirrors TRM's outer wrapper)
 # --------------------------------------------------------------------------- #
 
-class TRMDEQ(nn.Module):
+class TRMDEQ(TRMModel):
     def __init__(self, config_dict: dict):
-        super().__init__()
+        super().__init__(config_dict)
+        print("~"*80)
+        print("DEQ architecture initialized")
         self.config = TRMDEQConfig(**config_dict)
         self.inner = TRMDEQ_Inner(self.config)
 
@@ -403,55 +447,91 @@ class TRMDEQ(nn.Module):
     def puzzle_emb(self):
         return self.inner.puzzle_emb
 
-    def initial_carry(self, batch: Dict[str, torch.Tensor]):
-        bsz = batch["inputs"].shape[0]
-        return ModelCarry(
-            inner_carry=self.inner.empty_carry(bsz),
-            steps=torch.zeros((bsz,), dtype=torch.int32),
-            halted=torch.ones((bsz,), dtype=torch.bool),
-            current_data={k: torch.empty_like(v) for k, v in batch.items()},
-        )
+    # def initial_carry(self, batch: Dict[str, torch.Tensor]):
+    #     bsz = batch["inputs"].shape[0]
+    #     return ModelCarry(
+    #         inner_carry=self.inner.empty_carry(bsz),
+    #         steps=torch.zeros((bsz,), dtype=torch.int32),
+    #         halted=torch.ones((bsz,), dtype=torch.bool),
+    #         current_data={k: torch.empty_like(v) for k, v in batch.items()},
+    #     )
 
-    def forward(self, carry, batch: Dict[str, torch.Tensor]):
-        new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
-        new_steps = torch.where(carry.halted, 0, carry.steps)
-        new_current_data = {
-            k: torch.where(
-                carry.halted.view((-1,) + (1,) * (batch[k].ndim - 1)), batch[k], v
-            )
-            for k, v in carry.current_data.items()
-        }
-        new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(
-            new_inner_carry, new_current_data
-        )
+    # def forward(self, carry, batch: Dict[str, torch.Tensor]):
 
-        outputs = {
-            "logits": logits,
-            "q_halt_logits": q_halt_logits,
-            "q_continue_logits": q_continue_logits,
-            # Surface the Jacobian regulariser so the loss head can include it.
-            "jacobian_reg": self.inner._last_jac_reg,
-        }
+    #     if carry == None:
+    #         carry = self.initial_carry(batch)
 
-        with torch.no_grad():
-            new_steps = new_steps + 1
-            is_last_step = new_steps >= self.config.halt_max_steps
-            halted = is_last_step
-            if self.training and self.config.halt_max_steps > 1:
-                if self.config.no_ACT_continue:
-                    halted = halted | (q_halt_logits > 0)
-                else:
-                    halted = halted | (q_halt_logits > q_continue_logits)
-                min_halt = (
-                    torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob
-                ) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
-                halted = halted & (new_steps >= min_halt)
-                if not self.config.no_ACT_continue:
-                    _, _, (next_qh, next_qc) = self.inner(new_inner_carry, new_current_data)
-                    outputs["target_q_continue"] = torch.sigmoid(
-                        torch.where(is_last_step, next_qh, torch.maximum(next_qh, next_qc))
-                    )
+    #     # Bring everything from the carry onto the same device used by the batch
+    #     device = batch["inputs"].device
+    #     reset = carry.halted.to(device=device)
 
-        return ModelCarry(
-            new_inner_carry, new_steps, halted, new_current_data
-        ), outputs
+    #     # Call the helper function that replaces all the problems in the batch that have been halted on and replaced them with new ones
+    #     inner_carry, current_data = _reset_rows(
+    #         self.inner,
+    #         reset,
+    #         LatentCarry(carry.inner_carry.z_H.to(device=device), carry.inner_carry.z_L.to(device=device)),
+    #         carry.current_data,
+    #         batch,
+    #         device,
+    #     )
+
+    #     steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
+    #     inner_carry, logits, q_halt = self.inner(inner_carry, current_data)
+        
+    #     # ACT decision with ranomdizer that continues according to some exploration probability
+    #     with torch.no_grad():
+    #         steps = steps + 1
+    #         halted = steps >= self.config.halt_max_steps
+    #         if self.training and self.config.halt_max_steps > 1:
+    #             halted = (halted | (q_halt > 0)) & (
+    #                 steps
+    #                 >= (
+    #                     (torch.rand_like(q_halt) < self.config.halt_exploration_prob)
+    #                     * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
+    #                 )
+    #             )
+    #     return ModelCarry(inner_carry, steps, halted, current_data), {"logits": logits, "q_halt_logits": q_halt, "jacobain_reg": self.inner._last_jac_reg}
+
+
+        # new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
+        # new_steps = torch.where(carry.halted, 0, carry.steps)
+        # new_current_data = {
+        #     k: torch.where(
+        #         carry.halted.view((-1,) + (1,) * (batch[k].ndim - 1)), batch[k], v
+        #     )
+        #     for k, v in carry.current_data.items()
+        # }
+        # new_inner_carry, logits, (q_halt_logits, q_continue_logits) = self.inner(
+        #     new_inner_carry, new_current_data
+        # )
+
+        # outputs = {
+        #     "logits": logits,
+        #     "q_halt_logits": q_halt_logits,
+        #     "q_continue_logits": q_continue_logits,
+        #     # Surface the Jacobian regulariser so the loss head can include it.
+        #     "jacobian_reg": self.inner._last_jac_reg,
+        # }
+
+        # with torch.no_grad():
+        #     new_steps = new_steps + 1
+        #     is_last_step = new_steps >= self.config.halt_max_steps
+        #     halted = is_last_step
+        #     if self.training and self.config.halt_max_steps > 1:
+        #         if self.config.no_ACT_continue:
+        #             halted = halted | (q_halt_logits > 0)
+        #         else:
+        #             halted = halted | (q_halt_logits > q_continue_logits)
+        #         min_halt = (
+        #             torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob
+        #         ) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
+        #         halted = halted & (new_steps >= min_halt)
+        #         if not self.config.no_ACT_continue:
+        #             _, _, (next_qh, next_qc) = self.inner(new_inner_carry, new_current_data)
+        #             outputs["target_q_continue"] = torch.sigmoid(
+        #                 torch.where(is_last_step, next_qh, torch.maximum(next_qh, next_qc))
+        #             )
+
+        # return ModelCarry(
+        #     new_inner_carry, new_steps, halted, new_current_data
+        # ), outputs
