@@ -2,14 +2,12 @@
 
 defaults:
   - cfg_pretrain
+  - dataset: arc
   - _self_
 
 hydra:
   output_subdir: null
 
-# Data path
-data_paths: ['data/arc-aug-1000']
-data_paths_test: []
-
-evaluators:
-  - name: arc@ARC
+# Ensure that the puzzle embedding is being used 
+arch:
+  puzzle_emb_ndim: ${.hidden_size}

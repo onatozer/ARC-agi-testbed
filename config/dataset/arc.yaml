@@ -1,0 +1,10 @@
+# Configs for locating & running the dataset at train/eval time
+name: Arc-AGI
+data_path: data/arc1concept-aug-1000
+
+evaluators:
+  - name: arc@ARC
+
+data_paths: ['arc1concept-aug-1000']
+
+seed: null
