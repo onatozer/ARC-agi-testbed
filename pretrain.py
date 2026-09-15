@@ -20,7 +20,8 @@ from evaluators.eval_fn import evaluate
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from adam_atan2 import AdamATan2
+from adam_atan2_pytorch import AdamAtan2
+
 torch.set_float32_matmul_precision('high')
 try:
     torch.backends.cudnn.conv.fp32_precision = 'tf32'
@@ -239,7 +240,7 @@ def create_model(
     # Set to 0 to avoid using the puzzle embedding trick at all
     if config.arch.puzzle_emb_ndim == 0:
         optimizers = [
-            AdamATan2(
+            AdamAtan2(
                 model.parameters(),
                 lr=0,  # Needs to be set by scheduler
                 weight_decay=config.weight_decay,
@@ -271,7 +272,7 @@ def create_model(
                 weight_decay=config.puzzle_emb_weight_decay,
                 world_size=world_size
             ),
-            AdamATan2(
+            AdamAtan2(
                 model.parameters(),
                 lr=0,  # Needs to be set by scheduler
                 weight_decay=config.weight_decay,
