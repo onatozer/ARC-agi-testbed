@@ -21,6 +21,7 @@ import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from adam_atan2_pytorch import AdamAtan2
+import uuid
 
 torch.set_float32_matmul_precision('high')
 try:
@@ -242,7 +243,7 @@ def create_model(
         optimizers = [
             AdamAtan2(
                 model.parameters(),
-                lr=0,  # Needs to be set by scheduler
+                lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.weight_decay,
                 betas=(config.beta1, config.beta2)
             )
@@ -255,7 +256,7 @@ def create_model(
         optimizers = [
             CastedSparseEmbeddingSignSGD_Distributed(
                 model.model.puzzle_emb.buffers(),  # type: ignore
-                lr=0,  # Needs to be set by scheduler
+                lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.puzzle_emb_weight_decay,
                 world_size=world_size
             )
@@ -268,13 +269,13 @@ def create_model(
         optimizers = [
             CastedSparseEmbeddingSignSGD_Distributed(
                 model.model.puzzle_emb.buffers(),  # type: ignore
-                lr=0,  # Needs to be set by scheduler
+                lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.puzzle_emb_weight_decay,
                 world_size=world_size
             ),
             AdamAtan2(
                 model.parameters(),
-                lr=0,  # Needs to be set by scheduler
+                lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.weight_decay,
                 betas=(config.beta1, config.beta2)
             )
@@ -390,8 +391,6 @@ def train_batch(
         print("Glob step exception")
         pass
 
-    print("*"*80)
-    print(train_state, train_state.carry)
     steps_per_epoch = max(train_state.steps_per_epoch, 1)
     current_epoch = (train_state.step - 1) // steps_per_epoch
 
@@ -679,7 +678,7 @@ def launch(hydra_config: DictConfig):
         if resume_info is None and env_run_id:
             wandb_kwargs.setdefault("id", env_run_id)
 
-        wandb_run_id = wandb_kwargs.get("id") or wandb.util.generate_id()
+        wandb_run_id = wandb_kwargs.get("id") or str(uuid.uuid4())
         wandb_kwargs.setdefault("id", wandb_run_id)
 
         run_root = _resolve_run_root(hydra_config)
@@ -862,7 +861,6 @@ def launch(hydra_config: DictConfig):
 
                 if RANK == 0 and eval_metrics is not None:
                     eval_metrics["step"] = train_state.step
-                    print(eval_metrics)
                     wandb.log(eval_metrics)
 
                 train_state.model.train()

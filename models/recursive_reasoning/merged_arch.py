@@ -194,7 +194,6 @@ class InnerNetwork(nn.Module):
     def empty_carry(self, batch_size: int) -> LatentCarry:
         """Creates a LatentCarry containing no values"""
         shape = (batch_size, self.config.seq_len, self.config.hidden_size)
-        print("Shape of the latent", shape)
         return LatentCarry(torch.empty(shape, dtype=self.forward_dtype), torch.empty(shape, dtype=self.forward_dtype))
 
     def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
@@ -337,9 +336,8 @@ class TRMModel(nn.Module):
         batch_size, device = batch["inputs"].shape[0], batch["inputs"].device
         c = self.inner.empty_carry(batch_size)
 
-        c.z_H.to(device)
-        c.z_L.to(device)
-        print(f"Initial carry creating latents with size z_H: {c.z_H.shape}, z_L: {c.z_L.shape}")
+        c.z_H = c.z_H.to(device)
+        c.z_L = c.z_L.to(device)
 
         return ModelCarry(
             inner_carry=c,
