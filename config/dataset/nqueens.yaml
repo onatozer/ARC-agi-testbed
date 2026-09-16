@@ -1,11 +1,17 @@
+name: Nqueens-8x8
+data_path: data/nqueens
+
+evaluators:
+  - name: nqueens@NQueens
+
 board_size: 8
 
 source_repo: null
 output_dir: "data/nqueens"
 
 # Generated puzzle counts (used when source_repo is null)
-num_train: 800
-num_test: 200
+num_train: 10000
+num_test: 1000
 
 num_aug: 8
 
@@ -14,4 +20,10 @@ num_given_queens: null
 
 # Random seed for reproducibility (null -> nondeterministic)
 seed: null
+
+# In the case where we're using the standard create dataset function that automatically generates train/test split in the same directory
+# no need to specify the paths_test
+data_paths: data/nqueens
+data_paths_test: []
+  
 
