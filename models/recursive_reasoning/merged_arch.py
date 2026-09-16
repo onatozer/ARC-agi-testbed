@@ -191,17 +191,22 @@ class InnerNetwork(nn.Module):
         x = (probs.to(torch.float32) @ self.embed_tokens.embedding_weight.to(torch.float32)).to(self.forward_dtype)
         return self.embed_scale * self._pos(x)
 
-    def empty_carry(self, batch_size: int) -> LatentCarry:
+    def empty_carry(self, batch_size: int, device: str = "cpu") -> LatentCarry:
         """Creates a LatentCarry containing no values"""
         shape = (batch_size, self.config.seq_len, self.config.hidden_size)
-        return LatentCarry(torch.empty(shape, dtype=self.forward_dtype), torch.empty(shape, dtype=self.forward_dtype))
+        return LatentCarry(torch.empty(shape, dtype=self.forward_dtype, device=device), torch.empty(shape, dtype=self.forward_dtype, device=device))
 
     def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
         """
         Resets the initial carry before the recursion process begins. If random initilization is on, samples from guassian distribution.
         Otherwise, loads identical distribution from initilazation.
         """
+        # Edge case to check that the carry is actually a populated tensor, broadcast breaks if there's a zero dim
+        if 0 in carry.z_L.shape or 0 in carry.z_H.shape:
+            carry = self.empty_carry(batch_size = self.config.batch_size, device = carry.z_L.device)
+        
         if not self.random_initialization:
+
             h = self.H_init.to(device=carry.z_H.device, dtype=carry.z_H.dtype).view(1, 1, -1)
             l = self.L_init.to(device=carry.z_L.device, dtype=carry.z_L.dtype).view(1, 1, -1)
             mask = reset_flag.to(device=carry.z_H.device).view(-1, 1, 1)
@@ -309,6 +314,7 @@ def _reset_rows(
     batch: Dict[str, torch.Tensor],
     device: torch.device,
 ) -> Tuple[LatentCarry, Dict[str, torch.Tensor]]:
+    # print("Reset rows called with", inner, reset_flag.shape, batch)
     idx = reset_flag.nonzero(as_tuple=False).flatten()
     inner_carry = inner.reset_carry(reset_flag, inner_carry, reset_indices=idx)
     current_data = {k: v.to(device=batch[k].device) for k, v in current_data.items()}
@@ -359,12 +365,12 @@ class TRMModel(nn.Module):
 
         # Call the helper function that replaces all the problems in the batch that have been halted on and replaced them with new ones
         inner_carry, current_data = _reset_rows(
-            self.inner,
-            reset,
-            LatentCarry(carry.inner_carry.z_H.to(device=device), carry.inner_carry.z_L.to(device=device)),
-            carry.current_data,
-            batch,
-            device,
+            inner = self.inner,
+            reset_flag = reset,
+            inner_carry = LatentCarry(carry.inner_carry.z_H.to(device=device), carry.inner_carry.z_L.to(device=device)),
+            current_data = carry.current_data,
+            batch = batch,
+            device = device,
         )
         
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))

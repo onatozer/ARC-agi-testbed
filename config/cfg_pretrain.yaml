@@ -11,6 +11,7 @@ arch:
 
 global_batch_size: 768
 epochs: 50000
+max_steps: 50000
 train_epochs_per_iter: 5000
 eval_interval_steps: 5000
 checkpoint_interval_steps: 5000

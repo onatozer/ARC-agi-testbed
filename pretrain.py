@@ -388,7 +388,7 @@ def train_batch(
         train_state.carry.global_step = int(train_state.step)
     except Exception:
         print("*"*80)
-        print("Glob step exception")
+        print("Glob step exception", train_state.step, train_state.carry)
         pass
 
     steps_per_epoch = max(train_state.steps_per_epoch, 1)
