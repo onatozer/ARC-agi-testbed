@@ -44,7 +44,6 @@ def _compute_z_alignment_per_sample(
 class ACTLossHead(BaseLossHead):
 
     def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
-
         del kwargs
         super().__init__()
         self.model = model
@@ -93,6 +92,7 @@ class ACTLossHead(BaseLossHead):
 
         outputs["preds"] = preds
         metrics: Dict[str, torch.Tensor]
+        
         with torch.no_grad():
             mask = labels != IGNORE_LABEL_ID
             loss_counts = mask.sum(-1)
@@ -215,6 +215,7 @@ class ACTLossHead(BaseLossHead):
 
     def _zh_zl_metrics(self, carry: Any, count: torch.Tensor) -> Dict[str, torch.Tensor]:
         zero = torch.zeros_like(count, dtype=torch.float32)
+        # TODO: Dumbass fucking metrics, why tf are we tracking zH cos sim ?????
         metrics = {
             "zH_zL_cos_sim": zero,
             "zH_zL_pearson": zero,
@@ -249,10 +250,12 @@ class InferenceLossHead(ACTLossHead):
         return_keys: Sequence[str],
         **model_kwargs: Any,
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
+
         new_carry, outputs = self.model(**model_kwargs)
         logits = outputs.get("logits", None)
         if isinstance(logits, torch.Tensor):
             outputs["logits"] = logits.contiguous()
+
         total_loss, metrics, detached_outputs, all_finish = self.compute_metrics_from_outputs(
             outputs=outputs,
             carry=new_carry,

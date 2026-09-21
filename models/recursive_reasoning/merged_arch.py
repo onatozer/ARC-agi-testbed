@@ -117,6 +117,7 @@ class Blocks(nn.Module):
 class InnerNetwork(nn.Module):
     def __init__(self, config: TRMConfig) -> None:
         super().__init__()
+        config = TRMConfig(**config) if isinstance(config, dict) else config 
         self.config = config
         self.forward_dtype = getattr(torch, config.forward_dtype)
         
@@ -173,7 +174,7 @@ class InnerNetwork(nn.Module):
 
         elif self.config.pos_encodings == "learned":
             self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
-            
+
         elif self.config.pos_encodings == "absolute":
             self.register_buffer("absolute_pos_embedding", _sinusoidal(self.config.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
 

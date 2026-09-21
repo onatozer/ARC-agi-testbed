@@ -40,7 +40,7 @@ from puzzle_dataset import (  # noqa: E402
     PuzzleDataset,
     PuzzleDatasetConfig,
 )
-from models.recursive_reasoning.trm_deq import TRMDEQ  # noqa: E402
+from models.recursive_reasoning.trm_root import TRMDEQ  # noqa: E402
 from models.losses_deq import ACTLossHeadDEQ  # noqa: E402
 from models.ema import EMAHelper  # noqa: E402
 from models.sparse_embedding import (  # noqa: E402

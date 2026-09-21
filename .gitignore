@@ -2,6 +2,7 @@ data/
 wandb
 queens
 outputs
+.vscode
 
 test.py
 scratchpad.txt
