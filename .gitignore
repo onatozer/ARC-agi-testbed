@@ -1,7 +1,7 @@
 data/
 wandb
 queens
-outputs
+outputs*
 .vscode
 
 test.py
