@@ -422,7 +422,7 @@ def train_batch(
                 param.grad = torch.zeros_like(param, memory_format=torch.preserve_format)
             dist.all_reduce(param.grad)
     
-    # Perform the forward pass
+    # Backpropogate the loss through the network
     lr_this_step = None
     for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
         lr_this_step = compute_lr(base_lr, config, train_state)
@@ -625,7 +625,7 @@ def launch(hydra_config: DictConfig):
         train_metadata,
         rank=RANK,
         world_size=WORLD_SIZE,
-    )
+    )   
 
     resume_info = load_training_state(
         config,

@@ -9,7 +9,6 @@ from torch import nn
 from models.common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
 
-
 @dataclass
 class LatentCarry:
     z_H: torch.Tensor
@@ -67,18 +66,6 @@ class TRMConfig(BaseModel):
 
     random_initialization: bool = True
 
-
-
-def _sinusoidal(length: int, dim: int) -> torch.Tensor:
-    pe = torch.zeros(length, dim, dtype=torch.float32)
-    if dim == 0:
-        return pe
-    pos = torch.arange(length, dtype=torch.float32).unsqueeze(1)
-    div = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32) * (-math.log(10000.0) / dim))
-    angles = pos * div.unsqueeze(0)
-    pe[:, 0::2] = torch.sin(angles)
-    pe[:, 1::2] = torch.cos(angles[:, : pe[:, 1::2].shape[1]])
-    return pe
 
 
 class Block(nn.Module):
@@ -139,7 +126,9 @@ class InnerNetwork(nn.Module):
         self._init_pos(embed_std)
 
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
-        self.q_head = CastedLinear(config.hidden_size, 2, bias=True)
+        self.q_head = CastedLinear(config.hidden_size, 2, bias=True) 
+        #TODO: The way the Q-head is being implemented has to be wrong, 
+        # like no way it's optimal to use only the puzzle embedding and only the first of the 2 output dims
 
         self.L_level = Blocks(layers = [Block(config) for _ in range(config.L_layers)], config = self.config)
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
@@ -163,33 +152,42 @@ class InnerNetwork(nn.Module):
         return board_size, board_size
 
     def _init_pos(self, embed_std: float) -> None:
+        def _sinusoidal(length: int, dim: int) -> torch.Tensor:
+            pe = torch.zeros(length, dim, dtype=torch.float32)
+            if dim == 0:
+                return pe
+            pos = torch.arange(length, dtype=torch.float32).unsqueeze(1)
+            div = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32) * (-math.log(10000.0) / dim))
+            angles = pos * div.unsqueeze(0)
+            pe[:, 0::2] = torch.sin(angles)
+            pe[:, 1::2] = torch.cos(angles[:, : pe[:, 1::2].shape[1]])
+            return pe
+        
         head_dim = self.config.hidden_size // self.config.num_heads
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(head_dim, self.config.seq_len, self.config.rope_theta)
+
         elif self.config.pos_encodings == "rope2d":
             h, w = self._board_dims()
             self.rotary_emb = RotaryEmbedding2D(head_dim, h, w, self.config.rope_theta)
+
         elif self.config.pos_encodings == "learned":
             self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
+            
         elif self.config.pos_encodings == "absolute":
             self.register_buffer("absolute_pos_embedding", _sinusoidal(self.config.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
 
     def _cos_sin(self) -> CosSin:
         return self.rotary_emb() if hasattr(self, "rotary_emb") else None
 
-    def _pos(self, x: torch.Tensor) -> torch.Tensor:
-        if self.config.pos_encodings == "learned":
-            return 0.707106781 * (x + self.embed_pos.embedding_weight.to(self.forward_dtype))
-        if self.config.pos_encodings == "absolute":
-            return 0.707106781 * (x + self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype))
-        return x
-
     def _input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.embed_scale * self._pos(self.embed_tokens(input_ids.to(torch.int32)))
+        x = self.embed_tokens(input_ids.to(torch.int32))
+        if self.config.pos_encodings == "learned":
+            return self.embed_scale* 0.707106781 * (x + self.embed_pos.embedding_weight.to(self.forward_dtype))
+        if self.config.pos_encodings == "absolute":
+            return self.embed_scale* 0.707106781 * (x + self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype))
 
-    def _distribution_embeddings(self, probs: torch.Tensor) -> torch.Tensor:
-        x = (probs.to(torch.float32) @ self.embed_tokens.embedding_weight.to(torch.float32)).to(self.forward_dtype)
-        return self.embed_scale * self._pos(x)
+        return self.embed_scale*x
 
     def empty_carry(self, batch_size: int, device: str = "cpu") -> LatentCarry:
         """Creates a LatentCarry containing no values"""
@@ -236,33 +234,23 @@ class InnerNetwork(nn.Module):
                 
             return carry
 
+    def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        z_H, z_L = carry.z_H, carry.z_L
+        x = self._input_embeddings(batch["inputs"])
+        seq_dict = {"cos_sin": self._cos_sin()}
 
-    def latent_recursion(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, seq: Dict[str, CosSin]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Perform the latent recursion process, where the z_L tensor is updated L_cycle times."""
-        for _ in range(self.config.L_cycles):
-            z_L = self.L_level(z_L, z_H + x, **seq)
-        z_H = self.L_level(z_H, z_L, **seq)
-        return z_H, z_L
-
-    def deep_recursion(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, seq: Dict[str, CosSin]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Runs the recursion loop where the z_L latent is iteratively updated L_cycle times, and then used to update the z_H latent H_cycle times.
-        
-        All updates are done without tracking the gradients. The seq arg is the pre-computed embedding table
-        """
+        # Run the recursion cycle for H_cycle -1 times without the gadient
         with torch.no_grad():
             for _ in range(self.config.H_cycles - 1):
-                z_H, z_L = self.latent_recursion(z_H, z_L, x, seq)
-        return self.latent_recursion(z_H, z_L, x, seq)
+                for _ in range(self.config.L_cycles):
+                    z_L = self.L_level(z_L, z_H + x, **seq_dict)
+                z_H = self.L_level(z_L, z_H, **seq_dict) 
 
-    def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """Forward pass of the inner-network. Latents are returned detached from the computational graph, so they can't be backpropogated through directly"""
-        z_H, z_L = self.deep_recursion(
-            carry.z_H,
-            carry.z_L,
-            self._input_embeddings(batch["inputs"]),
-            {"cos_sin": self._cos_sin()},
-        )
-        
+        # Finally, last recursion cycle is ran with the gradient attached
+        for _ in range(self.config.L_cycles):
+            z_L = self.L_level(z_L, z_H + x, **seq_dict)
+        z_H = self.L_level(z_L, z_H, **seq_dict) 
+
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
             # The slice [:, puzzle_emb_len:] strips the prepended summary slot(s) (the [CLS]-like position 0 that the q_head reads),
@@ -274,28 +262,13 @@ class InnerNetwork(nn.Module):
         # Struggling to find a super good reason for why z_H[:,0] is being passed in and not z_H. When there's a puzzle embedding, its added to the front of z_H, 
         # so z_H[:,0] is just running on the puzzle embedding of each batch, but otherwise it's hard to interpert exactly what z_H[0] is supposed to be
         q = self.q_head(z_H[:, 0]).to(torch.float32) 
-        return LatentCarry(z_H.detach(), z_L.detach()), logits, q[..., 0]
 
-    def forward_no_carry(self, z_H: torch.Tensor, z_L: torch.Tensor, batch: Dict[str, torch.Tensor]) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """Identical function to forward, but passes the z_H, z_L, and q-head values directy instead of LatentCarry object"""
-        z_H, z_L = self.deep_recursion(z_H, z_L, self._input_embeddings(batch["inputs"]), {"cos_sin": self._cos_sin()})
+        info = {
+            "q_halt_logits": q[..., 0],
+            "logits": logits,
+        }
+        return LatentCarry(z_H, z_L), info
 
-        # Same pattern as in the InnerNewwork forward
-        if self.config.puzzle_emb_ndim != 0:
-            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
-        else:
-            logits = self.lm_head(z_H).contiguous()
-
-        q = self.q_head(z_H[:, 0]).to(torch.float32)
-        
-        return (z_H, z_L), logits, (q[..., 0], q[..., 1])
-
-    def concat_states(self, z_H: torch.Tensor, z_L: torch.Tensor) -> torch.Tensor:
-        return torch.cat((z_H, z_L), dim=1)
-
-    def split_states(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        n = self.config.seq_len
-        return state[:, :n, :], state[:, n:, :]
 
 def _disable_torch_compile(fn: Any) -> Any:
     compiler = getattr(torch, "compiler", None)
@@ -374,7 +347,8 @@ class TRMModel(nn.Module):
         )
         
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
-        inner_carry, logits, q_halt = self.inner(inner_carry, current_data)
+        inner_carry, fpass_info = self.inner(inner_carry, current_data)
+        q_halt = fpass_info["q_halt_logits"]
         
         # ACT decision with ranomdizer that continues according to some exploration probability
         with torch.no_grad():
@@ -388,5 +362,5 @@ class TRMModel(nn.Module):
                         * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
                     )
                 )
-        return ModelCarry(inner_carry, steps, halted, current_data), {"logits": logits, "q_halt_logits": q_halt}
+        return ModelCarry(inner_carry, steps, halted, current_data), fpass_info
 
