@@ -50,13 +50,36 @@ class TRMRootConfig(BaseModel):
     jacobian_reg_gamma: float = 0.6  
     jacobian_reg_n_samples: int = 1
 
+def jac_loss_estimate(f0, z0, vecs=2, create_graph=True):
+    """Estimating tr(J^TJ)=tr(JJ^T) via Hutchinson estimator
+
+    Args:
+        f0 (torch.Tensor): Output of the function f (whose J is to be analyzed)
+        z0 (torch.Tensor): Input to the function f
+        vecs (int, optional): Number of random Gaussian vectors to use. Defaults to 2.
+        create_graph (bool, optional): Whether to create backward graph (e.g., to train on this loss). 
+                                       Defaults to True.
+
+    Returns:
+        torch.Tensor: A 1x1 torch tensor that encodes the (shape-normalized) jacobian loss
+    """
+    vecs = vecs
+    result = 0
+    for i in range(vecs):
+        v = torch.randn(*f0.shape).to(z0)
+        vJ = torch.autograd.grad(f0, z0, v, retain_graph=True, create_graph=create_graph)[0]
+        result += vJ.square().sum()
+
+    return result / (vecs * z0.numel())
+
+
 class TRMRoot_Inner(InnerNetwork):
     def __init__(self, config: TRMRootConfig):
         super().__init__(config)
         # super().__init__(config.TRM_cfg)
         config = TRMRootConfig(**config) if isinstance(config, dict) else config
         self.root_cfg = config
-        
+
     def _root_solve(self, z_L: torch.tensor, input_injection, seq_dict):
         """Uses the torch DEQ library to compute the fixed point of the inner network
 
@@ -84,30 +107,28 @@ class TRMRoot_Inner(InnerNetwork):
                 beta=float(cfg.deq_anderson_beta),
             )
 
+
+        # z_star = z_star.detach().requires_grad_() 
+        # z = self.L_level(z_star, input_injection, **seq_dict)
+        
         # Phantom-gradient: re-run the last K iterates WITH grad starting from
         # z_star, so the loss can backprop through K layer applications.
         K = max(1, int(cfg.bptt_through))
         damp = cfg.phantom_gradient_lambda
+
         z = z_star.detach()
         
         #TODO: Von-neuman convergance could also be added
         for _ in range(K):
             z = z*damp + (1-damp) * self.L_level(z, input_injection, **seq_dict)
 
-        # Compute the Hutchinson estimation of the forbenius norm of the Jacobain
-
-        jacobian = jacrev(self.L_level, argnums=0)(z_star, input_injection)
-        print("*"*20, "Jacobain", "*"*20)
-        print(jacobian.shape)
-
-        n = cfg.jacobian_reg_n_samples
-        noise = torch.randn(n, jacobian.shape[0])
-        jacobian_norm = noise @ jacobian
-        jac_reg = torch.linalg.vector_norm(jacobian_norm, ord=2) if n == 1 else torch.linalg.matrix_norm(jacobian_norm, ord=2)/n
+        z_out = self.L_level(z, input_injection, **seq_dict)
+        
+        jac_reg = jac_loss_estimate(z_out, z, vecs = cfg.jacobian_reg_n_samples, create_graph=False)
 
         # Convergence diagnostics for monitoring
         self._last_info = info
-        return z, jac_reg*cfg.jacobian_rec_gamma
+        return z, jac_reg*cfg.jacobian_reg_gamma
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -134,7 +155,7 @@ class TRMRoot_Inner(InnerNetwork):
         q = self.q_head(z_H[:, 0]).to(torch.float32) 
         
         info = {
-            "q_halt": q,
+            "q_halt_logits": q[..., 0],
             "logits": logits,
             "jacobain_reg": jac_reg,
         }
