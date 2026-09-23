@@ -78,18 +78,11 @@ class TRMRoot_Inner(InnerNetwork):
         super().__init__(config)
         # super().__init__(config.TRM_cfg)
         config = TRMRootConfig(**config) if isinstance(config, dict) else config
-        self.root_cfg = config
+        self.root_config = config
 
     @torch.compiler.disable(recursive=True)
-    def _jacobian_regularizer(
-        self,
-        z_star,
-        input_injection,
-        seq_dict,
-    ):
-        cfg = self.root_cfg
-        z_in = z_star.detach().requires_grad_(True)
-
+    def _jacobian_regularizer(self, z_in, input_injection, seq_dict):
+        cfg = self.root_config
 
         jac_input = input_injection.detach()
 
@@ -120,7 +113,7 @@ class TRMRoot_Inner(InnerNetwork):
             z: The output tensor of the equilibrium finding, attached to the computational graph
             jac_reg: The jacobian regularization penalty
         """
-        cfg = self.root_cfg
+        cfg = self.root_config
 
         # Anderson solver only works in f32 precision type, but we may not want that for our network
         def fmap(z):
@@ -132,7 +125,7 @@ class TRMRoot_Inner(InnerNetwork):
         with torch.no_grad():
             z_star, _, info = anderson_solver(
                 func = fmap,
-                x0 = z_L.float(),
+                x0 = z_L.detach().float(),
                 max_iter=int(cfg.deq_max_iter),
                 tol=float(cfg.deq_tol),
                 min_iter=int(cfg.deq_min_iter),
@@ -140,25 +133,10 @@ class TRMRoot_Inner(InnerNetwork):
                 beta=float(cfg.deq_anderson_beta),
             )
 
-        z = z_star.detach()
-        # z_in = z_star.detach().requires_grad_(True)
-        
-        # Phantom-gradient back prop
-        #TODO: Von-neuman convergance could also be added
-        damp = cfg.phantom_gradient_lambda
-        for _ in range(cfg.bptt_through):
-            z = z*damp + (1-damp) * self.L_level(z, input_injection, **seq_dict)
-        
-        # z_out = self.L_level(z_in, input_injection, **seq_dict)
-        # jac_reg = jac_loss_estimate(z_out, z_in, vecs = cfg.jacobian_reg_n_samples, create_graph=True)
-        # jac_reg = self._jacobian_regularizer(z_star, input_injection, seq_dict)
-        jac_reg = torch.zeros_like(z)
-
-
         # Convergence diagnostics for monitoring
         self._last_info = info
 
-        return z, jac_reg*cfg.jacobian_reg_gamma
+        return z_star 
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -168,13 +146,31 @@ class TRMRoot_Inner(InnerNetwork):
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"])
         seq_dict = {"cos_sin": self._cos_sin()}
+
+        # Replace the L_cycle recursions with a root-finding operation
+        with torch.no_grad():
+            for _ in range(self.config.H_cycles - 1):
+                z_L = self._root_solve(
+                    z_L = carry.z_L,
+                    input_injection = z_H + x,
+                    seq_dict = seq_dict
+                )
+                z_H = self.L_level(z_L, z_H, **seq_dict) 
+
+
+        z_phantom = z_L.detach().requires_grad_(True)
+        z_jac = z_L.detach()
+
+        jac_reg = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict)
         
-        z_L, jac_reg  = self._root_solve(
-            z_L = carry.z_L,
-            input_injection = z_H + x,
-            seq_dict = seq_dict
-        )
-        z_H = self.L_level(z_H, z_L, **seq_dict)
+        # Phantom Graidient iterations 
+        #TODO: Von-neuman convergance could also be added
+        damp = self.root_config.phantom_gradient_lambda
+        for _ in range(self.root_config.bptt_through):
+            z_jac = z_jac*damp + (1-damp) * self.L_level(z_jac, z_H + x, **seq_dict)
+        
+        z_H = self.L_level(z_jac, z_L, **seq_dict)
+
         
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
