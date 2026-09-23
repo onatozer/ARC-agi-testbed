@@ -1,8 +1,9 @@
 # @package _global_
+# TRM-MLP on Sudoku-Extreme, matching the TRM paper recipe.
+# Launch with: python pretrain.py --config-name train/trm_sudoku
 
 defaults:
-  - /arch: trm
-  - /dataset: sudoku
+  - /cfg_pretrain
   - _self_
 
 hydra:
@@ -23,11 +24,14 @@ target_q_update_every: 4
 beta1: 0.9
 beta2: 0.95
 weight_decay: 1.0
+puzzle_emb_lr: 1e-4
+puzzle_emb_weight_decay: 1.0
 arch:
   pos_encodings: none
   board_height: null
   board_width: null
   mlp_t: true
+  lambda_: 1.0 # No damping, matches the original TRM update
 
 load_weights_only: false
 ema: true

@@ -12,7 +12,7 @@ output_dir: data/sudoku-extreme-1k-aug-1000
 grid_size: 9
 
 # 9x9 dataset filters (only used when grid_size == 9)
-subsample_size: null
+subsample_size: 1000
 min_difficulty: null
 
 # Generated puzzle counts (only used when grid_size != 9)
@@ -22,6 +22,6 @@ num_test: 1000
 clue_ratio: 0.3
 
 # Number of augmentations per puzzle (train set only)
-num_aug: 0
+num_aug: 1000
 
 seed: null
