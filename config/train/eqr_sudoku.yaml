@@ -1,8 +1,10 @@
 # @package _global_
+# EqR on Sudoku-Extreme, matching the EqR paper recipe (locuslab/EqR config/train/eqr_sudoku.yaml).
+# Launch with: python pretrain.py --config-name train/eqr_sudoku
 
 defaults:
-  - /arch: eqr
-  - /dataset: sudoku
+  - /cfg_pretrain
+  - override /arch: eqr
   - _self_
 
 hydra:
@@ -23,8 +25,11 @@ target_q_update_every: 4
 beta1: 0.9
 beta2: 0.95
 weight_decay: 1.0
+puzzle_emb_lr: 1e-4
+puzzle_emb_weight_decay: 1.0
 arch:
   mlp_t: true
+  pos_encodings: none
 
 load_weights_only: false
 ema: true
