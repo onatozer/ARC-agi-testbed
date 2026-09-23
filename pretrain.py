@@ -22,6 +22,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from adam_atan2_pytorch import AdamAtan2
 import uuid
+from torchviz import make_dot
+
 
 torch.set_float32_matmul_precision('high')
 try:
@@ -406,6 +408,9 @@ def train_batch(
         train_state.carry, loss, metrics, _, all_finish = train_state.model(
             carry=train_state.carry, batch=batch, return_keys=[]
         )
+        # print("$$"*80)
+        # dot = make_dot(model(carry=train_state.carry, batch=batch, return_keys=[]), params=dict(model.named_parameters()))
+        # dot.render("model_graph", format="png")
     
 
     # Here we scale the loss by the batch size so that when we take the total sum across the GPUs, we end up with the same gradient

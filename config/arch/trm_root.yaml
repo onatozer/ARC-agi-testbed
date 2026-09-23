@@ -1,5 +1,4 @@
 defaults:
-  # - trm@TRM_cfg
   - trm
   - _self_
 
@@ -7,7 +6,8 @@ name: recursive_reasoning.trm_root@TRMRoot
 short_name: TRMRoot
 
 loss:
-  name: losses.loss_heads@ACTLossHead
+  name: losses.loss_heads@ACTLossHeadRoot
+  # name: losses.loss_heads@ACTLossHead
   loss_type: stablemax_cross_entropy
 
 deq_max_iter: 8

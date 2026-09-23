@@ -80,6 +80,39 @@ class TRMRoot_Inner(InnerNetwork):
         config = TRMRootConfig(**config) if isinstance(config, dict) else config
         self.root_cfg = config
 
+    @torch.compiler.disable(recursive=True)
+    def _jacobian_regularizer(
+        self,
+        z_star,
+        input_injection,
+        seq_dict,
+    ):
+        cfg = self.root_cfg
+        z_in = z_star.detach().requires_grad_(True)
+
+
+        jac_input = input_injection.detach()
+
+        jac_seq_dict = {
+            k: v.detach() if isinstance(v, torch.Tensor) else v
+            for k, v in seq_dict.items()
+        }
+
+        z_out = self.L_level(
+            z_in,
+            jac_input,
+            **jac_seq_dict,
+        )
+
+        jac_reg = jac_loss_estimate(
+            z_out,
+            z_in,
+            vecs=cfg.jacobian_reg_n_samples,
+            create_graph=True,
+        )
+
+        return jac_reg * cfg.jacobian_reg_gamma
+
     def _root_solve(self, z_L: torch.tensor, input_injection, seq_dict):
         """Uses the torch DEQ library to compute the fixed point of the inner network
 
@@ -107,27 +140,24 @@ class TRMRoot_Inner(InnerNetwork):
                 beta=float(cfg.deq_anderson_beta),
             )
 
-
-        # z_star = z_star.detach().requires_grad_() 
-        # z = self.L_level(z_star, input_injection, **seq_dict)
-        
-        # Phantom-gradient: re-run the last K iterates WITH grad starting from
-        # z_star, so the loss can backprop through K layer applications.
-        K = max(1, int(cfg.bptt_through))
-        damp = cfg.phantom_gradient_lambda
-
         z = z_star.detach()
+        # z_in = z_star.detach().requires_grad_(True)
         
+        # Phantom-gradient back prop
         #TODO: Von-neuman convergance could also be added
-        for _ in range(K):
+        damp = cfg.phantom_gradient_lambda
+        for _ in range(cfg.bptt_through):
             z = z*damp + (1-damp) * self.L_level(z, input_injection, **seq_dict)
-
-        z_out = self.L_level(z, input_injection, **seq_dict)
         
-        jac_reg = jac_loss_estimate(z_out, z, vecs = cfg.jacobian_reg_n_samples, create_graph=False)
+        # z_out = self.L_level(z_in, input_injection, **seq_dict)
+        # jac_reg = jac_loss_estimate(z_out, z_in, vecs = cfg.jacobian_reg_n_samples, create_graph=True)
+        # jac_reg = self._jacobian_regularizer(z_star, input_injection, seq_dict)
+        jac_reg = torch.zeros_like(z)
+
 
         # Convergence diagnostics for monitoring
         self._last_info = info
+
         return z, jac_reg*cfg.jacobian_reg_gamma
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:

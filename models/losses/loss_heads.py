@@ -339,7 +339,7 @@ class InferenceLossHead(ACTLossHead):
             finished_mask = finished_mask | (steps >= max_steps)
         return total_loss, metrics, detached_outputs, finished_mask.all()
 
-class ACTLossHeadDEQ(nn.Module):
+class ACTLossHeadRoot(nn.Module):
     def __init__(self, model: nn.Module, *, loss_type: str,
                  jacobian_reg_lambda: float = 0.0):
         super().__init__()
