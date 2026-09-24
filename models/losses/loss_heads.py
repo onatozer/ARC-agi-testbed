@@ -15,6 +15,18 @@ def _carry_get(carry: Any, key: str, default: Any = None) -> Any:
     return getattr(carry, key, default)
 
 
+def _recursion_metrics(carry: Any, valid: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """Per-halted-puzzle recursion cost, summed over `valid` rows (the caller divides by count).
+
+    nfe: L_level evaluations used to reach the answer.
+    """
+    metrics: Dict[str, torch.Tensor] = {}
+    nfe = _carry_get(carry, "nfe", None)
+    if nfe is not None:
+        metrics["nfe"] = torch.where(valid, nfe.to(torch.float32), 0).sum()
+    return metrics
+
+
 class ACTLossHead(BaseLossHead):
 
     def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
@@ -172,6 +184,7 @@ class ACTLossHead(BaseLossHead):
                     ),
                 }
             )
+        metrics.update(_recursion_metrics(carry, valid_metrics))
         return metrics
 
 class InferenceLossHead(ACTLossHead):
@@ -247,6 +260,7 @@ class InferenceLossHead(ACTLossHead):
                     torch.zeros_like(loss_counts, dtype=torch.float32),
                 ).sum(),
                 "steps": torch.where(valid_metrics, steps.to(torch.float32), torch.zeros_like(loss_counts, dtype=torch.float32)).sum(),
+                **_recursion_metrics(carry, valid_metrics),
             }
 
         lm_loss = (
@@ -311,6 +325,7 @@ class ACTLossHeadRoot(nn.Module):
                     valid_metrics & ((outputs["q_halt_logits"] >= 0) == seq_is_correct)
                 ).sum(),
                 "steps": torch.where(valid_metrics, new_carry.steps, 0).sum(),
+                **_recursion_metrics(new_carry, valid_metrics),
             }
 
         lm_loss = (

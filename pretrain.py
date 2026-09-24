@@ -528,6 +528,7 @@ def train_batch(
                 "train/step_utility",
                 "train/max_steps",
                 "train/min_steps",
+                "train/nfe",
             }
                 for key in drop_when_empty:
                     processed_metrics.pop(key, None)
