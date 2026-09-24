@@ -427,18 +427,7 @@ def train_batch(
                 param.grad = torch.zeros_like(param, memory_format=torch.preserve_format)
             dist.all_reduce(param.grad)
     
-    # Backpropogate the loss through the network
-    lr_this_step = None
-    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
-        lr_this_step = compute_lr(base_lr, config, train_state)
-
-        for param_group in optim.param_groups:
-            param_group["lr"] = lr_this_step
-
-        optim.step()
-        optim.zero_grad()
-    
-
+    # Grad norms must be read before optim.zero_grad() clears them
     norms = {}
     if _should_log_grad_norms(config, train_state.step):
         total_sq: float = 0.0
@@ -457,6 +446,19 @@ def train_batch(
         norms["train/grad_norm/total"] = float(math.sqrt(total_sq)) if num_tensors > 0 else 0.0
         norms["train/grad_norm/max"] = float(max_norm)
         norms["train/grad_norm/num_tensors"] = float(num_tensors)
+
+    # Backpropogate the loss through the network
+    lr_this_step = None
+    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
+        lr_this_step = compute_lr(base_lr, config, train_state)
+
+        for param_group in optim.param_groups:
+            param_group["lr"] = lr_this_step
+
+        optim.step()
+        optim.zero_grad()
+    
+
     
     
     raw_steps = metrics.pop("raw_steps", None)

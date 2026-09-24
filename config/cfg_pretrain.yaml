@@ -17,6 +17,7 @@ eval_interval_steps: 5000
 checkpoint_interval_steps: 5000
 heavy_metrics_log_interval: 2500
 steps_hist_log_interval_steps: 1000
+grad_norm_log_interval_steps: 100
 
 lr: 1e-4
 lr_min_ratio: 1.0
