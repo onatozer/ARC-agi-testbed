@@ -530,6 +530,10 @@ def train_batch(
                 "train/min_steps",
                 "train/nfe",
                 "train/zH_rel_residual",
+                "train/halt/quick_correct",
+                "train/halt/quick_wrong",
+                "train/halt/slow_correct",
+                "train/halt/slow_wrong",
             }
                 for key in drop_when_empty:
                     processed_metrics.pop(key, None)
