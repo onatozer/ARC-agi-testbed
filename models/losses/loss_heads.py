@@ -15,32 +15,6 @@ def _carry_get(carry: Any, key: str, default: Any = None) -> Any:
     return getattr(carry, key, default)
 
 
-def _compute_z_alignment_per_sample(
-    z_h: torch.Tensor,
-    z_l: torch.Tensor,
-    *,
-    eps: float = 1e-6,
-) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
-    min_seq = min(z_h.shape[1], z_l.shape[1])
-    z_h_f = z_h[:, :min_seq].to(torch.float32)
-    z_l_f = z_l[:, :min_seq].to(torch.float32)
-
-    cos_tok = F.cosine_similarity(z_h_f, z_l_f, dim=-1)
-    cos_per_sample = cos_tok.mean(dim=-1)
-
-    z_h_mean_d = z_h_f.mean(dim=-1, keepdim=True)
-    z_l_mean_d = z_l_f.mean(dim=-1, keepdim=True)
-    z_h_centered = z_h_f - z_h_mean_d
-    z_l_centered = z_l_f - z_l_mean_d
-    pearson_num = (z_h_centered * z_l_centered).sum(dim=-1)
-    pearson_den = z_h_centered.norm(dim=-1) * z_l_centered.norm(dim=-1)
-    pearson_per_sample = (pearson_num / pearson_den.clamp_min(eps)).mean(dim=-1)
-
-    z_h_stats = (z_h_f.mean(dim=-1).mean(dim=-1), z_h_f.std(dim=-1).mean(dim=-1))
-    z_l_stats = (z_l_f.mean(dim=-1).mean(dim=-1), z_l_f.std(dim=-1).mean(dim=-1))
-    return cos_per_sample, pearson_per_sample, z_h_stats, z_l_stats
-
-
 class ACTLossHead(BaseLossHead):
 
     def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
@@ -144,10 +118,7 @@ class ACTLossHead(BaseLossHead):
             "count": count,
             "accuracy": torch.zeros_like(count, dtype=torch.float32),
             "exact_accuracy": torch.zeros_like(count),
-            **self._zh_zl_metrics(carry, count),
             "halted_q_logits": torch.zeros_like(count),
-            "max_q_logits": torch.zeros_like(count, dtype=torch.float32),
-            "min_q_logits": torch.full_like(count, float("inf"), dtype=torch.float32),
             "q_halt_accuracy": torch.zeros_like(count),
             "q_halt_precision": torch.zeros_like(count, dtype=torch.float32),
             "q_halt_recall": torch.zeros_like(count, dtype=torch.float32),
@@ -170,16 +141,6 @@ class ACTLossHead(BaseLossHead):
                         outputs["q_halt_logits"],
                         torch.zeros_like(loss_counts, dtype=torch.float32),
                     ).sum(),
-                    "max_q_logits": torch.where(
-                        valid_metrics,
-                        outputs["q_halt_logits"].to(torch.float32),
-                        torch.full_like(loss_counts, float("-inf"), dtype=torch.float32),
-                    ).max(),
-                    "min_q_logits": torch.where(
-                        valid_metrics,
-                        outputs["q_halt_logits"].to(torch.float32),
-                        torch.full_like(loss_counts, float("inf"), dtype=torch.float32),
-                    ).min(),
                     "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
                     "q_halt_precision": torch.where(
                         valid_metrics,
@@ -212,37 +173,6 @@ class ACTLossHead(BaseLossHead):
                 }
             )
         return metrics
-
-    def _zh_zl_metrics(self, carry: Any, count: torch.Tensor) -> Dict[str, torch.Tensor]:
-        zero = torch.zeros_like(count, dtype=torch.float32)
-        # TODO: Dumbass fucking metrics, why tf are we tracking zH cos sim ?????
-        metrics = {
-            "zH_zL_cos_sim": zero,
-            "zH_zL_pearson": zero,
-            "zH_mean": zero,
-            "zH_std": zero,
-            "zL_mean": zero,
-            "zL_std": zero,
-        }
-        inner_carry = getattr(carry, "inner_carry", None)
-        if inner_carry is None or not hasattr(inner_carry, "z_H") or not hasattr(inner_carry, "z_L"):
-            return metrics
-        z_h = getattr(inner_carry, "z_H")
-        z_l = getattr(inner_carry, "z_L")
-        if not isinstance(z_h, torch.Tensor) or not isinstance(z_l, torch.Tensor):
-            return metrics
-        if z_h.ndim != 3 or z_l.ndim != 3:
-            return metrics
-
-        cos_per_sample, pearson_per_sample, z_h_stats, z_l_stats = _compute_z_alignment_per_sample(z_h, z_l)
-        metrics["zH_zL_cos_sim"] = cos_per_sample.sum()
-        metrics["zH_zL_pearson"] = pearson_per_sample.sum()
-        metrics["zH_mean"] = z_h_stats[0].sum()
-        metrics["zH_std"] = z_h_stats[1].sum()
-        metrics["zL_mean"] = z_l_stats[0].sum()
-        metrics["zL_std"] = z_l_stats[1].sum()
-        return metrics
-
 
 class InferenceLossHead(ACTLossHead):
     def forward(
@@ -303,7 +233,6 @@ class InferenceLossHead(ACTLossHead):
                     torch.zeros_like(loss_counts, dtype=torch.float32),
                 ).sum(),
                 "exact_accuracy": (valid_metrics & seq_is_correct).sum(),
-                **self._zh_zl_metrics(carry, count),
                 "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
                 "q_halt_precision": torch.where(
                     valid_metrics,

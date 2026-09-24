@@ -31,24 +31,6 @@ def _device(model: torch.nn.Module) -> torch.device:
             return torch.device("cpu")
 
 
-def _hidden(carry: Any) -> Optional[torch.Tensor]:
-    inner = getattr(carry, "inner_carry", None)
-    if inner is None:
-        return None
-    if hasattr(inner, "z_H") and hasattr(inner, "z_L"):
-        return torch.cat((inner.z_H, inner.z_L), dim=1)
-    if hasattr(inner, "z_H"):
-        return inner.z_H
-    return None
-
-
-def _residual_metrics(values: List[torch.Tensor], steps: int, ref: torch.Tensor) -> Dict[str, torch.Tensor]:
-    return {
-        f"residual_of_{i + 1}_steps": values[i].to(ref) if i < len(values) else torch.zeros_like(ref)
-        for i in range(max(0, int(steps)))
-    }
-
-
 def _gather_object(obj: Any, world_size: int, group: Optional[dist.ProcessGroup]) -> List[Any]:
     if world_size <= 1:
         return [obj]
@@ -329,9 +311,7 @@ def evaluate(
             else:
                 carry = tree_to_device(carry, device)
 
-            residuals: List[torch.Tensor] = []
             trajectory: List[torch.Tensor] = []
-            prev = _hidden(carry)
             while True:
                 if inference_runner is None:
                     carry, loss, metrics, preds, all_finish = train_state.model(
@@ -348,16 +328,9 @@ def evaluate(
                     )
                 if conv is not None and preds is not None and "logits" in preds:
                     trajectory.append(preds["logits"].detach())
-                cur = _hidden(carry)
-                if cur is not None and prev is not None:
-                    residuals.append((cur - prev).flatten(start_dim=1).to(torch.float32).norm(dim=1).sum())
-                prev = None if cur is None else cur.detach()
                 if bool(all_finish.detach().all().item() if torch.is_tensor(all_finish) else all_finish):
                     break
 
-            max_steps = getattr(getattr(getattr(train_state.model, "model", None), "config", None), "halt_max_steps", len(residuals))
-            if "count" in metrics:
-                metrics.update(_residual_metrics(residuals, int(max_steps), metrics["count"]))
             set_id = set_ids[set_name]
             _accumulate(state, metrics, set_id)
 
