@@ -29,6 +29,11 @@ def _should_log_grad_norms(config, step: int) -> bool:
     return interval is not None and interval > 0 and (step == 1 or step % interval == 0)
 
 
+def _should_log_flops(config, step: int) -> bool:
+    interval = getattr(config, "flops_log_interval_steps", None)
+    return interval is not None and interval > 0 and (step == 1 or step % interval == 0)
+
+
 def _should_log_steps_hist(config, step: int) -> bool:
     interval = getattr(config, "steps_hist_log_interval_steps", None)
     return interval is not None and interval > 0 and (step == 1 or step % interval == 0)
@@ -74,6 +79,7 @@ def _build_steps_hist_plotly(values: Sequence[float], num_bins: int = 50):
 __all__ = [
     "compute_pass_at_k",
     "_should_log_grad_norms",
+    "_should_log_flops",
     "_should_log_steps_hist",
     "_collect_raw_steps_for_logging",
     "_build_steps_hist_plotly",

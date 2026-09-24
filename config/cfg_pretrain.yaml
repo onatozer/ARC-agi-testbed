@@ -18,6 +18,7 @@ checkpoint_interval_steps: 5000
 heavy_metrics_log_interval: 2500
 steps_hist_log_interval_steps: 1000
 grad_norm_log_interval_steps: 100
+flops_log_interval_steps: 100 # FLOPs of forward+backward, measured every N steps and carried forward in between
 
 lr: 1e-4
 lr_min_ratio: 1.0
