@@ -350,6 +350,7 @@ class TRMModel(nn.Module):
         )
         
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
+        prev_z_H = inner_carry.z_H
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
         q_halt = fpass_info["q_halt_logits"]
 
@@ -358,6 +359,9 @@ class TRMModel(nn.Module):
             step_nfe = fpass_info.pop("nfe", self.config.H_cycles * (self.config.L_cycles + 1))
             prev_nfe = carry.nfe.to(device=device) if carry.nfe is not None else torch.zeros_like(steps)
             nfe = torch.where(reset, torch.zeros_like(prev_nfe), prev_nfe) + step_nfe
+            # normalised residual of z_H over this supervision step: ||z_H^t - z_H^(t-1)|| / ||z_H^t||
+            d_z_H = (inner_carry.z_H.float() - prev_z_H.float()).flatten(1).norm(dim=1)
+            fpass_info["zH_rel_residual"] = d_z_H / inner_carry.z_H.float().flatten(1).norm(dim=1).clamp_min(1e-8)
         
         # ACT decision with ranomdizer that continues according to some exploration probability
         with torch.no_grad():

@@ -15,15 +15,18 @@ def _carry_get(carry: Any, key: str, default: Any = None) -> Any:
     return getattr(carry, key, default)
 
 
-def _recursion_metrics(carry: Any, valid: torch.Tensor) -> Dict[str, torch.Tensor]:
-    """Per-halted-puzzle recursion cost, summed over `valid` rows (the caller divides by count).
+def _recursion_metrics(outputs: Dict[str, torch.Tensor], carry: Any, valid: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """Per-halted-puzzle recursion cost and convergence, summed over `valid` rows (the caller divides by count).
 
-    nfe: L_level evaluations used to reach the answer.
+    nfe: L_level evaluations used to reach the answer. zH_rel_residual: ||z_H^T - z_H^(T-1)|| / ||z_H^T|| at halt.
     """
+    f32 = torch.float32
     metrics: Dict[str, torch.Tensor] = {}
     nfe = _carry_get(carry, "nfe", None)
     if nfe is not None:
-        metrics["nfe"] = torch.where(valid, nfe.to(torch.float32), 0).sum()
+        metrics["nfe"] = torch.where(valid, nfe.to(f32), 0).sum()
+    if "zH_rel_residual" in outputs:
+        metrics["zH_rel_residual"] = torch.where(valid, outputs["zH_rel_residual"].to(f32), 0).sum()
     return metrics
 
 
@@ -184,7 +187,7 @@ class ACTLossHead(BaseLossHead):
                     ),
                 }
             )
-        metrics.update(_recursion_metrics(carry, valid_metrics))
+        metrics.update(_recursion_metrics(outputs, carry, valid_metrics))
         return metrics
 
 class InferenceLossHead(ACTLossHead):
@@ -260,7 +263,7 @@ class InferenceLossHead(ACTLossHead):
                     torch.zeros_like(loss_counts, dtype=torch.float32),
                 ).sum(),
                 "steps": torch.where(valid_metrics, steps.to(torch.float32), torch.zeros_like(loss_counts, dtype=torch.float32)).sum(),
-                **_recursion_metrics(carry, valid_metrics),
+                **_recursion_metrics(outputs, carry, valid_metrics),
             }
 
         lm_loss = (
@@ -325,7 +328,7 @@ class ACTLossHeadRoot(nn.Module):
                     valid_metrics & ((outputs["q_halt_logits"] >= 0) == seq_is_correct)
                 ).sum(),
                 "steps": torch.where(valid_metrics, new_carry.steps, 0).sum(),
-                **_recursion_metrics(new_carry, valid_metrics),
+                **_recursion_metrics(outputs, new_carry, valid_metrics),
             }
 
         lm_loss = (

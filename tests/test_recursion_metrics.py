@@ -10,16 +10,18 @@ def _run(model, batch, n_steps):
     return carry, metrics
 
 
-def test_nfe_counts_block_evaluations_per_puzzle():
+def test_nfe_and_residual_per_halted_puzzle():
     model, batch = tiny_model_and_batch(batch_size=8)
     model.train()
     cfg = model.model.config
     carry, metrics = _run(model, batch, cfg.halt_max_steps)  # every row has halted by now
-    assert metrics["count"].item() > 0
+    count = metrics["count"].item()
+    assert count > 0
     # NFE per halted puzzle = supervision steps x L_level calls per step
     per_step = cfg.H_cycles * (cfg.L_cycles + 1)
     assert torch.equal(carry.nfe, carry.steps * per_step)
     assert metrics["nfe"].item() == (carry.steps[carry.halted] * per_step).sum().item()
+    assert 0 < metrics["zH_rel_residual"].item() / count < 10
 
 
 def test_nfe_resets_for_new_puzzles():
@@ -28,4 +30,4 @@ def test_nfe_resets_for_new_puzzles():
     cfg = model.model.config
     carry, metrics = _run(model, batch, cfg.halt_max_steps + 1)  # one step into the next puzzle
     assert torch.equal(carry.nfe, torch.full_like(carry.nfe, cfg.H_cycles * (cfg.L_cycles + 1)))
-    assert "nfe" in metrics
+    assert "nfe" in metrics and "zH_rel_residual" in metrics
