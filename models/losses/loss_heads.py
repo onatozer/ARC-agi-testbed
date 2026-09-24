@@ -278,6 +278,9 @@ class ACTLossHeadRoot(nn.Module):
             "softmax_cross_entropy": softmax_cross_entropy,
         }[loss_type]
         self.jacobian_reg_lambda = float(jacobian_reg_lambda)
+        inner = getattr(model, "inner", None)
+        if inner is not None and hasattr(inner, "compute_jacobian_reg"):
+            inner.compute_jacobian_reg = self.jacobian_reg_lambda > 0
 
     def initial_carry(self, *args, **kwargs):
         return self.model.initial_carry(*args, **kwargs)
@@ -332,7 +335,8 @@ class ACTLossHeadRoot(nn.Module):
         jac_reg = outputs.get("jacobian_reg", torch.zeros((), device=lm_loss.device))
         # Scale by global batch / loss_divisor to keep magnitudes comparable to lm_loss
         jac_loss = self.jacobian_reg_lambda * jac_reg
-        metrics["jacobian_reg"] = jac_reg.detach()
+        # batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
+        metrics["fprl/jacobian_reg"] = jac_reg.detach()
 
         total = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + jac_loss
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}

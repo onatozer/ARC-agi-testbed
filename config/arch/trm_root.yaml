@@ -9,6 +9,7 @@ loss:
   name: losses.loss_heads@ACTLossHeadRoot
   # name: losses.loss_heads@ACTLossHead
   loss_type: stablemax_cross_entropy
+  jacobian_reg_lambda: 0.0 # >0 enables the Jacobian penalty (total weight = lambda * jacobian_reg_gamma)
 
 deq_max_iter: 8
 deq_min_iter: 4
