@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from pydantic import BaseModel, ConfigDict, Field
 from torch import nn
 from torch.func import functional_call, jacrev
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torchdeq.solver.anderson import anderson_solver
 
 from ..common import trunc_normal_init_
@@ -79,6 +80,8 @@ class TRMRoot_Inner(InnerNetwork):
         # super().__init__(config.TRM_cfg)
         config = TRMRootConfig(**config) if isinstance(config, dict) else config
         self.root_config = config
+        # Set to False by ACTLossHeadRoot when jacobian_reg_lambda == 0
+        self.compute_jacobian_reg = True
 
     @torch.compiler.disable(recursive=True)
     def _jacobian_regularizer(self, z_in, input_injection, seq_dict):
@@ -91,11 +94,12 @@ class TRMRoot_Inner(InnerNetwork):
             for k, v in seq_dict.items()
         }
 
-        z_out = self.L_level(
-            z_in,
-            jac_input,
-            **jac_seq_dict,
-        )
+        with sdpa_kernel(SDPBackend.MATH):  # the penalty's gradient needs a double backward; fused attention kernels have none
+            z_out = self.L_level(
+                z_in,
+                jac_input,
+                **jac_seq_dict,
+            )
 
         jac_reg = jac_loss_estimate(
             z_out,
@@ -117,6 +121,7 @@ class TRMRoot_Inner(InnerNetwork):
 
         # Anderson solver only works in f32 precision type, but we may not want that for our network
         def fmap(z):
+            self._nfe += 1
             z = z.to(getattr(torch, cfg.forward_dtype))
             z_out = self.L_level(z, input_injection, **seq_dict).float() #NOTE: Potentially reshape to be friendlier to anderson solver?? 
             return z_out
@@ -146,6 +151,7 @@ class TRMRoot_Inner(InnerNetwork):
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"])
         seq_dict = {"cos_sin": self._cos_sin()}
+        self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
 
         # Replace the L_cycle recursions with a root-finding operation
         with torch.no_grad():
@@ -156,12 +162,17 @@ class TRMRoot_Inner(InnerNetwork):
                     seq_dict = seq_dict
                 )
                 z_H = self.L_level(z_L, z_H, **seq_dict) 
+                self._nfe += 1
 
 
-        z_phantom = z_L.detach().requires_grad_(True)
         z_jac = z_L.detach()
 
-        jac_reg = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict)
+        # Only pay for the extra L_level pass + VJPs when the penalty actually enters the loss
+        jac_reg = torch.zeros((), device=z_L.device)
+        if self.compute_jacobian_reg and self.training and torch.is_grad_enabled() and self.root_config.jacobian_reg_gamma > 0:
+            z_phantom = z_L.detach().requires_grad_(True)
+            jac_reg = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict)
+            self._nfe += 1
         
         # Phantom Graidient iterations 
         #TODO: Von-neuman convergance could also be added
@@ -170,6 +181,7 @@ class TRMRoot_Inner(InnerNetwork):
             z_jac = z_jac*damp + (1-damp) * self.L_level(z_jac, z_H + x, **seq_dict)
         
         z_H = self.L_level(z_jac, z_L, **seq_dict)
+        self._nfe += self.root_config.bptt_through + 1
 
         
         # Clip out the puzzle embedding dims from the decoder
@@ -183,7 +195,8 @@ class TRMRoot_Inner(InnerNetwork):
         info = {
             "q_halt_logits": q[..., 0],
             "logits": logits,
-            "jacobain_reg": jac_reg,
+            "jacobian_reg": jac_reg,
+            "nfe": self._nfe,
         }
         return LatentCarry(z_H, z_L), info
 

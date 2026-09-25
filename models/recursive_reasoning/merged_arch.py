@@ -23,6 +23,7 @@ class ModelCarry:
     current_data: Dict[str, torch.Tensor]
     global_step: Optional[int] = None
     halt_counter: Optional[torch.Tensor] = None
+    nfe: Optional[torch.Tensor] = None  # per-row L_level evaluations since the puzzle was (re)started
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
@@ -325,6 +326,7 @@ class TRMModel(nn.Module):
             halted=torch.ones((batch_size,), dtype=torch.bool, device=device),
             current_data={k: torch.empty_like(v, device=device) for k, v in batch.items()},
             halt_counter=torch.zeros((batch_size,), dtype=torch.int32, device=device),
+            nfe=torch.zeros((batch_size,), dtype=torch.int32, device=device),
         )
 
     def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
@@ -348,8 +350,18 @@ class TRMModel(nn.Module):
         )
         
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
+        prev_z_H = inner_carry.z_H
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
         q_halt = fpass_info["q_halt_logits"]
+
+        with torch.no_grad():
+            # NFE = L_level (the shared block f) evaluations; inners with a variable count (e.g. DEQ solvers) report it
+            step_nfe = fpass_info.pop("nfe", self.config.H_cycles * (self.config.L_cycles + 1))
+            prev_nfe = carry.nfe.to(device=device) if carry.nfe is not None else torch.zeros_like(steps)
+            nfe = torch.where(reset, torch.zeros_like(prev_nfe), prev_nfe) + step_nfe
+            # normalised residual of z_H over this supervision step: ||z_H^t - z_H^(t-1)|| / ||z_H^t||
+            d_z_H = (inner_carry.z_H.float() - prev_z_H.float()).flatten(1).norm(dim=1)
+            fpass_info["zH_rel_residual"] = d_z_H / inner_carry.z_H.float().flatten(1).norm(dim=1).clamp_min(1e-8)
         
         # ACT decision with ranomdizer that continues according to some exploration probability
         with torch.no_grad():
@@ -363,5 +375,5 @@ class TRMModel(nn.Module):
                         * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
                     )
                 )
-        return ModelCarry(inner_carry, steps, halted, current_data), fpass_info
+        return ModelCarry(inner_carry, steps, halted, current_data, nfe=nfe), fpass_info
 
