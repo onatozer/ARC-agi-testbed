@@ -126,7 +126,6 @@ class TRMRoot_Inner(InnerNetwork):
 
         # Anderson solver only works in f32 precision type, but we may not want that for our network
         def fmap(z):
-            self._nfe += 1
             z = z.to(getattr(torch, cfg.forward_dtype))
             z_out = self.L_level(z, input_injection, **seq_dict).float() #NOTE: Potentially reshape to be friendlier to anderson solver?? 
             return z_out
@@ -146,7 +145,15 @@ class TRMRoot_Inner(InnerNetwork):
         # Convergence diagnostics for monitoring
         self._last_info = info
 
-        return z_star 
+        # Per-puzzle NFE: the solver runs the whole batch until its worst row converges (and its 'abs' test rarely
+        # passes), so count, per row, the f evals until that row's relative residual first drops below deq_tol.
+        # rel_trace[:, 0] is a placeholder; column j >= 1 is the residual after j + 2 evals.
+        below_tol = info["rel_trace"][:, 1:] < float(cfg.deq_tol)
+        self._nfe = self._nfe + torch.where(
+            below_tol.any(dim=1), below_tol.int().argmax(dim=1) + 3, int(cfg.deq_max_iter)
+        ).to(torch.int32)
+
+        return z_star
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
@@ -156,7 +163,7 @@ class TRMRoot_Inner(InnerNetwork):
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"])
         seq_dict = {"cos_sin": self._cos_sin()}
-        self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
+        self._nfe = 0  # per-row L_level evaluations in this forward (solver iterations are data-dependent)
 
         # Replace the L_cycle recursions with a root-finding operation
         with torch.no_grad():
