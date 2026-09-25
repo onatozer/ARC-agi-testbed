@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 
 
-SPECIAL_METRIC_KEYS: Set[str] = frozenset({"max_steps", "min_steps", "max_q_logits", "min_q_logits"})
+SPECIAL_METRIC_KEYS: Set[str] = frozenset({"max_steps", "min_steps"})
 
 
 def partition_metrics(

@@ -494,10 +494,7 @@ def train_batch(
                 if k.startswith("fprl/"):
                     processed_metrics[f"train/{k}"] = v / float(world_size)
                 else:
-                    if k in {"zH_zL_cos_sim", "zH_zL_pearson", "zH_mean", "zH_std", "zL_mean", "zL_std"}:
-                        denom = float(global_batch_size)
-                    else:
-                        denom = global_batch_size if k.endswith("loss") else count
+                    denom = global_batch_size if k.endswith("loss") else count
                     processed_metrics[f"train/{k}"] = v / denom
 
 
@@ -525,8 +522,6 @@ def train_batch(
                 "train/q_halt_precision",
                 "train/q_halt_recall",
                 "train/halted_q_logits",
-                "train/max_q_logits",
-                "train/min_q_logits",
                 "train/steps",
                 "train/step_utility",
                 "train/max_steps",
