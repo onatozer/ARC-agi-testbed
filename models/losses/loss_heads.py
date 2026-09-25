@@ -15,10 +15,20 @@ def _carry_get(carry: Any, key: str, default: Any = None) -> Any:
     return getattr(carry, key, default)
 
 
-def _recursion_metrics(outputs: Dict[str, torch.Tensor], carry: Any, valid: torch.Tensor) -> Dict[str, torch.Tensor]:
+def _recursion_metrics(
+    outputs: Dict[str, torch.Tensor],
+    carry: Any,
+    valid: torch.Tensor,
+    seq_is_correct: torch.Tensor,
+    halt_max_steps: int,
+    split_quick: bool,
+) -> Dict[str, torch.Tensor]:
     """Per-halted-puzzle recursion cost and convergence, summed over `valid` rows (the caller divides by count).
 
     nfe: L_level evaluations used to reach the answer. zH_rel_residual: ||z_H^T - z_H^(T-1)|| / ||z_H^T|| at halt.
+    With split_quick, halted puzzles are split into quick (halted within halt_max_steps // 2 supervision steps) vs slow,
+    and correct vs wrong; the four fractions sum to 1. Only meaningful when halting is adaptive (training), since at
+    eval every puzzle runs to halt_max_steps.
     """
     f32 = torch.float32
     metrics: Dict[str, torch.Tensor] = {}
@@ -27,6 +37,11 @@ def _recursion_metrics(outputs: Dict[str, torch.Tensor], carry: Any, valid: torc
         metrics["nfe"] = torch.where(valid, nfe.to(f32), 0).sum()
     if "zH_rel_residual" in outputs:
         metrics["zH_rel_residual"] = torch.where(valid, outputs["zH_rel_residual"].to(f32), 0).sum()
+    if split_quick:
+        quick = carry.steps <= max(halt_max_steps // 2, 1)
+        for speed, speed_mask in (("quick", quick), ("slow", ~quick)):
+            for outcome, outcome_mask in (("correct", seq_is_correct), ("wrong", ~seq_is_correct)):
+                metrics[f"halt/{speed}_{outcome}"] = (valid & speed_mask & outcome_mask).sum()
     return metrics
 
 
@@ -187,7 +202,9 @@ class ACTLossHead(BaseLossHead):
                     ),
                 }
             )
-        metrics.update(_recursion_metrics(outputs, carry, valid_metrics))
+        metrics.update(
+            _recursion_metrics(outputs, carry, valid_metrics, seq_is_correct, self.model.config.halt_max_steps, self.training)
+        )
         return metrics
 
 class InferenceLossHead(ACTLossHead):
@@ -263,7 +280,7 @@ class InferenceLossHead(ACTLossHead):
                     torch.zeros_like(loss_counts, dtype=torch.float32),
                 ).sum(),
                 "steps": torch.where(valid_metrics, steps.to(torch.float32), torch.zeros_like(loss_counts, dtype=torch.float32)).sum(),
-                **_recursion_metrics(outputs, carry, valid_metrics),
+                **_recursion_metrics(outputs, carry, valid_metrics, seq_is_correct, max_steps, split_quick=False),
             }
 
         lm_loss = (
@@ -328,7 +345,9 @@ class ACTLossHeadRoot(nn.Module):
                     valid_metrics & ((outputs["q_halt_logits"] >= 0) == seq_is_correct)
                 ).sum(),
                 "steps": torch.where(valid_metrics, new_carry.steps, 0).sum(),
-                **_recursion_metrics(outputs, new_carry, valid_metrics),
+                **_recursion_metrics(
+                    outputs, new_carry, valid_metrics, seq_is_correct, self.model.config.halt_max_steps, self.training
+                ),
             }
 
         lm_loss = (

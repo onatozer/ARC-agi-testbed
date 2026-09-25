@@ -10,7 +10,7 @@ def _run(model, batch, n_steps):
     return carry, metrics
 
 
-def test_nfe_and_residual_per_halted_puzzle():
+def test_nfe_residual_and_halt_split_in_training():
     model, batch = tiny_model_and_batch(batch_size=8)
     model.train()
     cfg = model.model.config
@@ -22,12 +22,15 @@ def test_nfe_and_residual_per_halted_puzzle():
     assert torch.equal(carry.nfe, carry.steps * per_step)
     assert metrics["nfe"].item() == (carry.steps[carry.halted] * per_step).sum().item()
     assert 0 < metrics["zH_rel_residual"].item() / count < 10
+    split = sum(metrics[f"halt/{s}_{o}"].item() for s in ("quick", "slow") for o in ("correct", "wrong"))
+    assert split == count
 
 
-def test_nfe_resets_for_new_puzzles():
+def test_nfe_resets_for_new_puzzles_and_no_split_in_eval():
     model, batch = tiny_model_and_batch(batch_size=8)
     model.eval()
     cfg = model.model.config
     carry, metrics = _run(model, batch, cfg.halt_max_steps + 1)  # one step into the next puzzle
     assert torch.equal(carry.nfe, torch.full_like(carry.nfe, cfg.H_cycles * (cfg.L_cycles + 1)))
+    assert not any(k.startswith("halt/") for k in metrics)
     assert "nfe" in metrics and "zH_rel_residual" in metrics
