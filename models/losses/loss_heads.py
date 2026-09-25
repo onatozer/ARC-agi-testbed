@@ -376,6 +376,8 @@ class ACTLossHeadRoot(nn.Module):
         jac_loss = self.jacobian_reg_lambda * jac_reg
         # batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
         metrics["fprl/jacobian_reg"] = jac_reg.detach()
+        if "jacobian_norm" in outputs:  # ||J||_F^2 / d, whenever TRMRoot estimated it (penalty on, or log_jacobian_norm)
+            metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
 
         total = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + jac_loss
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}

@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -50,6 +51,7 @@ class TRMRootConfig(BaseModel):
     phantom_gradient_lambda: float = .5
     jacobian_reg_gamma: float = 0.6  
     jacobian_reg_n_samples: int = 1
+    log_jacobian_norm: bool = False  # estimate + log ||J||_F^2 / d every training step, even when the penalty is off
 
 def jac_loss_estimate(f0, z0, vecs=2, create_graph=True):
     """Estimating tr(J^TJ)=tr(JJ^T) via Hutchinson estimator
@@ -84,7 +86,11 @@ class TRMRoot_Inner(InnerNetwork):
         self.compute_jacobian_reg = True
 
     @torch.compiler.disable(recursive=True)
-    def _jacobian_regularizer(self, z_in, input_injection, seq_dict):
+    def _jacobian_regularizer(self, z_in, input_injection, seq_dict, create_graph=True):
+        """Hutchinson estimate of ||J||_F^2 / d for one L_level step, not scaled by jacobian_reg_gamma.
+
+        create_graph=True keeps it differentiable so it can be used as a penalty; logging only needs False.
+        """
         cfg = self.root_config
 
         jac_input = input_injection.detach()
@@ -94,21 +100,20 @@ class TRMRoot_Inner(InnerNetwork):
             for k, v in seq_dict.items()
         }
 
-        with sdpa_kernel(SDPBackend.MATH):  # the penalty's gradient needs a double backward; fused attention kernels have none
+        # the penalty's gradient needs a double backward; fused attention kernels have none
+        with sdpa_kernel(SDPBackend.MATH) if create_graph else nullcontext():
             z_out = self.L_level(
                 z_in,
                 jac_input,
                 **jac_seq_dict,
             )
 
-        jac_reg = jac_loss_estimate(
+        return jac_loss_estimate(
             z_out,
             z_in,
             vecs=cfg.jacobian_reg_n_samples,
-            create_graph=True,
+            create_graph=create_graph,
         )
-
-        return jac_reg * cfg.jacobian_reg_gamma
 
     def _root_solve(self, z_L: torch.tensor, input_injection, seq_dict):
         """Uses the torch DEQ library to compute the fixed point of the inner network
@@ -167,12 +172,16 @@ class TRMRoot_Inner(InnerNetwork):
 
         z_jac = z_L.detach()
 
-        # Only pay for the extra L_level pass + VJPs when the penalty actually enters the loss
+        # Only pay for the extra L_level pass + VJPs when the penalty enters the loss or the norm is logged
+        use_penalty = self.compute_jacobian_reg and self.root_config.jacobian_reg_gamma > 0
         jac_reg = torch.zeros((), device=z_L.device)
-        if self.compute_jacobian_reg and self.training and torch.is_grad_enabled() and self.root_config.jacobian_reg_gamma > 0:
+        jac_norm = None
+        if self.training and torch.is_grad_enabled() and (use_penalty or self.root_config.log_jacobian_norm):
             z_phantom = z_L.detach().requires_grad_(True)
-            jac_reg = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict)
-            self._nfe += 1
+            jac_norm = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict, create_graph=use_penalty)
+            if use_penalty:
+                jac_reg = jac_norm * self.root_config.jacobian_reg_gamma
+                self._nfe += 1  # a logging-only estimate is a diagnostic, not part of the model's computation
         
         # Phantom Graidient iterations 
         #TODO: Von-neuman convergance could also be added
@@ -198,6 +207,8 @@ class TRMRoot_Inner(InnerNetwork):
             "jacobian_reg": jac_reg,
             "nfe": self._nfe,
         }
+        if jac_norm is not None:
+            info["jacobian_norm"] = jac_norm.detach()
         return LatentCarry(z_H, z_L), info
 
 
