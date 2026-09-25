@@ -29,6 +29,7 @@ from .merged_arch import (
     ModelCarry,
     LatentCarry,
     _reset_rows,
+    _add_puzzle_emb_positions,
     TRMModel,
 )
 
@@ -154,7 +155,7 @@ class TRMRoot_Inner(InnerNetwork):
         then doing extra phantom-gradient iterations so that the inner network graph can be backpropagated through.
         """
         z_H, z_L = carry.z_H, carry.z_L
-        x = self._input_embeddings(batch["inputs"])
+        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
         seq_dict = {"cos_sin": self._cos_sin()}
         self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
 
@@ -166,7 +167,7 @@ class TRMRoot_Inner(InnerNetwork):
                     input_injection = z_H + x,
                     seq_dict = seq_dict
                 )
-                z_H = self.L_level(z_L, z_H, **seq_dict) 
+                z_H = self.L_level(z_H, z_L, **seq_dict)
                 self._nfe += 1
 
 
@@ -189,7 +190,7 @@ class TRMRoot_Inner(InnerNetwork):
         for _ in range(self.root_config.bptt_through):
             z_jac = z_jac*damp + (1-damp) * self.L_level(z_jac, z_H + x, **seq_dict)
         
-        z_H = self.L_level(z_jac, z_L, **seq_dict)
+        z_H = self.L_level(z_H, z_jac, **seq_dict)
         self._nfe += self.root_config.bptt_through + 1
 
         
@@ -221,8 +222,4 @@ class TRMRoot(TRMModel):
         print(config)
         print("DEQ architecture initialized")
         self.root_config = TRMRootConfig(**config)
-        self.inner = TRMRoot_Inner(config)
-
-    @property
-    def puzzle_emb(self):
-        return self.inner.puzzle_emb
+        self.inner = TRMRoot_Inner(_add_puzzle_emb_positions(config))

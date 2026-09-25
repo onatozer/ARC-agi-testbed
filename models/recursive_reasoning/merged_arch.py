@@ -8,6 +8,7 @@ from torch import nn
 
 from models.common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
+from models.sparse_embedding import CastedSparseEmbedding
 
 @dataclass
 class LatentCarry:
@@ -54,10 +55,11 @@ class TRMConfig(BaseModel):
     halt_confirm_mode: str = "consecutive"
     forward_dtype: str = "bfloat16"
     mlp_t: bool = False
-    no_ACT_continue: bool = True
 
+    # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
     puzzle_emb_ndim: int
+    num_puzzle_identifiers: int = 1
 
     # Noise injection params
     lambda_: float = 0.95
@@ -66,6 +68,19 @@ class TRMConfig(BaseModel):
     L_init_std: float = 1.0
 
     random_initialization: bool = True
+
+
+def _add_puzzle_emb_positions(config_dict: dict) -> dict:
+    """Extends seq_len by the puzzle-embedding slots prepended to the input (none when puzzle_emb_ndim == 0).
+    A puzzle_emb_len of 0 means ceil(puzzle_emb_ndim / hidden_size) slots."""
+    config_dict = dict(config_dict)
+    puzzle_emb_ndim = int(config_dict.get("puzzle_emb_ndim", 0) or 0)
+    puzzle_emb_len = 0
+    if puzzle_emb_ndim > 0:
+        puzzle_emb_len = int(config_dict.get("puzzle_emb_len", 0) or 0) or -(puzzle_emb_ndim // -int(config_dict["hidden_size"]))
+    config_dict["puzzle_emb_len"] = puzzle_emb_len
+    config_dict["seq_len"] = int(config_dict["seq_len"]) + puzzle_emb_len
+    return config_dict
 
 
 
@@ -125,6 +140,9 @@ class InnerNetwork(nn.Module):
         self.embed_scale = math.sqrt(config.hidden_size)
         embed_std = 1.0 / self.embed_scale
         self.embed_tokens = CastedEmbedding(config.vocab_size, config.hidden_size, embed_std, self.forward_dtype)
+        if config.puzzle_emb_ndim > 0:
+            self.puzzle_emb = CastedSparseEmbedding(config.num_puzzle_identifiers, config.puzzle_emb_ndim,
+                                                    batch_size=config.batch_size, init_std=0, cast_to=self.forward_dtype)
         self._init_pos(embed_std)
 
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
@@ -182,8 +200,15 @@ class InnerNetwork(nn.Module):
     def _cos_sin(self) -> CosSin:
         return self.rotary_emb() if hasattr(self, "rotary_emb") else None
 
-    def _input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.embed_tokens(input_ids.to(torch.int32))
+        if self.config.puzzle_emb_ndim > 0:
+            # Prepend the per-puzzle embedding, zero-padded to puzzle_emb_len full hidden-size slots
+            puzzle_embedding = self.puzzle_emb(puzzle_identifiers.to(torch.int32))
+            pad = self.config.puzzle_emb_len * self.config.hidden_size - puzzle_embedding.shape[-1]
+            if pad > 0:
+                puzzle_embedding = torch.nn.functional.pad(puzzle_embedding, (0, pad))
+            x = torch.cat((puzzle_embedding.view(-1, self.config.puzzle_emb_len, self.config.hidden_size), x), dim=1)
         if self.config.pos_encodings == "learned":
             return self.embed_scale* 0.707106781 * (x + self.embed_pos.embedding_weight.to(self.forward_dtype))
         if self.config.pos_encodings == "absolute":
@@ -238,7 +263,7 @@ class InnerNetwork(nn.Module):
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         z_H, z_L = carry.z_H, carry.z_L
-        x = self._input_embeddings(batch["inputs"])
+        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
         seq_dict = {"cos_sin": self._cos_sin()}
 
         # Run the recursion cycle for H_cycle -1 times without the gadient
@@ -246,12 +271,12 @@ class InnerNetwork(nn.Module):
             for _ in range(self.config.H_cycles - 1):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
-                z_H = self.L_level(z_L, z_H, **seq_dict) 
+                z_H = self.L_level(z_H, z_L, **seq_dict)
 
         # Finally, last recursion cycle is ran with the gradient attached
         for _ in range(self.config.L_cycles):
             z_L = self.L_level(z_L, z_H + x, **seq_dict)
-        z_H = self.L_level(z_L, z_H, **seq_dict) 
+        z_H = self.L_level(z_H, z_L, **seq_dict)
 
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
@@ -305,12 +330,16 @@ def _reset_rows(
 class TRMModel(nn.Module):
     def __init__(self, config_dict: dict) -> None:
         super().__init__()
-        self.config = TRMConfig(**config_dict)
+        self.config = TRMConfig(**_add_puzzle_emb_positions(config_dict))
         print(config_dict)
         self.inner = InnerNetwork(self.config)
         print("*"*80)
         print("Merged arch live!!")
         print("*"*80)
+
+    @property
+    def puzzle_emb(self):
+        return self.inner.puzzle_emb
 
     def initial_carry(self, batch: Dict[str, torch.Tensor]) -> ModelCarry:
         """Creates the an empty 'ModelCarry' object, which contains all the information the class needs throughout the recursion process"""
@@ -350,6 +379,7 @@ class TRMModel(nn.Module):
         )
         
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
+        counter = torch.zeros_like(steps) if carry.halt_counter is None else torch.where(reset, torch.zeros_like(steps), carry.halt_counter.to(device=device))
         prev_latent = inner_carry
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
         q_halt = fpass_info["q_halt_logits"]
@@ -365,17 +395,29 @@ class TRMModel(nn.Module):
                 d_z = (z - z_prev).flatten(1).norm(dim=1)
                 fpass_info[f"{name.replace('_', '')}_rel_residual"] = d_z / z.flatten(1).norm(dim=1).clamp_min(1e-8)
         
-        # ACT decision with ranomdizer that continues according to some exploration probability
+        # This section determines which puzzles in the batch to halt on based on if it's either
+        # 1. Reached the max number of steps
+        # 2. If the q-values from the ACT head say it's better to halt than to continue
         with torch.no_grad():
             steps = steps + 1
-            halted = steps >= self.config.halt_max_steps
-            if self.training and self.config.halt_max_steps > 1:
-                halted = (halted | (q_halt > 0)) & (
-                    steps
-                    >= (
-                        (torch.rand_like(q_halt) < self.config.halt_exploration_prob)
-                        * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
-                    )
-                )
-        return ModelCarry(inner_carry, steps, halted, current_data, nfe=nfe), fpass_info
+            is_last = steps >= self.config.halt_max_steps # Condition 1
+            halted = is_last
+
+            if self.config.halt_max_steps > 1 and (self.training or self.config.act_inference) and not self.config.disable_act_halt:
+                # TRM-style ACT: halt once the predicted probability of being correct is high enough (no continue head)
+                signal = q_halt > float(self.config.halt_threshold)
+
+                if self.config.halt_confirm_steps > 0:
+                    mode = str(self.config.halt_confirm_mode or "consecutive").lower()
+                    counter = torch.where(signal, counter + 1, counter if mode in {"cumulative", "accumulate", "total"} else torch.zeros_like(counter))
+                    halted = halted | (counter >= 1 + int(self.config.halt_confirm_steps))
+                else:
+                    counter = torch.where(signal, counter + 1, torch.zeros_like(counter))
+                    halted = halted | signal
+
+                # Exploration: with some probability, force a random minimum number of steps before halting
+                min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
+                halted = halted & (steps >= min_steps)
+
+        return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=counter, nfe=nfe), fpass_info
 

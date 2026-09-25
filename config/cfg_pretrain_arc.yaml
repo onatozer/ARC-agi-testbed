@@ -2,7 +2,7 @@
 
 defaults:
   - cfg_pretrain
-  - dataset: arc
+  - override dataset: arc
   - _self_
 
 hydra:
