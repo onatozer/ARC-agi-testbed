@@ -33,6 +33,8 @@ class TrainState:
     steps_per_epoch: int
     ema_helper: Optional[EMAHelper] = None
     steps_hist_buffer: List[float] = field(default_factory=list)
+    flops_per_step: float = 0.0  # last measured forward+backward FLOPs, summed over ranks
+    flops_total: float = 0.0
 
 
 def build_wandb_run_dir(run_id: str, timestamp: Optional[datetime] = None) -> str:
