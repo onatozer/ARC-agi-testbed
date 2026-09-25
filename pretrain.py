@@ -60,6 +60,7 @@ from models.ema import EMAHelper
 from utils.metrics import (
     _should_log_grad_norms,
     _should_log_flops,
+    TotalFlopCounter,
     _should_log_steps_hist, _collect_raw_steps_for_logging, _build_steps_hist_plotly,
 )
 from utils.wandb import set_run as wandb_set_run
@@ -68,7 +69,6 @@ from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
 from contextlib import nullcontext, suppress
-from torch.utils.flop_counter import FlopCounterMode
 
 WANDB_RUN_ID: Optional[str] = None
 WANDB_RUN_DIR: Optional[str] = None
@@ -404,7 +404,7 @@ def train_batch(
     # FLOPs are measured on this step's real forward+backward (works with torch.compile) every flops_log_interval_steps,
     # and the last measurement is carried forward in between (exact when every step has the same cost)
     measure_flops = _should_log_flops(config, train_state.step)
-    flop_counter = FlopCounterMode(display=False) if measure_flops else nullcontext()
+    flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
     with flop_counter:
         if "compute_target_q" in model_forward_signatures:
             compute_target_q = train_state.step % config.target_q_update_every == 0

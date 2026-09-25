@@ -3,6 +3,7 @@ from typing import List, Optional, Sequence
 
 import torch
 import torch.distributed as dist
+from torch.utils.flop_counter import FlopCounterMode, _FlopCounterMode
 
 from utils.printing import rank_zero_print_warning
 
@@ -27,6 +28,26 @@ def compute_pass_at_k(n: int, k: int, c: int) -> float:
 def _should_log_grad_norms(config, step: int) -> bool:
     interval = getattr(config, "grad_norm_log_interval_steps", None)
     return interval is not None and interval > 0 and (step == 1 or step % interval == 0)
+
+
+class TotalFlopCounter(FlopCounterMode):
+    """FlopCounterMode without its per-module breakdown (only get_total_flops() is used).
+
+    The breakdown's ModuleTracker installs autograd hooks that crash when the forward pass itself calls
+    torch.autograd.grad, as TRMRoot's Jacobian penalty does. Counting still happens in the dispatch mode, so totals
+    are unchanged, and they all land in the "Global" bucket.
+    """
+
+    def __enter__(self):
+        self.flop_counts.clear()
+        self.mode = _FlopCounterMode(self)
+        self.mode.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        exited = self.mode.__exit__(*args)
+        self.mode = None
+        return exited
 
 
 def _should_log_flops(config, step: int) -> bool:
@@ -80,6 +101,7 @@ __all__ = [
     "compute_pass_at_k",
     "_should_log_grad_norms",
     "_should_log_flops",
+    "TotalFlopCounter",
     "_should_log_steps_hist",
     "_collect_raw_steps_for_logging",
     "_build_steps_hist_plotly",
