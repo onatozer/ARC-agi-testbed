@@ -11,6 +11,10 @@ scratchpad.txt
 cuda_*
 .torchinductor_cache
 
+#Claude files
+.claude/
+.worktreeinclude
+
 
 # Both the ARC and min-arc datasets have to be on the repo history itself, bc there's no function that can just make them on the fly
 !data/MiniArc
