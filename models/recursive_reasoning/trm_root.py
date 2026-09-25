@@ -204,7 +204,6 @@ class TRMRoot_Inner(InnerNetwork):
         
         info = {
             "q_halt_logits": q[..., 0],
-            "q_continue_logits": q[..., 1],
             "logits": logits,
             "jacobian_reg": jac_reg,
             "nfe": self._nfe,

@@ -55,7 +55,6 @@ class TRMConfig(BaseModel):
     halt_confirm_mode: str = "consecutive"
     forward_dtype: str = "bfloat16"
     mlp_t: bool = False
-    no_ACT_continue: bool = True
 
     # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
@@ -293,7 +292,6 @@ class InnerNetwork(nn.Module):
 
         info = {
             "q_halt_logits": q[..., 0],
-            "q_continue_logits": q[..., 1],
             "logits": logits,
         }
         return LatentCarry(z_H, z_L), info
@@ -406,8 +404,8 @@ class TRMModel(nn.Module):
             halted = is_last
 
             if self.config.halt_max_steps > 1 and (self.training or self.config.act_inference) and not self.config.disable_act_halt:
-                q_continue = fpass_info["q_continue_logits"]
-                signal = q_halt > float(self.config.halt_threshold) if self.config.no_ACT_continue else q_halt > (q_continue + float(self.config.halt_threshold))
+                # TRM-style ACT: halt once the predicted probability of being correct is high enough (no continue head)
+                signal = q_halt > float(self.config.halt_threshold)
 
                 if self.config.halt_confirm_steps > 0:
                     mode = str(self.config.halt_confirm_mode or "consecutive").lower()
@@ -420,12 +418,6 @@ class TRMModel(nn.Module):
                 # Exploration: with some probability, force a random minimum number of steps before halting
                 min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
                 halted = halted & (steps >= min_steps)
-
-                # Q-learning target for the continue head: the Q-values one step ahead
-                if self.training and not self.config.no_ACT_continue:
-                    _, next_info = self.inner(inner_carry, current_data)
-                    next_q_halt, next_q_continue = next_info["q_halt_logits"], next_info["q_continue_logits"]
-                    fpass_info["target_q_continue"] = torch.sigmoid(torch.where(is_last, next_q_halt, torch.maximum(next_q_halt, next_q_continue)))
 
         return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=counter, nfe=nfe), fpass_info
 

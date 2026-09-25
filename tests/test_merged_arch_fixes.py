@@ -86,14 +86,14 @@ def test_z_H_update_residual_is_around_z_H(root):
 
 # --- halting config fields ---
 
-def _force_halt_logits(model, q_halt: float, q_continue: float):
+def _force_halt_logits(model, q_halt: float):
     with torch.no_grad():
-        model.model.inner.q_head.bias.copy_(torch.tensor([q_halt, q_continue]))
+        model.model.inner.q_head.bias[0] = q_halt
 
 
 def test_defaults_halt_on_q_halt_only_in_training():
     model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0)
-    _force_halt_logits(model, 5.0, -5.0)
+    _force_halt_logits(model, 5.0)
     model.train()
     assert (_halt_steps(model, batch, 6) == 1).all()
     model.eval()
@@ -102,40 +102,28 @@ def test_defaults_halt_on_q_halt_only_in_training():
 
 def test_act_inference_halts_early_in_eval():
     model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0, act_inference=True)
-    _force_halt_logits(model, 5.0, -5.0)
+    _force_halt_logits(model, 5.0)
     model.eval()
     assert (_halt_steps(model, batch, 6) == 1).all()
 
 
 def test_disable_act_halt_runs_to_max_steps():
     model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0, disable_act_halt=True)
-    _force_halt_logits(model, 5.0, -5.0)
+    _force_halt_logits(model, 5.0)
     model.train()
     assert (_halt_steps(model, batch, 6) == 6).all()
 
 
 def test_halt_threshold():
     model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0, halt_threshold=10.0)
-    _force_halt_logits(model, 5.0, -5.0)
+    _force_halt_logits(model, 5.0)
     model.train()
     assert (_halt_steps(model, batch, 6) == 6).all()
 
 
 def test_halt_confirm_steps():
     model, batch = tiny_model_and_batch(halt_max_steps=8, halt_exploration_prob=0.0, halt_confirm_steps=2)
-    _force_halt_logits(model, 5.0, -5.0)
+    _force_halt_logits(model, 5.0)
     model.train()
     assert (_halt_steps(model, batch, 8) == 3).all()  # the signal must hold for 1 + halt_confirm_steps steps
 
-
-def test_q_continue_is_trained_when_no_ACT_continue_is_off():
-    model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0, no_ACT_continue=False, halt_threshold=5.0)
-    # q_halt > 0 would halt under no_ACT_continue; here halting needs q_halt > q_continue + 5.
-    # The target sigmoid(max(3, 1)) differs from sigmoid(q_continue), so the continue head gets a gradient.
-    _force_halt_logits(model, 3.0, 1.0)
-    model.train()
-    carry, loss, metrics, outputs, _ = model(carry=model.initial_carry(batch), batch=batch, return_keys=["target_q_continue"])
-    assert not carry.halted.any()
-    assert "target_q_continue" in outputs and "q_continue_loss" in metrics
-    loss.backward()
-    assert model.model.inner.q_head.bias.grad[1] != 0

@@ -128,16 +128,8 @@ class ACTLossHead(BaseLossHead):
         metrics["q_halt_loss"] = q_halt_loss.detach()
         metrics.update({key: value.detach() for key, value in losses.items()})
 
-        # Only present when the model is trained with a continue head (no_ACT_continue: false)
-        q_continue_loss = torch.zeros((), device=q_halt_loss.device)
-        if "target_q_continue" in outputs:
-            q_continue_loss = F.binary_cross_entropy_with_logits(
-                outputs["q_continue_logits"], outputs["target_q_continue"], reduction="sum"
-            )
-            metrics["q_continue_loss"] = q_continue_loss.detach()
-
         detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
-        total_loss = losses["lm_loss"] + 0.5 * (q_halt_loss + q_continue_loss)
+        total_loss = losses["lm_loss"] + 0.5 * q_halt_loss
         metrics["total_loss"] = total_loss.detach()
         return new_carry, total_loss, metrics, detached_outputs, new_carry.halted.all()
 
