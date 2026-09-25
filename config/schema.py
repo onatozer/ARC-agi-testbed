@@ -36,6 +36,14 @@ class DatasetConfig(BaseModel):
     evaluators: List[EvaluatorConfig] = []
 
 
+class DynamicsConfig(BaseModel):
+    """Paper-style recursion diagnostics run on a fixed probe batch at every eval (utils/dynamics)."""
+
+    enabled: bool = True  # eval-time probe charts
+    num_puzzles: int = 64
+    depth_mult: int = 4  # probe rolls out depth_mult * halt_max_steps outer steps
+
+
 class PretrainConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
@@ -105,6 +113,8 @@ class PretrainConfig(BaseModel):
     convergence_top_k: Optional[int] = None
     convergence_vis_plots: List[str] = []
 
+    dynamics: DynamicsConfig = pydantic.Field(default_factory=DynamicsConfig)
+
     @pydantic.model_validator(mode="after")
     def _validate_intervals(self) -> PretrainConfig:
         if self.train_epochs_per_iter is not None and self.train_epochs_per_iter <= 0:
@@ -127,5 +137,6 @@ __all__ = [
     "ArchConfig",
     "EvaluatorConfig",
     "DatasetConfig",
+    "DynamicsConfig",
     "PretrainConfig",
 ]

@@ -20,6 +20,12 @@ steps_hist_log_interval_steps: 1000
 grad_norm_log_interval_steps: 100
 flops_log_interval_steps: 100 # FLOPs of forward+backward, measured every N steps and carried forward in between
 
+# Paper-style recursion diagnostics, run on a fixed probe batch at every eval (see utils/dynamics)
+dynamics:
+  enabled: true # eval-time probe charts
+  num_puzzles: 64
+  depth_mult: 4 # probe rolls out depth_mult * halt_max_steps outer steps
+
 lr: 1e-4
 lr_min_ratio: 1.0
 lr_warmup_steps: 2000

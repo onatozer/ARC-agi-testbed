@@ -68,6 +68,7 @@ from utils.wandb import _config_to_wandb_dict
 from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
+from utils.dynamics import DynamicsLogger
 from contextlib import nullcontext, suppress
 
 WANDB_RUN_ID: Optional[str] = None
@@ -773,6 +774,15 @@ def launch(hydra_config: DictConfig):
                 "step": train_state.step
             })
 
+    dynamics_logger = None
+    if RANK == 0 and config.dynamics.enabled and eval_loader is not None:
+        dynamics_logger = DynamicsLogger(
+            config.dynamics,
+            eval_loader,
+            device=next(train_state.model.parameters()).device,
+            out_dir=os.path.join(WANDB_RUN_DIR, "dynamics"),
+        )
+
     if "DISABLE_COMPILE" not in os.environ:
         # Keep compilation deterministic across restarts and ranks.
         compile_kwargs = {
@@ -885,6 +895,11 @@ def launch(hydra_config: DictConfig):
                 if RANK == 0 and eval_metrics is not None:
                     eval_metrics["step"] = train_state.step
                     wandb.log(eval_metrics)
+
+                if dynamics_logger is not None:
+                    dynamics_metrics = dynamics_logger(train_state_eval.model, train_state.step)
+                    dynamics_metrics["step"] = train_state.step
+                    wandb.log(dynamics_metrics)
 
                 train_state.model.train()
                 if config.gradient_checkpoint:
