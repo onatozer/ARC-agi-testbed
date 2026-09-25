@@ -88,6 +88,7 @@ class PretrainConfig(BaseModel):
     debug: bool = False
     debug_trace_steps: int = 0
     grad_norm_log_interval_steps: Optional[int] = None
+    flops_log_interval_steps: Optional[int] = None  # measure train-step FLOPs every N steps; None disables
     hidden_state_log_interval_steps: Optional[int] = None
 
     gradient_checkpoint: bool = False

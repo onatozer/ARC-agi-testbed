@@ -59,6 +59,8 @@ from datetime import datetime, timedelta
 from models.ema import EMAHelper
 from utils.metrics import (
     _should_log_grad_norms,
+    _should_log_flops,
+    TotalFlopCounter,
     _should_log_steps_hist, _collect_raw_steps_for_logging, _build_steps_hist_plotly,
 )
 from utils.wandb import set_run as wandb_set_run
@@ -66,7 +68,7 @@ from utils.wandb import _config_to_wandb_dict
 from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 
 WANDB_RUN_ID: Optional[str] = None
 WANDB_RUN_DIR: Optional[str] = None
@@ -398,26 +400,35 @@ def train_batch(
 
 
     model_forward_signatures = list(train_state.model.forward.__code__.co_varnames) # This block of logic exists solely to support the transformers_baseline compute_target_q param
-    
-    if "compute_target_q" in model_forward_signatures:
-        compute_target_q = train_state.step % config.target_q_update_every == 0
-        train_state.carry, loss, metrics, _, all_finish = train_state.model(
-            carry=train_state.carry, batch=batch, return_keys=[], compute_target_q=compute_target_q
-        )
-    else:
-        train_state.carry, loss, metrics, _, all_finish = train_state.model(
-            carry=train_state.carry, batch=batch, return_keys=[]
-        )
-        # print("$$"*80)
-        # dot = make_dot(model(carry=train_state.carry, batch=batch, return_keys=[]), params=dict(model.named_parameters()))
-        # dot.render("model_graph", format="png")
-    
 
-    # Here we scale the loss by the batch size so that when we take the total sum across the GPUs, we end up with the same gradient
-    loss_to_backprop = (1 / global_batch_size) * loss
+    # FLOPs are measured on this step's real forward+backward (works with torch.compile) every flops_log_interval_steps,
+    # and the last measurement is carried forward in between (exact when every step has the same cost)
+    measure_flops = _should_log_flops(config, train_state.step)
+    flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
+    with flop_counter:
+        if "compute_target_q" in model_forward_signatures:
+            compute_target_q = train_state.step % config.target_q_update_every == 0
+            train_state.carry, loss, metrics, _, all_finish = train_state.model(
+                carry=train_state.carry, batch=batch, return_keys=[], compute_target_q=compute_target_q
+            )
+        else:
+            train_state.carry, loss, metrics, _, all_finish = train_state.model(
+                carry=train_state.carry, batch=batch, return_keys=[]
+            )
+            # print("$$"*80)
+            # dot = make_dot(model(carry=train_state.carry, batch=batch, return_keys=[]), params=dict(model.named_parameters()))
+            # dot.render("model_graph", format="png")
 
-    retain_graph = bool(getattr(config, "retain_graph", False))
-    loss_to_backprop.backward(retain_graph=retain_graph)
+
+        # Here we scale the loss by the batch size so that when we take the total sum across the GPUs, we end up with the same gradient
+        loss_to_backprop = (1 / global_batch_size) * loss
+
+        retain_graph = bool(getattr(config, "retain_graph", False))
+        loss_to_backprop.backward(retain_graph=retain_graph)
+
+    if measure_flops:
+        train_state.flops_per_step = float(flop_counter.get_total_flops()) * world_size
+    train_state.flops_total += train_state.flops_per_step
 
     if world_size > 1: # Schyncronize the gradients across the GPUs
         for param in train_state.model.parameters():
@@ -427,18 +438,7 @@ def train_batch(
                 param.grad = torch.zeros_like(param, memory_format=torch.preserve_format)
             dist.all_reduce(param.grad)
     
-    # Backpropogate the loss through the network
-    lr_this_step = None
-    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
-        lr_this_step = compute_lr(base_lr, config, train_state)
-
-        for param_group in optim.param_groups:
-            param_group["lr"] = lr_this_step
-
-        optim.step()
-        optim.zero_grad()
-    
-
+    # Grad norms must be read before optim.zero_grad() clears them
     norms = {}
     if _should_log_grad_norms(config, train_state.step):
         total_sq: float = 0.0
@@ -457,6 +457,19 @@ def train_batch(
         norms["train/grad_norm/total"] = float(math.sqrt(total_sq)) if num_tensors > 0 else 0.0
         norms["train/grad_norm/max"] = float(max_norm)
         norms["train/grad_norm/num_tensors"] = float(num_tensors)
+
+    # Backpropogate the loss through the network
+    lr_this_step = None
+    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
+        lr_this_step = compute_lr(base_lr, config, train_state)
+
+        for param_group in optim.param_groups:
+            param_group["lr"] = lr_this_step
+
+        optim.step()
+        optim.zero_grad()
+    
+
     
     
     raw_steps = metrics.pop("raw_steps", None)
@@ -503,6 +516,9 @@ def train_batch(
 
             processed_metrics["train/lr"] = lr_this_step
             processed_metrics["train/epoch"] = current_epoch
+            if train_state.flops_per_step:
+                processed_metrics["train/flops_per_step"] = train_state.flops_per_step
+                processed_metrics["train/flops_total"] = train_state.flops_total
             if _should_log_steps_hist(config, train_state.step) and train_state.steps_hist_buffer:
                 processed_metrics["train/steps_hist"] = wandb.Histogram(train_state.steps_hist_buffer, num_bins=config.arch.halt_max_steps)
                 processed_metrics["train/steps_hist_count"] = len(train_state.steps_hist_buffer)
@@ -526,6 +542,13 @@ def train_batch(
                 "train/step_utility",
                 "train/max_steps",
                 "train/min_steps",
+                "train/nfe",
+                "train/zH_rel_residual",
+                "train/zL_rel_residual",
+                "train/halt/quick_correct",
+                "train/halt/quick_wrong",
+                "train/halt/slow_correct",
+                "train/halt/slow_wrong",
             }
                 for key in drop_when_empty:
                     processed_metrics.pop(key, None)
