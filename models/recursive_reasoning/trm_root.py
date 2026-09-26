@@ -50,7 +50,6 @@ class TRMRootConfig(BaseModel):
 
     bptt_through: int = 6 
     phantom_gradient_lambda: float = .5
-    jacobian_reg_gamma: float = 0.6  
     jacobian_reg_n_samples: int = 1
     log_jacobian_norm: bool = False  # estimate + log ||J||_F^2 / d every training step, even when the penalty is off
 
@@ -88,7 +87,7 @@ class TRMRoot_Inner(InnerNetwork):
 
     @torch.compiler.disable(recursive=True)
     def _jacobian_regularizer(self, z_in, input_injection, seq_dict, create_graph=True):
-        """Hutchinson estimate of ||J||_F^2 / d for one L_level step, not scaled by jacobian_reg_gamma.
+        """Hutchinson estimate of ||J||_F^2 / d for one L_level step (the loss head weights it by jacobian_reg_lambda).
 
         create_graph=True keeps it differentiable so it can be used as a penalty; logging only needs False.
         """
@@ -174,14 +173,14 @@ class TRMRoot_Inner(InnerNetwork):
         z_jac = z_L.detach()
 
         # Only pay for the extra L_level pass + VJPs when the penalty enters the loss or the norm is logged
-        use_penalty = self.compute_jacobian_reg and self.root_config.jacobian_reg_gamma > 0
+        use_penalty = self.compute_jacobian_reg
         jac_reg = torch.zeros((), device=z_L.device)
         jac_norm = None
         if self.training and torch.is_grad_enabled() and (use_penalty or self.root_config.log_jacobian_norm):
             z_phantom = z_L.detach().requires_grad_(True)
             jac_norm = self._jacobian_regularizer(z_phantom, z_H + x, seq_dict, create_graph=use_penalty)
             if use_penalty:
-                jac_reg = jac_norm * self.root_config.jacobian_reg_gamma
+                jac_reg = jac_norm
                 self._nfe += 1  # a logging-only estimate is a diagnostic, not part of the model's computation
         
         # Phantom Graidient iterations 
