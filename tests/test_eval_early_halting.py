@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from evaluators.eval_fn import _finalize_state, _accumulate, _metric_state, evaluate
-from models.losses.loss_heads import ACTLossHeadRoot, InferenceLossHead
+from models.losses.loss_heads import InferenceLossHead
 from models.recursive_reasoning.trm_root import TRMRoot
 from tests.fixtures import tiny_model_and_batch
 
@@ -44,11 +44,10 @@ def _heads(**overrides):
     root_cfg = dict(act.model.config.model_dump(), seq_len=16, deq_max_iter=3, deq_min_iter=1, bptt_through=1)  # seq_len before any prefix
     torch.manual_seed(0)
     with torch.device("cuda"):
-        root = ACTLossHeadRoot(TRMRoot(root_cfg), loss_type="stablemax_cross_entropy")
+        root = TRMRoot(root_cfg)
     return {
-        "act": act,
-        "inference": InferenceLossHead(act.model, loss_type="stablemax_cross_entropy"),
-        "root": root,
+        "trm": InferenceLossHead(act.model, loss_type="stablemax_cross_entropy"),
+        "trm_root": InferenceLossHead(root, loss_type="stablemax_cross_entropy"),
     }, batch
 
 
@@ -59,7 +58,7 @@ def _second_batch(batch):
     return other
 
 
-@pytest.mark.parametrize("head", ["act", "inference", "root"])
+@pytest.mark.parametrize("head", ["trm", "trm_root"])
 def test_default_eval_matches_running_every_row_to_max_steps(head):
     heads, batch = _heads()
     model = heads[head]
@@ -103,7 +102,7 @@ def _first_halt_reference(model, batch):
     return steps, preds, q
 
 
-@pytest.mark.parametrize("head", ["act", "inference", "root"])
+@pytest.mark.parametrize("head", ["trm", "trm_root"])
 def test_act_inference_holds_each_row_at_its_first_halt(head):
     # With noise a restarted row doesn't retrace its first run, so its first-halt outputs must be held, not recomputed
     heads, batch = _heads(halt_max_steps=6, halt_exploration_prob=0.0, act_inference=True, noise_scale=0.1)

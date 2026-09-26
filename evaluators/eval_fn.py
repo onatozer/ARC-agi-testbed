@@ -337,7 +337,8 @@ def evaluate(
             while True:
                 if inference_runner is None:
                     # With ACT at inference, rows halt at different steps, and the model restarts a halted row on its next
-                    # call. So each row's outputs and carry are held from the step it first halted, and scored once below.
+                    # call. So each row's outputs and carry are held from the step it first halted, and scored once below
+                    # by the InferenceLossHead (pretrain.py and evaluate.py both evaluate under it).
                     carry, _, _, outputs, _ = train_state.model(carry=carry, batch=batch, return_keys=None)  # every output
                     first_halt = carry.halted.to(device) & ~done
                     held_outputs = _hold_rows(held_outputs, outputs, first_halt)
