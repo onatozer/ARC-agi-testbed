@@ -1,6 +1,7 @@
 from typing import Dict, Sequence, Optional
 import os
 import json
+import math
 
 import torch
 import numpy as np
@@ -11,9 +12,9 @@ from dataset.build_arc_dataset import inverse_aug, grid_hash, arc_grid_to_np
 from dataset.common import PuzzleDatasetMetadata
 
 @njit
-def _crop(grid: np.ndarray):
+def _crop(grid: np.ndarray, grid_size: int):
     """Find maximum-sized rectangle without any EOS token inside. """
-    grid = grid.reshape(30, 30)
+    grid = grid.reshape(grid_size, grid_size)
 
     max_area = 0
     max_size = (0, 0)
@@ -49,6 +50,7 @@ class ARC:
         self.submission_K = submission_K
         self.aggregated_voting = aggregated_voting
         self.blank_identifier_id = eval_metadata.blank_identifier_id
+        self.grid_size = math.isqrt(eval_metadata.seq_len)
 
         # Load identifiers and test puzzles
         with open(os.path.join(data_path, "identifiers.json"), "r") as f:
@@ -90,9 +92,9 @@ class ARC:
             name = self.identifier_map[identifier]
             orig_name, _inverse_fn = inverse_aug(name)
             
-            input_hash = grid_hash(_inverse_fn(_crop(input)))
+            input_hash = grid_hash(_inverse_fn(_crop(input, self.grid_size)))
             
-            pred = _inverse_fn(_crop(pred))
+            pred = _inverse_fn(_crop(pred, self.grid_size))
             assert np.all((pred >= 0) & (pred <= 9)), f"Puzzle {name}'s prediction out of 0-9 range."  # Sanity check
 
             # Store into local state

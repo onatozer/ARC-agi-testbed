@@ -23,6 +23,8 @@ class DataProcessConfig(BaseModel):
     seed: int = 42
     num_aug: int = 1000
     puzzle_identifiers_start: int = 1 # start > 1 to handle multiple datasets
+    max_grid_size: int = 30 # canvas side length; seq_len = max_grid_size ** 2
+    scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
     
 ARCMaxGridSize = 30
 ARCAugmentRetriesFactor = 5
@@ -47,12 +49,18 @@ def arc_grid_to_np(grid: List[List[int]]):
     return arr.astype(np.uint8)
 
 
-def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_translation: bool):
+def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_translation: bool, max_grid_size: int = ARCMaxGridSize, do_scale: bool = False):
     # PAD: 0, <eos>: 1, digits: 2 ... 11
+    # Random integer upscale (each cell -> s x s block), shared by input and output, s.t. both still fit the canvas
+    if do_scale:
+        max_scale = max_grid_size // max(*inp.shape, *out.shape)
+        scale = np.random.randint(1, max_scale + 1)
+        inp, out = [grid.repeat(scale, axis=0).repeat(scale, axis=1) for grid in (inp, out)]
+
     # Compute random top-left pad
     if do_translation:
-        pad_r = np.random.randint(0, ARCMaxGridSize - max(inp.shape[0], out.shape[0]) + 1)
-        pad_c = np.random.randint(0, ARCMaxGridSize - max(inp.shape[1], out.shape[1]) + 1)
+        pad_r = np.random.randint(0, max_grid_size - max(inp.shape[0], out.shape[0]) + 1)
+        pad_c = np.random.randint(0, max_grid_size - max(inp.shape[1], out.shape[1]) + 1)
     else:
         pad_r = pad_c = 0
 
@@ -60,13 +68,13 @@ def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_tr
     result = []
     for grid in [inp, out]:
         nrow, ncol = grid.shape
-        grid = np.pad(grid + 2, ((pad_r, ARCMaxGridSize - pad_r - nrow), (pad_c, ARCMaxGridSize - pad_c - ncol)), constant_values=0)
+        grid = np.pad(grid + 2, ((pad_r, max_grid_size - pad_r - nrow), (pad_c, max_grid_size - pad_c - ncol)), constant_values=0)
 
         # Add <eos>
         eos_row, eos_col = pad_r + nrow, pad_c + ncol
-        if eos_row < ARCMaxGridSize:
+        if eos_row < max_grid_size:
             grid[eos_row, pad_c:eos_col] = 1
-        if eos_col < ARCMaxGridSize:
+        if eos_col < max_grid_size:
             grid[pad_r:eos_row, eos_col] = 1
 
         result.append(grid.flatten())
@@ -222,11 +230,11 @@ def load_puzzles_arcagi(config: DataProcessConfig):
     return results, test_puzzles
 
 
-def convert_dataset(config: DataProcessConfig):
+def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi):
     np.random.seed(config.seed)
     
     # Read dataset
-    data, test_puzzles = load_puzzles_arcagi(config)
+    data, test_puzzles = load_puzzles(config)
     
     # Map global puzzle identifiers
     num_identifiers = config.puzzle_identifiers_start  # 0 is blank, start at 1
@@ -266,7 +274,8 @@ def convert_dataset(config: DataProcessConfig):
                     # Push puzzle
                     no_aug_id = np.random.randint(0, len(puzzle.examples))
                     for _idx_ex, (inp, out) in enumerate(puzzle.examples):
-                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=enable_translational_augment and _idx_ex != no_aug_id)
+                        do_aug = enable_translational_augment and _idx_ex != no_aug_id
+                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=do_aug, max_grid_size=config.max_grid_size, do_scale=do_aug and config.scale_aug)
                             
                         results["inputs"].append(inp)
                         results["labels"].append(out)
@@ -294,7 +303,7 @@ def convert_dataset(config: DataProcessConfig):
         
         # Metadata
         metadata = PuzzleDatasetMetadata(
-            seq_len=ARCMaxGridSize * ARCMaxGridSize,
+            seq_len=config.max_grid_size * config.max_grid_size,
             vocab_size=10 + 2,  # PAD + EOS + "0" ... "9"
             pad_id=0,
             ignore_label_id=0,
