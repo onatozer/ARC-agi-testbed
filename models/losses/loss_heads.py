@@ -15,6 +15,12 @@ def _carry_get(carry: Any, key: str, default: Any = None) -> Any:
     return getattr(carry, key, default)
 
 
+def _detached_outputs(outputs: Dict[str, Any], return_keys: Optional[Sequence[str]]) -> Dict[str, torch.Tensor]:
+    """The requested outputs, detached; return_keys=None returns every tensor output."""
+    keys = [k for k, v in outputs.items() if torch.is_tensor(v)] if return_keys is None else return_keys
+    return {key: outputs[key].detach() for key in keys if key in outputs}
+
+
 def _recursion_metrics(
     outputs: Dict[str, torch.Tensor],
     carry: Any,
@@ -75,7 +81,7 @@ class ACTLossHead(BaseLossHead):
 
     def forward(
         self,
-        return_keys: Sequence[str],
+        return_keys: Optional[Sequence[str]],
         **model_kwargs: Any,
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
 
@@ -85,16 +91,31 @@ class ACTLossHead(BaseLossHead):
         if isinstance(logits, torch.Tensor):
             outputs["logits"] = logits.contiguous()
 
-        labels = new_carry.current_data["labels"]
         new_carry = tree_to_device(new_carry, outputs["logits"].device)
+        total_loss, metrics, detached_outputs, all_finish = self.compute_metrics_from_outputs(
+            outputs=outputs,
+            carry=new_carry,
+            return_keys=return_keys,
+        )
+        return new_carry, total_loss, metrics, detached_outputs, all_finish
+
+    def compute_metrics_from_outputs(
+        self,
+        *,
+        outputs: Dict[str, torch.Tensor],
+        carry: Any,
+        return_keys: Optional[Sequence[str]],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
+        """Loss and metrics for the model outputs of one step, given the carry that step returned."""
+        labels = carry.current_data["labels"]
         preds = torch.argmax(outputs["logits"], dim=-1)
 
         prev_halted = outputs.pop("prev_halted", None)
-        prev_preds = _carry_get(new_carry, "prev_preds", None)
+        prev_preds = _carry_get(carry, "prev_preds", None)
         if prev_preds is not None:
-            mask_source = prev_halted if prev_halted is not None else new_carry.halted
+            mask_source = prev_halted if prev_halted is not None else carry.halted
             preds = torch.where(mask_source.unsqueeze(-1), prev_preds.to(preds.dtype), preds)
-            new_carry.prev_preds = preds.detach()
+            carry.prev_preds = preds.detach()
 
         outputs["preds"] = preds
         metrics: Dict[str, torch.Tensor]
@@ -105,12 +126,12 @@ class ACTLossHead(BaseLossHead):
             loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)
             is_correct = mask & (outputs["preds"] == labels)
             seq_is_correct = is_correct.sum(-1) == loss_counts
-            valid_metrics = new_carry.halted & (loss_counts > 0)
+            valid_metrics = carry.halted & (loss_counts > 0)
             count = valid_metrics.sum()
 
             metrics = self._build_step_metrics(
                 outputs=outputs,
-                carry=new_carry,
+                carry=carry,
                 loss_divisor=loss_divisor,
                 loss_counts=loss_counts,
                 is_correct=is_correct,
@@ -128,10 +149,10 @@ class ACTLossHead(BaseLossHead):
         metrics["q_halt_loss"] = q_halt_loss.detach()
         metrics.update({key: value.detach() for key, value in losses.items()})
 
-        detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
+        detached_outputs = _detached_outputs(outputs, return_keys)
         total_loss = losses["lm_loss"] + 0.5 * q_halt_loss
         metrics["total_loss"] = total_loss.detach()
-        return new_carry, total_loss, metrics, detached_outputs, new_carry.halted.all()
+        return total_loss, metrics, detached_outputs, carry.halted.all()
 
     def _build_step_metrics(
         self,
@@ -210,30 +231,12 @@ class ACTLossHead(BaseLossHead):
         return metrics
 
 class InferenceLossHead(ACTLossHead):
-    def forward(
-        self,
-        return_keys: Sequence[str],
-        **model_kwargs: Any,
-    ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
-
-        new_carry, outputs = self.model(**model_kwargs)
-        logits = outputs.get("logits", None)
-        if isinstance(logits, torch.Tensor):
-            outputs["logits"] = logits.contiguous()
-
-        total_loss, metrics, detached_outputs, all_finish = self.compute_metrics_from_outputs(
-            outputs=outputs,
-            carry=new_carry,
-            return_keys=return_keys,
-        )
-        return new_carry, total_loss, metrics, detached_outputs, all_finish
-
     def compute_metrics_from_outputs(
         self,
         *,
         outputs: Dict[str, torch.Tensor],
         carry: Any,
-        return_keys: Sequence[str],
+        return_keys: Optional[Sequence[str]],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
 
         labels = carry.current_data["labels"]
@@ -256,8 +259,9 @@ class InferenceLossHead(ACTLossHead):
             seq_is_correct = is_correct.sum(-1) == loss_counts
             steps = carry.steps.to(device)
             max_steps = int(getattr(self.model.config, "halt_max_steps", 0) or 0)
-            forced_halt = (steps >= max_steps) if max_steps > 0 else carry.halted.to(device)
-            valid_metrics = forced_halt & (loss_counts > 0)
+            # Rows that halted this step, early (ACT at inference) or at halt_max_steps
+            halted = carry.halted.to(device) | (steps >= max_steps) if max_steps > 0 else carry.halted.to(device)
+            valid_metrics = halted & (loss_counts > 0)
             count = valid_metrics.sum()
 
             metrics = {
@@ -296,7 +300,7 @@ class InferenceLossHead(ACTLossHead):
         metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()
 
-        detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
+        detached_outputs = _detached_outputs(outputs, return_keys)
         total_loss = lm_loss + 0.5 * q_halt_loss
         metrics["total_loss"] = total_loss.detach()
         finished_mask = carry.halted.to(device)
@@ -323,11 +327,26 @@ class ACTLossHeadRoot(nn.Module):
 
     def forward(
         self,
-        return_keys: Sequence[str],
+        return_keys: Optional[Sequence[str]],
         **model_kwargs,
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
         new_carry, outputs = self.model(**model_kwargs)
-        labels = new_carry.current_data["labels"]
+        total, metrics, detached_outputs, all_finish = self.compute_metrics_from_outputs(
+            outputs=outputs,
+            carry=new_carry,
+            return_keys=return_keys,
+        )
+        return new_carry, total, metrics, detached_outputs, all_finish
+
+    def compute_metrics_from_outputs(
+        self,
+        *,
+        outputs: Dict[str, torch.Tensor],
+        carry: Any,
+        return_keys: Optional[Sequence[str]],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
+        """Loss and metrics for the model outputs of one step, given the carry that step returned."""
+        labels = carry.current_data["labels"]
 
         with torch.no_grad():
             outputs["preds"] = torch.argmax(outputs["logits"], dim=-1)
@@ -336,7 +355,7 @@ class ACTLossHeadRoot(nn.Module):
             loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)
             is_correct = mask & (torch.argmax(outputs["logits"], dim=-1) == labels)
             seq_is_correct = is_correct.sum(-1) == loss_counts
-            valid_metrics = new_carry.halted & (loss_counts > 0)
+            valid_metrics = carry.halted & (loss_counts > 0)
             metrics = {
                 "count": valid_metrics.sum(),
                 "accuracy": torch.where(
@@ -346,9 +365,9 @@ class ACTLossHeadRoot(nn.Module):
                 "q_halt_accuracy": (
                     valid_metrics & ((outputs["q_halt_logits"] >= 0) == seq_is_correct)
                 ).sum(),
-                "steps": torch.where(valid_metrics, new_carry.steps, 0).sum(),
+                "steps": torch.where(valid_metrics, carry.steps, 0).sum(),
                 **_recursion_metrics(
-                    outputs, new_carry, valid_metrics, seq_is_correct, self.model.config.halt_max_steps, self.training
+                    outputs, carry, valid_metrics, seq_is_correct, self.model.config.halt_max_steps, self.training
                 ),
             }
 
@@ -380,5 +399,5 @@ class ACTLossHeadRoot(nn.Module):
             metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
 
         total = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + jac_loss
-        detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
-        return new_carry, total, metrics, detached_outputs, new_carry.halted.all()
+        detached_outputs = _detached_outputs(outputs, return_keys)
+        return total, metrics, detached_outputs, carry.halted.all()
