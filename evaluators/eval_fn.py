@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
+import dataclasses
 import os
 import time
 
@@ -249,6 +250,25 @@ def _finish_conv(
     return metrics
 
 
+def _hold_rows(held: Any, new: Any, rows: torch.Tensor) -> Any:
+    """Takes `new` for the batch rows selected by `rows` and keeps `held` for the others, through dicts and dataclasses.
+    With nothing held yet, `new` is copied; leaves without a batch dimension are always taken from `new`."""
+    if isinstance(new, torch.Tensor):
+        if held is None:
+            return new.clone()
+        if new.ndim == 0 or new.shape[0] != rows.shape[0]:
+            return new
+        return torch.where(rows.view(-1, *([1] * (new.ndim - 1))).to(new.device), new, held)
+    if isinstance(new, dict):
+        return {k: _hold_rows(None if held is None else held.get(k), v, rows) for k, v in new.items()}
+    if dataclasses.is_dataclass(new):
+        return dataclasses.replace(new, **{
+            f.name: _hold_rows(None if held is None else getattr(held, f.name), getattr(new, f.name), rows)
+            for f in dataclasses.fields(new) if f.init
+        })
+    return new
+
+
 def evaluate(
     config: PretrainConfig,
     train_state: TrainState,
@@ -312,13 +332,21 @@ def evaluate(
                 carry = tree_to_device(carry, device)
 
             trajectory: List[torch.Tensor] = []
+            done = torch.zeros(batch["inputs"].shape[0], dtype=torch.bool, device=device)
+            held_outputs = held_carry = None
             while True:
                 if inference_runner is None:
-                    carry, loss, metrics, preds, all_finish = train_state.model(
-                        carry=carry,
-                        batch=batch,
-                        return_keys=return_keys,
-                    )
+                    # With ACT at inference, rows halt at different steps, and the model restarts a halted row on its next
+                    # call. So each row's outputs and carry are held from the step it first halted, and scored once below
+                    # by the InferenceLossHead (pretrain.py and evaluate.py both evaluate under it).
+                    carry, _, _, outputs, _ = train_state.model(carry=carry, batch=batch, return_keys=None)  # every output
+                    first_halt = carry.halted.to(device) & ~done
+                    held_outputs = _hold_rows(held_outputs, outputs, first_halt)
+                    held_carry = _hold_rows(held_carry, carry, first_halt)
+                    done |= first_halt
+                    if conv is not None:
+                        trajectory.append(torch.where(done.view(-1, 1, 1), held_outputs["logits"], outputs["logits"]).detach())
+                    finished = bool(done.all().item())
                 else:
                     carry, loss, metrics, preds, all_finish, _ = inference_runner.run(
                         train_state=train_state,
@@ -326,10 +354,16 @@ def evaluate(
                         return_keys=return_keys,
                         initial_carry=carry,
                     )
-                if conv is not None and preds is not None and "logits" in preds:
-                    trajectory.append(preds["logits"].detach())
-                if bool(all_finish.detach().all().item() if torch.is_tensor(all_finish) else all_finish):
+                    if conv is not None and preds is not None and "logits" in preds:
+                        trajectory.append(preds["logits"].detach())
+                    finished = bool(all_finish.detach().all().item() if torch.is_tensor(all_finish) else all_finish)
+                if finished:
                     break
+            if inference_runner is None:
+                carry = held_carry  # every row is halted, so the next batch replaces all of them
+                loss, metrics, preds, _ = train_state.model.compute_metrics_from_outputs(  # type: ignore[attr-defined]
+                    outputs=held_outputs, carry=held_carry, return_keys=return_keys
+                )
 
             set_id = set_ids[set_name]
             _accumulate(state, metrics, set_id)

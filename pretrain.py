@@ -57,6 +57,7 @@ from utils.checkpoint import (
 
 from datetime import datetime, timedelta
 from models.ema import EMAHelper
+from models.losses.loss_heads import InferenceLossHead
 from utils.metrics import (
     _should_log_grad_norms,
     _should_log_flops,
@@ -865,9 +866,11 @@ def launch(hydra_config: DictConfig):
                     if RANK == 0:
                         _log_line("Switching to EMA weights for evaluation", progress_bar=progress_bar)
                     eval_model = train_state.ema_helper.ema_copy(train_state.model)
-                    train_state_eval = replace(train_state, model=eval_model)
                 else:
-                    train_state_eval = train_state
+                    eval_model = train_state.model
+                # Evaluate the bare model under the inference loss head, which scores each puzzle at the step it halts
+                eval_model = getattr(eval_model, "_orig_mod", eval_model).model
+                train_state_eval = replace(train_state, model=InferenceLossHead(eval_model, **config.arch.loss.__pydantic_extra__))
                 train_state_eval.model.eval()
 
                 eval_metrics, eval_time_passed = evaluate(

@@ -212,7 +212,7 @@ class ACTLossHead(BaseLossHead):
 class InferenceLossHead(ACTLossHead):
     def forward(
         self,
-        return_keys: Sequence[str],
+        return_keys: Optional[Sequence[str]],
         **model_kwargs: Any,
     ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
 
@@ -233,7 +233,7 @@ class InferenceLossHead(ACTLossHead):
         *,
         outputs: Dict[str, torch.Tensor],
         carry: Any,
-        return_keys: Sequence[str],
+        return_keys: Optional[Sequence[str]],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
 
         labels = carry.current_data["labels"]
@@ -256,8 +256,9 @@ class InferenceLossHead(ACTLossHead):
             seq_is_correct = is_correct.sum(-1) == loss_counts
             steps = carry.steps.to(device)
             max_steps = int(getattr(self.model.config, "halt_max_steps", 0) or 0)
-            forced_halt = (steps >= max_steps) if max_steps > 0 else carry.halted.to(device)
-            valid_metrics = forced_halt & (loss_counts > 0)
+            # Rows that halted this step, early (ACT at inference) or at halt_max_steps
+            halted = carry.halted.to(device) | (steps >= max_steps) if max_steps > 0 else carry.halted.to(device)
+            valid_metrics = halted & (loss_counts > 0)
             count = valid_metrics.sum()
 
             metrics = {
@@ -296,7 +297,9 @@ class InferenceLossHead(ACTLossHead):
         metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()
 
-        detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
+        # return_keys=None returns every tensor output (the eval loop holds them per row)
+        keys = [k for k, v in outputs.items() if torch.is_tensor(v)] if return_keys is None else return_keys
+        detached_outputs = {key: outputs[key].detach() for key in keys if key in outputs}
         total_loss = lm_loss + 0.5 * q_halt_loss
         metrics["total_loss"] = total_loss.detach()
         finished_mask = carry.halted.to(device)
@@ -374,8 +377,8 @@ class ACTLossHeadRoot(nn.Module):
         jac_reg = outputs.get("jacobian_reg", torch.zeros((), device=lm_loss.device))
         # Scale by global batch / loss_divisor to keep magnitudes comparable to lm_loss
         jac_loss = self.jacobian_reg_lambda * jac_reg
-        # batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
-        metrics["fprl/jacobian_reg"] = jac_reg.detach()
+        # the weighted term added to the loss; batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
+        metrics["fprl/jacobian_reg"] = jac_loss.detach()
         if "jacobian_norm" in outputs:  # ||J||_F^2 / d, whenever TRMRoot estimated it (penalty on, or log_jacobian_norm)
             metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
 

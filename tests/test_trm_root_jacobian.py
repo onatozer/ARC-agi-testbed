@@ -40,10 +40,9 @@ def test_not_computed_when_off():
 
 
 def test_logged_with_penalty_and_matches_it():
-    model, batch = _tiny_root(jacobian_reg_lambda=1.0, log_jacobian_norm=False)
+    model, batch = _tiny_root(jacobian_reg_lambda=0.5, log_jacobian_norm=False)
     metrics = _train_step(model, batch)
-    gamma = model.model.inner.root_config.jacobian_reg_gamma
-    assert metrics["fprl/jacobian_reg"].item() == pytest.approx(gamma * metrics["fprl/jacobian_norm"].item(), rel=1e-5)
+    assert metrics["fprl/jacobian_reg"].item() == pytest.approx(0.5 * metrics["fprl/jacobian_norm"].item(), rel=1e-5)
 
 
 def test_not_computed_in_eval():

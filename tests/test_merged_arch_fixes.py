@@ -101,7 +101,8 @@ def test_defaults_halt_on_q_halt_only_in_training():
 
 
 def test_act_inference_halts_early_in_eval():
-    model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=0.0, act_inference=True)
+    # exploration only applies in training, so eval halting stays deterministic
+    model, batch = tiny_model_and_batch(halt_max_steps=6, halt_exploration_prob=1.0, act_inference=True)
     _force_halt_logits(model, 5.0)
     model.eval()
     assert (_halt_steps(model, batch, 6) == 1).all()

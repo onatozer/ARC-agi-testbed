@@ -415,9 +415,10 @@ class TRMModel(nn.Module):
                     counter = torch.where(signal, counter + 1, torch.zeros_like(counter))
                     halted = halted | signal
 
-                # Exploration: with some probability, force a random minimum number of steps before halting
-                min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
-                halted = halted & (steps >= min_steps)
+                # Exploration (training only): with some probability, force a random minimum number of steps before halting
+                if self.training:
+                    min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
+                    halted = halted & (steps >= min_steps)
 
         return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=counter, nfe=nfe), fpass_info
 
