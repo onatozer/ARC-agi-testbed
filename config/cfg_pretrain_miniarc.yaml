@@ -1,0 +1,13 @@
+# Mini-ARC training config
+
+defaults:
+  - cfg_pretrain
+  - override dataset: miniarc
+  - _self_
+
+hydra:
+  output_subdir: null
+
+# Ensure that the puzzle embedding is being used 
+arch:
+  puzzle_emb_ndim: ${.hidden_size}

@@ -1,0 +1,10 @@
+# Configs for locating & running the dataset at train/eval time
+name: Mini-ARC
+data_path: data/miniarc-aug-1000
+
+evaluators:
+  - name: arc@ARC
+
+data_paths: ['miniarc-aug-1000']
+
+seed: null
