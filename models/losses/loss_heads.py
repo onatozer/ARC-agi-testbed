@@ -393,8 +393,8 @@ class ACTLossHeadRoot(nn.Module):
         jac_reg = outputs.get("jacobian_reg", torch.zeros((), device=lm_loss.device))
         # Scale by global batch / loss_divisor to keep magnitudes comparable to lm_loss
         jac_loss = self.jacobian_reg_lambda * jac_reg
-        # batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
-        metrics["fprl/jacobian_reg"] = jac_reg.detach()
+        # the weighted term added to the loss; batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
+        metrics["fprl/jacobian_reg"] = jac_loss.detach()
         if "jacobian_norm" in outputs:  # ||J||_F^2 / d, whenever TRMRoot estimated it (penalty on, or log_jacobian_norm)
             metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
 
