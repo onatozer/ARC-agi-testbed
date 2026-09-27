@@ -43,10 +43,10 @@ class TRMRootConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     deq_max_iter: int = 8             # forward Anderson iterations
-    deq_min_iter: int = 4
     deq_tol: float = 1e-3
+    deq_stop_mode: str = "rel"        # "rel": ||f(z)-z|| / ||f(z)||, "abs": ||f(z)-z|| (scales with latent size)
     deq_anderson_m: int = 5           # history length of Anderson solver
-    deq_anderson_beta: float = 1.0
+    deq_anderson_tau: float = 1.0     # Anderson damping (torchdeq's tau)
 
     bptt_through: int = 6 
     phantom_gradient_lambda: float = .5
@@ -138,9 +138,9 @@ class TRMRoot_Inner(InnerNetwork):
                 x0 = z_L.detach().float(),
                 max_iter=int(cfg.deq_max_iter),
                 tol=float(cfg.deq_tol),
-                min_iter=int(cfg.deq_min_iter),
+                stop_mode=cfg.deq_stop_mode,
                 m=int(cfg.deq_anderson_m),
-                beta=float(cfg.deq_anderson_beta),
+                tau=float(cfg.deq_anderson_tau),
             )
 
         # Convergence diagnostics for monitoring
@@ -162,7 +162,7 @@ class TRMRoot_Inner(InnerNetwork):
         with torch.no_grad():
             for _ in range(self.config.H_cycles - 1):
                 z_L = self._root_solve(
-                    z_L = carry.z_L,
+                    z_L = z_L,
                     input_injection = z_H + x,
                     seq_dict = seq_dict
                 )

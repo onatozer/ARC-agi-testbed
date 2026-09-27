@@ -12,11 +12,11 @@ loss:
   jacobian_reg_lambda: 0.0 # weight of the Jacobian penalty (||J||_F^2 / d) in the loss; 0 disables it
 
 deq_max_iter: 8
-deq_min_iter: 4
 deq_tol: 1e-3
+deq_stop_mode: rel # rel: ||f(z)-z|| / ||f(z)||; abs: ||f(z)-z||, which grows with seq_len * hidden_size
 
 deq_anderson_m: 5
-deq_anderson_beta: 1.0
+deq_anderson_tau: 1.0 # Anderson damping (torchdeq's tau)
 
 bptt_through: 6
 phantom_gradient_lambda: 0.5 # {0.1,0.5,0.9,1.0}
