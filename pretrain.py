@@ -3,6 +3,10 @@ from dataclasses import replace
 import os
 import math
 
+# Must be set before CUDA initialises. Lets the allocator grow segments instead of fragmenting across differently
+# sized buffers (e.g. TRMRoot's fp32 solver history next to bf16 activations). An explicit user setting wins.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import multiprocessing as mp
 from multiprocessing.managers import SyncManager
 
@@ -123,6 +127,12 @@ def apply_gradient_checkpointing(model: nn.Module, config: PretrainConfig, rank:
     
     if hasattr(inner_model, 'inner'):
         inner_model = inner_model.inner
+
+    if rank == 0 and getattr(getattr(inner_model, "root_config", None), "checkpoint_phantom", False):
+        rank_zero_print_warning(
+            "gradient_checkpoint and arch.checkpoint_phantom are both on: TRMRoot's phantom iterations get checkpointed "
+            "twice, and the solver/Jacobian calls are wrapped too. Use checkpoint_phantom alone."
+        )
 
     if hasattr(inner_model, 'L_level') and hasattr(inner_model.L_level, 'layers'):
         original_layers = inner_model.L_level.layers
