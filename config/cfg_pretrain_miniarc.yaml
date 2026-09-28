@@ -11,3 +11,5 @@ hydra:
 # Ensure that the puzzle embedding is being used 
 arch:
   puzzle_emb_ndim: ${.hidden_size}
+  board_height: 10
+  board_width: 10

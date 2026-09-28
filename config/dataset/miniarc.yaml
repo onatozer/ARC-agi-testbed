@@ -15,4 +15,4 @@ puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
 max_grid_size: 30 # MiniARC grids are all 5x5; 30 keeps seq_len identical to ARC
 scale_aug: false # random integer upscaling of train examples (arXiv:2511.14761)
 
-seed: 42
+seed: null
