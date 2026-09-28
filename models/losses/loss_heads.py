@@ -53,7 +53,10 @@ class ACTLossHead(BaseLossHead):
         del kwargs
         super().__init__()
         self.model = model
-        self.loss_fn = globals()[loss_type]
+        self.loss_fn = {
+            "stablemax_cross_entropy": stablemax_cross_entropy,
+            "softmax_cross_entropy": softmax_cross_entropy,
+        }[loss_type]
 
     def initial_carry(self, *args: Any, **kwargs: Any) -> Any:
         return self.model.initial_carry(*args, **kwargs)  # type: ignore[attr-defined]

@@ -9,6 +9,7 @@ from torch import nn
 from models.common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
+from einops import Rearrange
 
 @dataclass
 class LatentCarry:
@@ -187,10 +188,6 @@ class InnerNetwork(nn.Module):
         if self.config.pos_encodings == "rope":
             self.rotary_emb = RotaryEmbedding(head_dim, self.config.seq_len, self.config.rope_theta)
 
-        elif self.config.pos_encodings == "rope2d":
-            h, w = self._board_dims()
-            self.rotary_emb = RotaryEmbedding2D(head_dim, h, w, self.config.rope_theta)
-
         elif self.config.pos_encodings == "learned":
             self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
 
@@ -202,6 +199,7 @@ class InnerNetwork(nn.Module):
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.embed_tokens(input_ids.to(torch.int32))
+
         if self.config.puzzle_emb_ndim > 0:
             # Prepend the per-puzzle embedding, zero-padded to puzzle_emb_len full hidden-size slots
             puzzle_embedding = self.puzzle_emb(puzzle_identifiers.to(torch.int32))
@@ -297,6 +295,74 @@ class InnerNetwork(nn.Module):
         return LatentCarry(z_H, z_L), info
 
 
+class InnerNetworkVIT(InnerNetwork):
+    def __init__(self, config: TRMConfig):
+        super().__init__(config)
+
+        
+        self.embed_scale = math.sqrt(config.hidden_size)
+        embed_std = 1.0 / self.embed_scale
+
+        #Initialize the VIT specific args
+        patch_height = config.patch_height
+        patch_width = config.patch_width
+        
+        # NOTE: Only doing this bc in ARC agi challenge there's no channels, but for actual images put back in the channel dim
+        patch_dim  = patch_height*patch_width
+        dim = config.hidden_size
+        self.patch_embedding = nn.Sequential(
+            Rearrange('b (h p1) (w p2) -> b (h w) (p1 p2)', p1 = patch_height, p2 = patch_width),
+            nn.rms_norm(patch_dim),
+            nn.CastedEmbedding(patch_dim, dim, embed_std, self.forward_dtype),
+            nn.rms_norm(dim),
+        )
+
+    def _init_pos(self, embed_std: float) -> None:
+        def _sinusoidal(length: int, dim: int) -> torch.Tensor:
+            pe = torch.zeros(length, dim, dtype=torch.float32)
+            if dim == 0:
+                return pe
+            pos = torch.arange(length, dtype=torch.float32).unsqueeze(1)
+            div = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32) * (-math.log(10000.0) / dim))
+            angles = pos * div.unsqueeze(0)
+            pe[:, 0::2] = torch.sin(angles)
+            pe[:, 1::2] = torch.cos(angles[:, : pe[:, 1::2].shape[1]])
+            return pe
+        
+        head_dim = self.config.hidden_size // self.config.num_heads
+
+        # When it's the vision transformer rope is just automatically gonna imply 2d rope, IMO makes more sense, and 2d rope doesn't even work for the regular trans anyways
+        if self.config.pos_encodings == "rope":
+            h, w = self._board_dims()
+            self.rotary_emb = RotaryEmbedding2D(head_dim, h, w, self.config.rope_theta)
+
+        elif self.config.pos_encodings == "learned":
+            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
+
+        elif self.config.pos_encodings == "absolute":
+            self.register_buffer("absolute_pos_embedding", _sinusoidal(self.config.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
+
+
+    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
+        x = self.patch_embedding(input_ids.to(torch.int32))
+        
+        if self.config.puzzle_emb_ndim > 0:
+            # Prepend the per-puzzle embedding, zero-padded to puzzle_emb_len full hidden-size slots
+            puzzle_embedding = self.puzzle_emb(puzzle_identifiers.to(torch.int32))
+            pad = self.config.puzzle_emb_len * self.config.hidden_size - puzzle_embedding.shape[-1]
+            if pad > 0:
+                puzzle_embedding = torch.nn.functional.pad(puzzle_embedding, (0, pad))
+            x = torch.cat((puzzle_embedding.view(-1, self.config.puzzle_emb_len, self.config.hidden_size), x), dim=1)
+
+        if self.config.pos_encodings == "learned":
+            return self.embed_scale* 0.707106781 * (x + self.embed_pos.embedding_weight.to(self.forward_dtype))
+        
+        if self.config.pos_encodings == "absolute":
+            return self.embed_scale* 0.707106781 * (x + self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype))
+
+        return self.embed_scale*x
+
+
 def _disable_torch_compile(fn: Any) -> Any:
     compiler = getattr(torch, "compiler", None)
     disable = getattr(compiler, "disable", None)
@@ -332,7 +398,11 @@ class TRMModel(nn.Module):
         super().__init__()
         self.config = TRMConfig(**_add_puzzle_emb_positions(config_dict))
         print(config_dict)
-        self.inner = InnerNetwork(self.config)
+        if self.config.visual_attention:
+            self.inner = InnerNetworkVIT
+        else:
+            self.inner = InnerNetwork(self.config)
+            
         print("*"*80)
         print("Merged arch live!!")
         print("*"*80)
