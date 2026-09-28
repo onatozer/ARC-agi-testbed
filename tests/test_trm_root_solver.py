@@ -67,4 +67,5 @@ def test_each_solve_warm_starts_from_the_previous_solution(monkeypatch):
     model, batch = _tiny_root(H_cycles=3)  # two solves per forward
     _forward(model, batch)
     assert len(calls) == 2
-    assert torch.equal(calls[1]["x0"], calls[0]["z_star"])
+    # the solve's fp32 output is handed back to the network in forward_dtype, then re-widened by the solver
+    assert torch.equal(calls[1]["x0"], calls[0]["z_star"].to(torch.bfloat16).float())
