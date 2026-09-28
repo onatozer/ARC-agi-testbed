@@ -3,13 +3,11 @@ import json
 import glob
 
 import numpy as np
-from argdantic import ArgParser
+import hydra
+from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel
 
 from dataset.build_arc_dataset import convert_single_arc_puzzle, convert_dataset
-
-
-cli = ArgParser()
 
 
 class MiniARCDataProcessConfig(BaseModel):
@@ -45,10 +43,19 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
     return results, test_puzzles
 
 
-@cli.command(singleton=True)
-def main(config: MiniARCDataProcessConfig):
-    convert_dataset(config, load_puzzles=load_puzzles_miniarc)
+@hydra.main(config_path="../config/dataset", config_name="miniarc", version_base=None)
+def launch(config: DictConfig):
+    """
+    Run:
+        python -m dataset.build_miniarc_dataset
+    Override on the CLI, e.g.:
+        python -m dataset.build_miniarc_dataset max_grid_size=5 data_path=data/miniarc5-aug-1000
+    """
+    if config.seed is None:
+        config.seed = int(np.random.default_rng().integers(low=0, high=1e8))
+
+    convert_dataset(MiniARCDataProcessConfig(**OmegaConf.to_container(config, resolve=True)), load_puzzles=load_puzzles_miniarc)
 
 
 if __name__ == "__main__":
-    cli()
+    launch()
