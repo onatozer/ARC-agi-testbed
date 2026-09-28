@@ -30,3 +30,4 @@ H_init_std: 1.0
 L_init_std: 1.0
 
 random_initialization: false
+visual_attention: false

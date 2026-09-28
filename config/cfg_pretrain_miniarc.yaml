@@ -8,8 +8,9 @@ defaults:
 hydra:
   output_subdir: null
 
+global_batch_size: 512 # has to be less than 528 for mini arc
 # Ensure that the puzzle embedding is being used 
 arch:
   puzzle_emb_ndim: ${.hidden_size}
-  board_height: 10
-  board_width: 10
+  board_height: ${dataset.max_grid_size}
+  board_width: ${dataset.max_grid_size}

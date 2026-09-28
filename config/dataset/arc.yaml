@@ -7,4 +7,15 @@ evaluators:
 
 data_paths: ['arc1concept-aug-1000']
 
+# Configs for building the dataset itself (python -m dataset.build_arc_dataset).
+# For ARC-AGI-2: subsets=[training2,evaluation2,concept] test_set_name=evaluation2 data_path=data/arc2concept-aug-1000
+input_file_prefix: kaggle/combined/arc-agi
+output_dir: ${.data_path}
+subsets: [training, evaluation, concept]
+test_set_name: evaluation
+num_aug: 1000
+puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
+max_grid_size: 30 # canvas side length; seq_len = max_grid_size ** 2
+scale_aug: false # random integer upscaling of train examples (arXiv:2511.14761)
+
 seed: null

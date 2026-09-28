@@ -8,12 +8,15 @@ hydra:
 
 arch:
   puzzle_emb_ndim: 0 # Puzzle embedding thing only exists for arc dataset and should be set to 0 in all other cases
+  board_height: ${dataset.max_grid_size}
+  board_width: ${dataset.max_grid_size}
+  
 
 global_batch_size: 768
 epochs: 50000
 max_steps: 50000
 train_epochs_per_iter: 5000
-eval_interval_steps: 5000
+eval_interval_steps: 10000
 checkpoint_interval_steps: 5000
 heavy_metrics_log_interval: 2500
 steps_hist_log_interval_steps: 1000
@@ -35,6 +38,6 @@ puzzle_emb_lr: 1e-2
 seed: null
 min_eval_interval: 0 # when to start the eval
 
-ema: False # use Exponential-Moving-Average
+ema: True # use Exponential-Moving-Average
 ema_rate: 0.999 # EMA-rate
 freeze_weights: False # If True, freeze weights and only learn the embeddings
