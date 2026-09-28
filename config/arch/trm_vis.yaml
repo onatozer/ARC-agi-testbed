@@ -2,7 +2,7 @@ defaults:
   - eqr
   - _self_
 
-name: recursive_reasoning.merged_arch@TRM
+name: recursive_reasoning.merged_arch@TRMModel
 short_name: TRM_vis
 
 loss:

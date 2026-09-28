@@ -5,13 +5,11 @@ import json
 import hashlib
 import numpy as np
 
-from argdantic import ArgParser
+import hydra
+from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel
 
 from .common import PuzzleDatasetMetadata, dihedral_transform, inverse_dihedral_transform
-
-
-cli = ArgParser()
 
 
 class DataProcessConfig(BaseModel):
@@ -329,13 +327,22 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
         json.dump(test_puzzles, f)
 
 
-@cli.command(singleton=True)
-def main(config: DataProcessConfig):
-    convert_dataset(config)
+@hydra.main(config_path="../config/dataset", config_name="arc", version_base=None)
+def launch(config: DictConfig):
+    """
+    Run:
+        python -m dataset.build_arc_dataset
+    Override on the CLI, e.g.:
+        python -m dataset.build_arc_dataset num_aug=100 scale_aug=true
+    """
+    if config.seed is None:
+        config.seed = int(np.random.default_rng().integers(low=0, high=1e8))
+
+    convert_dataset(DataProcessConfig(**OmegaConf.to_container(config, resolve=True)))
 
 
 if __name__ == "__main__":
-    cli()
+    launch()
 
 
 

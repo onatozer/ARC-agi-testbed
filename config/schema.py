@@ -72,6 +72,7 @@ class PretrainConfig(BaseModel):
     seed: int = 0
     train_epochs_per_iter: Optional[int] = None
     eval_interval_steps: Optional[int] = None
+    max_eval_steps: Optional[int] = None  # cap on eval batches per rank during training; None runs the full test split
     eval_save_outputs: List[str] = []
     eval_save_carry: bool = False
     heavy_metrics_log_interval: Optional[int] = 100

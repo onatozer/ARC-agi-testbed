@@ -1,29 +1,23 @@
 # Installing and running the code
 Before you can train or run the model, first you must build the dataset using the corresponding builder from the [dataset directory](#building-the-dataset). As an example, in order to build the ARC-AGI datasets, run:
 ```bash
-# ARC-AGI-1
-python3 -m dataset.build_arc_dataset \
-  --input-file-prefix kaggle/combined/arc-agi \
-  --num-aug 1000 \
-  --output-dir data/arc1concept-aug-1000 \
-  --subsets training evaluation concept \
-  --test-set-name evaluation
+# ARC-AGI-1 (build settings live in config/dataset/arc.yaml)
+python3 -m dataset.build_arc_dataset
 
 # ARC-AGI-2
-python -m dataset.build_arc_dataset \
-  --input-file-prefix kaggle/combined/arc-agi \
-  --output-dir data/arc2concept-aug-1000 \
-  --subsets training2 evaluation2 concept \
-  --test-set-name evaluation2
+python3 -m dataset.build_arc_dataset \
+  data_path=data/arc2concept-aug-1000 \
+  'subsets=[training2,evaluation2,concept]' \
+  test_set_name=evaluation2
 
-# Mini-ARC (5x5 tasks from data/MiniARC; pass --max-grid-size 5 for a seq_len=25 variant)
-python3 -m dataset.build_miniarc_dataset \
-  --num-aug 1000 \
-  --output-dir data/miniarc-aug-1000
+# Mini-ARC (5x5 tasks from data/MiniARC; settings in config/dataset/miniarc.yaml; add max_grid_size=5 for a seq_len=25 variant)
+python3 -m dataset.build_miniarc_dataset
 ```
+Like the sudoku builder, both ARC builders are configured through hydra: they read the same dataset yaml used for training, and any field can be overridden on the command line (e.g. `num_aug=100`). The dataset is written to `data_path`, so training picks it up without extra flags.
+
 Train on Mini-ARC with `python3 pretrain.py --config-name cfg_pretrain_miniarc`.
 
-Both ARC builders accept `--scale-aug`, which randomly upscales train examples by an integer factor (each cell becomes an s×s block, shared by input and output, capped so the grid fits the canvas), following [ARC Is a Vision Problem!](https://arxiv.org/abs/2511.14761). The test split is never scaled.
+Both ARC builders accept `scale_aug=true`, which randomly upscales train examples by an integer factor (each cell becomes an s×s block, shared by input and output, capped so the grid fits the canvas), following [ARC Is a Vision Problem!](https://arxiv.org/abs/2511.14761). The test split is never scaled.
 
 The entire codebase is designed so that a training run can be initiated through a simple call of pretrain.py from main. 
 ```python

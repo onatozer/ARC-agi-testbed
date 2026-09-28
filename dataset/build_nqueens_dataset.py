@@ -21,7 +21,7 @@ import hydra
 from omegaconf import DictConfig
 from huggingface_hub import hf_hub_download
 
-from common import PuzzleDatasetMetadata, dihedral_transform
+from .common import PuzzleDatasetMetadata, dihedral_transform
 
 
 def is_safe(board: np.ndarray, row: int, col: int) -> bool:

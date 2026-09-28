@@ -8,7 +8,7 @@ short_name: TRMRoot
 loss:
   name: losses.loss_heads@ACTLossHeadRoot
   loss_type: stablemax_cross_entropy
-  jacobian_reg_lambda: 0.0 # weight of the Jacobian penalty (||J||_F^2 / d) in the loss; 0 disables it
+  jacobian_reg_lambda: 0.6
 
 deq_max_iter: 8
 deq_tol: 1e-3
@@ -21,7 +21,7 @@ bptt_through: 6
 phantom_gradient_lambda: 0.5 # {0.1,0.5,0.9,1.0}
 
 jacobian_reg_n_samples: 2 
-log_jacobian_norm: false # true: log train/fprl/jacobian_norm (||J||_F^2 / d) every training step, even when jacobian_reg_lambda = 0
+log_jacobian_norm: true 
 
 # Memory savers; each gives the same gradients as with it off (tests/test_trm_root_memory_exact.py)
 checkpoint_phantom: true # recompute the phantom-gradient L_level calls in backward instead of storing them (~+15% compute)

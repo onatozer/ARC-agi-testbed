@@ -3,13 +3,13 @@ from typing import Any, Dict, Optional, Tuple
 import math
 
 import torch
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from torch import nn
 
 from models.common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
-from einops import Rearrange
+from einops.layers.torch import Rearrange
 
 @dataclass
 class LatentCarry:
@@ -32,6 +32,8 @@ class ModelCarry:
 
 
 class TRMConfig(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    
     batch_size: int
     seq_len: int
     vocab_size: int
@@ -402,7 +404,7 @@ class TRMModel(nn.Module):
             self.inner = InnerNetworkVIT
         else:
             self.inner = InnerNetwork(self.config)
-            
+
         print("*"*80)
         print("Merged arch live!!")
         print("*"*80)

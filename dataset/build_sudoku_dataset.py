@@ -29,7 +29,7 @@ from huggingface_hub import hf_hub_download
 import hydra
 from omegaconf import DictConfig
 
-from common import PuzzleDatasetMetadata
+from .common import PuzzleDatasetMetadata
 
 
 # (box_rows, box_cols) for each supported grid size
