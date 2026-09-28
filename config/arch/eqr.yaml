@@ -20,8 +20,6 @@ expansion: 4
 puzzle_emb_ndim: ${.hidden_size}
 
 pos_encodings: rope
-board_height: 9
-board_width: 9
 forward_dtype: bfloat16
 mlp_t: false
 

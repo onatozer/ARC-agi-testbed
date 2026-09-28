@@ -7,7 +7,6 @@ short_name: TRMRoot
 
 loss:
   name: losses.loss_heads@ACTLossHeadRoot
-  # name: losses.loss_heads@ACTLossHead
   loss_type: stablemax_cross_entropy
   jacobian_reg_lambda: 0.0 # weight of the Jacobian penalty (||J||_F^2 / d) in the loss; 0 disables it
 

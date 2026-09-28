@@ -26,7 +26,6 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from adam_atan2_pytorch import AdamAtan2
 import uuid
-from torchviz import make_dot
 
 
 torch.set_float32_matmul_precision('high')

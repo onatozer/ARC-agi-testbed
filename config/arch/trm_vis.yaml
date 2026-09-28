@@ -1,0 +1,12 @@
+defaults:
+  - eqr
+  - _self_
+
+name: recursive_reasoning.merged_arch@TRM
+short_name: TRM_vis
+
+loss:
+  name: losses.loss_heads@ACTLossHead
+  loss_type: stablemax_cross_entropy
+  
+visual_attention: true
