@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from torch import nn
 
 from models.common import trunc_normal_init_
-from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
+from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, ConvSwiGLU, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
 from einops.layers.torch import Rearrange
 
@@ -58,6 +58,8 @@ class TRMConfig(BaseModel):
     halt_confirm_mode: str = "consecutive"
     forward_dtype: str = "bfloat16"
     mlp_t: bool = False
+    mlp_type: str = "swiglu"  # "swiglu" or "conv_swiglu" (URM's ConvSwiGLU)
+    conv_kernel: int = 2  # ConvSwiGLU depthwise conv kernel size
 
     # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
@@ -100,7 +102,12 @@ class Block(nn.Module):
                                        config.num_heads, 
                                        causal=False)
             
-        self.mlp = SwiGLU(hidden_size=config.hidden_size, expansion=config.expansion)
+        if config.mlp_type == "swiglu":
+            self.mlp = SwiGLU(hidden_size=config.hidden_size, expansion=config.expansion)
+        elif config.mlp_type == "conv_swiglu":
+            self.mlp = ConvSwiGLU(hidden_size=config.hidden_size, expansion=config.expansion, conv_kernel=config.conv_kernel)
+        else:
+            raise ValueError(f"Unknown mlp_type {config.mlp_type!r}; expected 'swiglu' or 'conv_swiglu'.")
         self.norm_eps = config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:

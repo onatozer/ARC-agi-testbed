@@ -196,6 +196,27 @@ class SwiGLU(nn.Module):
         gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
         return self.down_proj(F.silu(gate) * up)
 
+
+class ConvSwiGLU(nn.Module):
+    """SwiGLU with a depthwise short convolution over the token axis after the gating (URM, arXiv 2512.14693):
+    Y = SiLU(DWConv_k(SiLU(G) * U)) W_down. Padding follows the official code (k//2 on both sides, keep the first T),
+    so with k=2 each token mixes itself and the token before it."""
+    def __init__(self, hidden_size: int, expansion: float, conv_kernel: int = 2):
+        super().__init__()
+        inter = _find_multiple(round(expansion * hidden_size * 2 / 3), 256)
+
+        self.gate_up_proj = CastedLinear(hidden_size, inter * 2, bias=False)
+        self.dwconv       = nn.Conv1d(inter, inter, conv_kernel, padding=conv_kernel // 2, groups=inter, bias=True)
+        self.down_proj    = CastedLinear(inter, hidden_size, bias=False)
+
+    def forward(self, x):
+        gate, up = self.gate_up_proj(x).chunk(2, dim=-1)
+        h = (F.silu(gate) * up).transpose(1, 2)
+        # Cast to the input dtype, as CastedLinear does
+        h = F.conv1d(h, self.dwconv.weight.to(h.dtype), self.dwconv.bias.to(h.dtype),
+                     padding=self.dwconv.padding, groups=self.dwconv.groups)[..., : x.shape[1]]
+        return self.down_proj(F.silu(h).transpose(1, 2))
+
 def rms_norm(hidden_states: torch.Tensor, variance_epsilon: float) -> torch.Tensor:
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
