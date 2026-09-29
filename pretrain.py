@@ -892,6 +892,7 @@ def launch(hydra_config: DictConfig):
                     world_size=WORLD_SIZE,
                     cpu_group=CPU_PROCESS_GROUP,
                     progress_bar=progress_bar,
+                    max_eval_steps=config.max_eval_steps,
                 )
 
                 if RANK == 0 and eval_metrics is not None:
