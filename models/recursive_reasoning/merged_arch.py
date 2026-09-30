@@ -357,7 +357,7 @@ class InnerNetworkVIT(InnerNetwork):
         # When it's the vision transformer rope is just automatically gonna imply 2d rope, IMO makes more sense, and 2d rope doesn't even work for the regular trans anyways
         if self.config.pos_encodings == "rope":
             h, w = self._board_dims()
-            self.rotary_emb = RotaryEmbedding2D(head_dim, h // self.config.patch_height, w // self.config.patch_width, self.config.rope_theta)
+            self.rotary_emb = RotaryEmbedding2D(head_dim, h // self.config.patch_height, w // self.config.patch_width, self.config.rope_theta, prefix_len=self.config.puzzle_emb_len)
 
         elif self.config.pos_encodings == "learned":
             self.embed_pos = CastedEmbedding(self.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)

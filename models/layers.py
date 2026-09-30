@@ -10,11 +10,7 @@ from models.common import trunc_normal_init_
 
 
 
-CosSin = Union[
-    Tuple[torch.Tensor, torch.Tensor],
-    Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]],
-    None,
-]
+CosSin = Union[Tuple[torch.Tensor, torch.Tensor], None]
 
 
 def _find_multiple(value: int, divisor: int) -> int:
@@ -39,26 +35,6 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     k_embed = (k * cos.unsqueeze(-2)) + (rotate_half(k) * sin.unsqueeze(-2))
 
     return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
-
-def apply_rotary_pos_emb_2d(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    cos_h: torch.Tensor,
-    sin_h: torch.Tensor,
-    cos_w: torch.Tensor,
-    sin_w: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    dtype = q.dtype
-    q, k = q.to(cos_h.dtype), k.to(cos_h.dtype)
-    d = q.size(-1) // 2
-    q_h, q_w = q[..., :d], q[..., d:]
-    k_h, k_w = k[..., :d], k[..., d:]
-    cos_h, sin_h = cos_h[None, :, None, None, :], sin_h[None, :, None, None, :]
-    cos_w, sin_w = cos_w[None, None, :, None, :], sin_w[None, None, :, None, :]
-    q_h, k_h = q_h * cos_h + rotate_half(q_h) * sin_h, k_h * cos_h + rotate_half(k_h) * sin_h
-    q_w, k_w = q_w * cos_w + rotate_half(q_w) * sin_w, k_w * cos_w + rotate_half(k_w) * sin_w
-    return torch.cat([q_h, q_w], dim=-1).to(dtype), torch.cat([k_h, k_w], dim=-1).to(dtype)
-
 
 
 class CastedLinear(nn.Module):
@@ -116,20 +92,26 @@ class RotaryEmbedding(nn.Module):
         return self.cos_cached, self.sin_cached
 
 class RotaryEmbedding2D(nn.Module):
-    def __init__(self, dim: int, max_height: int, max_width: int, base: float, device=None) -> None:
+    """Axial 2D RoPE for a row-major (height, width) grid of tokens, returned as per-token (cos, sin) tables
+    so Attention can apply it like 1D RoPE: a quarter of the rotated pairs turn with the row, a quarter with the column.
+    The prefix_len leading tokens (e.g. puzzle embedding slots) get angle 0, i.e. no rotation, like ViT's [class] token
+    carrying no spatial position."""
+    def __init__(self, dim: int, max_height: int, max_width: int, base: float, prefix_len: int = 0, device=None) -> None:
         super().__init__()
         dim_half = dim // 2
         inv_freq = 1.0 / (base ** (torch.arange(0, dim_half, 2, dtype=torch.float32, device=device) / dim_half))
-        freqs_h = torch.outer(torch.arange(max_height, dtype=torch.float32, device=device), inv_freq)
-        freqs_w = torch.outer(torch.arange(max_width, dtype=torch.float32, device=device), inv_freq)
-        emb_h, emb_w = torch.cat((freqs_h, freqs_h), dim=-1), torch.cat((freqs_w, freqs_w), dim=-1)
-        self.cos_cached_height = nn.Buffer(emb_h.cos(), persistent=False)
-        self.sin_cached_height = nn.Buffer(emb_h.sin(), persistent=False)
-        self.cos_cached_width = nn.Buffer(emb_w.cos(), persistent=False)
-        self.sin_cached_width = nn.Buffer(emb_w.sin(), persistent=False)
+        rows = torch.arange(max_height, dtype=torch.float32, device=device).repeat_interleave(max_width)
+        cols = torch.arange(max_width, dtype=torch.float32, device=device).repeat(max_height)
+        freqs = torch.cat((torch.outer(rows, inv_freq), torch.outer(cols, inv_freq)), dim=-1)
+        freqs = torch.cat((freqs.new_zeros(prefix_len, dim_half), freqs), dim=0)
 
-    def forward(self) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]:
-        return (self.cos_cached_height, self.cos_cached_width), (self.sin_cached_height, self.sin_cached_width)
+        # Same (freqs, freqs) layout as RotaryEmbedding, so rotate_half pairs dim i with i + dim/2
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.cos_cached = nn.Buffer(emb.cos(), persistent=False)
+        self.sin_cached = nn.Buffer(emb.sin(), persistent=False)
+
+    def forward(self):
+        return self.cos_cached, self.sin_cached
 
 
 class Attention(nn.Module):
