@@ -21,7 +21,7 @@ class DataProcessConfig(BaseModel):
     seed: int = 42
     num_aug: int = 1000
     puzzle_identifiers_start: int = 1 # start > 1 to handle multiple datasets
-    max_grid_size: int = 30 # canvas side length; seq_len = max_grid_size ** 2
+    grid_size: int = 30 # canvas side length; seq_len = max_grid_size ** 2
     scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
     
 ARCMaxGridSize = 30

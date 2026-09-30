@@ -412,7 +412,7 @@ class TRMModel(nn.Module):
         self.config = TRMConfig(**_add_puzzle_emb_positions(config_dict))
         print(config_dict)
         if self.config.visual_attention:
-            self.inner = InnerNetworkVIT
+            self.inner = InnerNetworkVIT(self.config)
         else:
             self.inner = InnerNetwork(self.config)
 
