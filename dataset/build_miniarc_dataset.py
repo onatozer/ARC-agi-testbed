@@ -49,7 +49,7 @@ def launch(config: DictConfig):
     Run:
         python -m dataset.build_miniarc_dataset
     Override on the CLI, e.g.:
-        python -m dataset.build_miniarc_dataset max_grid_size=5 data_path=data/miniarc5-aug-1000
+        python -m dataset.build_miniarc_dataset grid_size=5 data_path=data/miniarc5-aug-1000
     """
     if config.seed is None:
         config.seed = int(np.random.default_rng().integers(low=0, high=1e8))

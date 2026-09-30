@@ -273,7 +273,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                     no_aug_id = np.random.randint(0, len(puzzle.examples))
                     for _idx_ex, (inp, out) in enumerate(puzzle.examples):
                         do_aug = enable_translational_augment and _idx_ex != no_aug_id
-                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=do_aug, max_grid_size=config.max_grid_size, do_scale=do_aug and config.scale_aug)
+                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=do_aug, max_grid_size=config.grid_size, do_scale=do_aug and config.scale_aug)
                             
                         results["inputs"].append(inp)
                         results["labels"].append(out)
@@ -301,7 +301,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
         
         # Metadata
         metadata = PuzzleDatasetMetadata(
-            seq_len=config.max_grid_size * config.max_grid_size,
+            seq_len=config.grid_size * config.grid_size,
             vocab_size=10 + 2,  # PAD + EOS + "0" ... "9"
             pad_id=0,
             ignore_label_id=0,
