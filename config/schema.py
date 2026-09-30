@@ -52,6 +52,8 @@ class PretrainConfig(BaseModel):
     gradient_accumulation_steps: int = 1
 
     weight_decay: float
+    optimizer: str = "adam_atan2"  # "adam_atan2" or "muon" (Muon on the looped blocks' 2D weights, AdamAtan2 on the rest)
+    muon_lr: Optional[float] = None  # Muon base lr; None uses lr
     beta1: float
     beta2: float
 

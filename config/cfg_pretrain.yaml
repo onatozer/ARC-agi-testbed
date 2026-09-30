@@ -30,6 +30,8 @@ target_q_update_every: 4
 beta1: 0.9
 beta2: 0.95
 weight_decay: 0.1
+optimizer: adam_atan2 # or muon (Muon on the looped blocks' 2D weights, AdamAtan2 on the rest)
+muon_lr: null # Muon base lr; null uses lr
 puzzle_emb_weight_decay: 0.1
 
 # Hyperparams - Puzzle embeddings training
