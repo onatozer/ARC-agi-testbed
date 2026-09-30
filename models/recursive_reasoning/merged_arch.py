@@ -92,7 +92,7 @@ def _add_puzzle_emb_positions(config_dict: dict) -> dict:
 
 
 class Block(nn.Module):
-    def __init__(self, config: TRMConfig) -> None:
+    def __init__(self, config: TRMConfig, seq_len: int) -> None:
         super().__init__()
         self.config = config
 
@@ -104,7 +104,7 @@ class Block(nn.Module):
             raise ValueError(f"Unknown activation function {config.activation_function!r}; expected 'swiglu' or 'conv_swiglu'.")
         
         if config.mlp_t:
-            self.mlp_t = self.activation_function(config.seq_len, config.expansion)
+            self.mlp_t = self.activation_function(seq_len, config.expansion)
         else:
             self.self_attn = Attention(config.hidden_size, 
                                        config.hidden_size // config.num_heads, 
@@ -147,10 +147,12 @@ class Blocks(nn.Module):
 
 
 class InnerNetwork(nn.Module):
-    def __init__(self, config: TRMConfig) -> None:
+    def __init__(self, config: TRMConfig, seq_len: Optional[int] = None) -> None:
         super().__init__()
         config = TRMConfig(**config) if isinstance(config, dict) else config 
         self.config = config
+        # Number of tokens the blocks see; differs from config.seq_len when the input is patched
+        self.seq_len = config.seq_len if seq_len is None else seq_len
         self.forward_dtype = getattr(torch, config.forward_dtype)
         
         self.embed_scale = math.sqrt(config.hidden_size)
@@ -166,7 +168,7 @@ class InnerNetwork(nn.Module):
         #TODO: The way the Q-head is being implemented has to be wrong, 
         # like no way it's optimal to use only the puzzle embedding and only the first of the 2 output dims
 
-        self.L_level = Blocks(layers = [Block(config) for _ in range(config.L_layers)], config = self.config)
+        self.L_level = Blocks(layers = [Block(config, self.seq_len) for _ in range(config.L_layers)], config = self.config)
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         
@@ -201,13 +203,13 @@ class InnerNetwork(nn.Module):
         
         head_dim = self.config.hidden_size // self.config.num_heads
         if self.config.pos_encodings == "rope":
-            self.rotary_emb = RotaryEmbedding(head_dim, self.config.seq_len, self.config.rope_theta)
+            self.rotary_emb = RotaryEmbedding(head_dim, self.seq_len, self.config.rope_theta)
 
         elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
+            self.embed_pos = CastedEmbedding(self.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
 
         elif self.config.pos_encodings == "absolute":
-            self.register_buffer("absolute_pos_embedding", _sinusoidal(self.config.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
+            self.register_buffer("absolute_pos_embedding", _sinusoidal(self.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
 
     def _cos_sin(self) -> CosSin:
         return self.rotary_emb() if hasattr(self, "rotary_emb") else None
@@ -231,7 +233,7 @@ class InnerNetwork(nn.Module):
 
     def empty_carry(self, batch_size: int, device: str = "cpu") -> LatentCarry:
         """Creates a LatentCarry containing no values"""
-        shape = (batch_size, self.config.seq_len, self.config.hidden_size)
+        shape = (batch_size, self.seq_len, self.config.hidden_size)
         return LatentCarry(torch.empty(shape, dtype=self.forward_dtype, device=device), torch.empty(shape, dtype=self.forward_dtype, device=device))
 
     def reset_carry(self, reset_flag: torch.Tensor, carry: LatentCarry, reset_indices: Optional[torch.tensor]) -> LatentCarry:
@@ -312,7 +314,9 @@ class InnerNetwork(nn.Module):
 
 class InnerNetworkVIT(InnerNetwork):
     def __init__(self, config: TRMConfig):
-        super().__init__(config)
+        # One token per patch, plus the puzzle embedding prefix slots
+        num_patches = (config.seq_len - config.puzzle_emb_len) // (config.patch_height * config.patch_width)
+        super().__init__(config, seq_len=num_patches + config.puzzle_emb_len)
 
         
         self.embed_scale = math.sqrt(config.hidden_size)
@@ -329,6 +333,11 @@ class InnerNetworkVIT(InnerNetwork):
         self.patch_embedding = nn.Sequential(
             Rearrange('b (h p1 w p2) c -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width, w = board_width // patch_width),
             CastedLinear(patch_dim, dim, bias=False),
+        )
+        # Predict every cell of a patch from its token, then un-patchify back to one logit row per cell
+        self.lm_head = nn.Sequential(
+            CastedLinear(dim, patch_dim, bias=False),
+            Rearrange('b (h w) (p1 p2 c) -> b (h p1 w p2) c', p1 = patch_height, p2 = patch_width, w = board_width // patch_width),
         )
 
     def _init_pos(self, embed_std: float) -> None:
@@ -348,13 +357,13 @@ class InnerNetworkVIT(InnerNetwork):
         # When it's the vision transformer rope is just automatically gonna imply 2d rope, IMO makes more sense, and 2d rope doesn't even work for the regular trans anyways
         if self.config.pos_encodings == "rope":
             h, w = self._board_dims()
-            self.rotary_emb = RotaryEmbedding2D(head_dim, h, w, self.config.rope_theta)
+            self.rotary_emb = RotaryEmbedding2D(head_dim, h // self.config.patch_height, w // self.config.patch_width, self.config.rope_theta)
 
         elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
+            self.embed_pos = CastedEmbedding(self.seq_len, self.config.hidden_size, embed_std, self.forward_dtype)
 
         elif self.config.pos_encodings == "absolute":
-            self.register_buffer("absolute_pos_embedding", _sinusoidal(self.config.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
+            self.register_buffer("absolute_pos_embedding", _sinusoidal(self.seq_len, self.config.hidden_size).to(self.forward_dtype), persistent=True)
 
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
