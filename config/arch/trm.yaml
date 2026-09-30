@@ -22,6 +22,8 @@ pos_encodings: rope
 forward_dtype: bfloat16
 
 mlp_t: False # use mlp on L instead of transformer
+activation_function: swiglu # swiglu or conv_swiglu (URM's ConvSwiGLU, arXiv 2512.14693)
+conv_kernel: 2 # ConvSwiGLU depthwise conv kernel size
 puzzle_emb_len: 16 # if non-zero, its specified to this value
 
 lambda_: 0.95

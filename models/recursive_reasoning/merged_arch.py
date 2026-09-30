@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from torch import nn
 
 from models.common import trunc_normal_init_
-from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, SwiGLU, rms_norm
+from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, ConvSwiGLU, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
 from einops.layers.torch import Rearrange
 
@@ -58,6 +58,8 @@ class TRMConfig(BaseModel):
     halt_confirm_mode: str = "consecutive"
     forward_dtype: str = "bfloat16"
     mlp_t: bool = False
+    activation_function: str = "swiglu"  # "swiglu" or "conv_swiglu" (URM's ConvSwiGLU)
+    conv_kernel: int = 2  # ConvSwiGLU depthwise conv kernel size
 
     # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
@@ -91,8 +93,16 @@ class Block(nn.Module):
     def __init__(self, config: TRMConfig) -> None:
         super().__init__()
         self.config = config
+
+        if config.activation_function == "swiglu":
+            self.activation_function = SwiGLU
+        elif config.activation_function == "conv_swiglu":
+            self.activation_function = ConvSwiGLU
+        else:
+            raise ValueError(f"Unknown activation function {config.activation_function!r}; expected 'swiglu' or 'conv_swiglu'.")
+        
         if config.mlp_t:
-            self.mlp_t = SwiGLU(config.seq_len, config.expansion)
+            self.mlp_t = self.activation_function(config.seq_len, config.expansion)
         else:
             self.self_attn = Attention(config.hidden_size, 
                                        config.hidden_size // config.num_heads, 
@@ -100,7 +110,8 @@ class Block(nn.Module):
                                        config.num_heads, 
                                        causal=False)
             
-        self.mlp = SwiGLU(hidden_size=config.hidden_size, expansion=config.expansion)
+        self.mlp = self.activation_function(hidden_size=config.hidden_size, expansion=config.expansion)
+        
         self.norm_eps = config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
