@@ -73,6 +73,7 @@ class TRMConfig(BaseModel):
     L_init_std: float = 1.0
 
     random_initialization: bool = True
+    visual_attention: bool = False
 
 
 def _add_puzzle_emb_positions(config_dict: dict) -> dict:
@@ -412,7 +413,7 @@ class TRMModel(nn.Module):
         self.config = TRMConfig(**_add_puzzle_emb_positions(config_dict))
         print(config_dict)
         if self.config.visual_attention:
-            self.inner = InnerNetworkVIT
+            self.inner = InnerNetworkVIT(self.config)
         else:
             self.inner = InnerNetwork(self.config)
 
