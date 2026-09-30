@@ -252,11 +252,23 @@ def create_model(
     # In general, AdamATan2 is used as the optimizer, the other optimizers are for the embedding trick thing that Sapient did in their paper,
     # where they created an embedding for each type of puzzle and trained on those. I think this process can be removed, even for the ARC puzzles, but keeping for now
 
+    # With optimizer=muon, the 2D weight matrices of the looped blocks go to Muon and everything else stays on AdamAtan2
+    if config.optimizer == "muon":
+        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and ".L_level." in name]
+        if not muon_params:
+            raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
+        muon_ids = {id(p) for p in muon_params}
+        adam_params = [p for p in model.parameters() if id(p) not in muon_ids]
+    elif config.optimizer == "adam_atan2":
+        muon_params, adam_params = [], list(model.parameters())
+    else:
+        raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
+
     # Set to 0 to avoid using the puzzle embedding trick at all
     if config.arch.puzzle_emb_ndim == 0:
         optimizers = [
             AdamAtan2(
-                model.parameters(),
+                adam_params,
                 lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.weight_decay,
                 betas=(config.beta1, config.beta2)
@@ -288,7 +300,7 @@ def create_model(
                 world_size=world_size
             ),
             AdamAtan2(
-                model.parameters(),
+                adam_params,
                 lr=1e-8,  # Small placeholder; will be overridden by scheduler
                 weight_decay=config.weight_decay,
                 betas=(config.beta1, config.beta2)
@@ -298,6 +310,18 @@ def create_model(
             config.puzzle_emb_lr,
             config.lr
         ]
+
+    if muon_params and not config.freeze_weights:
+        # match_rms_adamw scales Muon's update to AdamW's RMS, so the AdamW lr and weight decay carry over
+        optimizers.append(
+            torch.optim.Muon(
+                muon_params,
+                lr=1e-8,  # Small placeholder; will be overridden by scheduler
+                weight_decay=config.weight_decay,
+                adjust_lr_fn="match_rms_adamw",
+            )
+        )
+        optimizer_lrs.append(config.muon_lr if config.muon_lr is not None else config.lr)
     return model, optimizers, optimizer_lrs
 
 def init_train_state(
