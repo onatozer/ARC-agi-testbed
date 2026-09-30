@@ -45,6 +45,16 @@ def test_logged_with_penalty_and_matches_it():
     assert metrics["fprl/jacobian_reg"].item() == pytest.approx(0.5 * metrics["fprl/jacobian_norm"].item(), rel=1e-5)
 
 
+def test_penalty_enters_loss_once_per_row():
+    # pretrain.py divides the loss by the batch size, so the penalty must be counted per row to keep weight lambda
+    model, batch = _tiny_root(jacobian_reg_lambda=0.5, log_jacobian_norm=False)
+    model.train()
+    _, loss, metrics, _, _ = model(carry=model.initial_carry(batch), batch=batch, return_keys=[])
+    penalty = loss.item() - (metrics["lm_loss"].item() + 0.5 * metrics["q_halt_loss"].item())
+    rows = batch["inputs"].shape[0]
+    assert penalty == pytest.approx(0.5 * metrics["fprl/jacobian_norm"].item() * rows, rel=1e-3)
+
+
 def test_not_computed_in_eval():
     model, batch = _tiny_root(jacobian_reg_lambda=0.0, log_jacobian_norm=True)
     model.eval()
