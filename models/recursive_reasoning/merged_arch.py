@@ -60,6 +60,7 @@ class TRMConfig(BaseModel):
     mlp_t: bool = False
     activation_function: str = "swiglu"  # "swiglu" or "conv_swiglu" (URM's ConvSwiGLU)
     conv_kernel: int = 2  # ConvSwiGLU depthwise conv kernel size
+    prenorm: bool = False  # RMSNorm on each sub-layer's input (z + f(norm(z))) instead of after the residual add
 
     # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
@@ -115,6 +116,17 @@ class Block(nn.Module):
         self.norm_eps = config.rms_norm_eps
 
     def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self.config.prenorm:
+            if self.config.mlp_t:
+                hidden_states = hidden_states.transpose(1, 2)
+                hidden_states = hidden_states + self.mlp_t(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
+                hidden_states = hidden_states.transpose(1, 2)
+            else:
+                hidden_states = hidden_states + self.self_attn(
+                    cos_sin=cos_sin, hidden_states=rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+                )
+            return hidden_states + self.mlp(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
+
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1, 2)
             hidden_states = rms_norm(hidden_states + self.mlp_t(hidden_states), variance_epsilon = self.norm_eps)
