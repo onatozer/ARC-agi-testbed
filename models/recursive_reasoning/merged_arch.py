@@ -5,6 +5,7 @@ import math
 import torch
 from pydantic import BaseModel, ConfigDict
 from torch import nn
+import torch.nn.functional as F
 
 from models.common import trunc_normal_init_
 from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, ConvSwiGLU, SwiGLU, rms_norm
@@ -321,14 +322,13 @@ class InnerNetworkVIT(InnerNetwork):
         patch_height = config.patch_height
         patch_width = config.patch_width
         
-        # NOTE: Only doing this bc in ARC agi challenge there's no channels, but for actual images put back in the channel dim
-        patch_dim  = patch_height*patch_width
+        # ARC cells are categorical, so each cell is one-hot encoded and the vocab plays the role of ViT's channel dim
+        _, board_width = self._board_dims()
+        patch_dim  = patch_height*patch_width*config.vocab_size
         dim = config.hidden_size
         self.patch_embedding = nn.Sequential(
-            Rearrange('b (h p1) (w p2) -> b (h w) (p1 p2)', p1 = patch_height, p2 = patch_width),
-            nn.rms_norm(patch_dim),
-            nn.CastedEmbedding(patch_dim, dim, embed_std, self.forward_dtype),
-            nn.rms_norm(dim),
+            Rearrange('b (h p1 w p2) c -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width, w = board_width // patch_width),
+            CastedLinear(patch_dim, dim, bias=False),
         )
 
     def _init_pos(self, embed_std: float) -> None:
@@ -358,7 +358,7 @@ class InnerNetworkVIT(InnerNetwork):
 
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
-        x = self.patch_embedding(input_ids.to(torch.int32))
+        x = self.patch_embedding(F.one_hot(input_ids.long(), self.config.vocab_size).to(self.forward_dtype))
         
         if self.config.puzzle_emb_ndim > 0:
             # Prepend the per-puzzle embedding, zero-padded to puzzle_emb_len full hidden-size slots

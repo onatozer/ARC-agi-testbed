@@ -10,3 +10,5 @@ loss:
   loss_type: stablemax_cross_entropy
   
 visual_attention: true
+patch_height: 2
+patch_width: 2
