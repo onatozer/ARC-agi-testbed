@@ -1,5 +1,6 @@
 import inspect
 
+import pytest
 import torch
 from torchdeq.solver.anderson import anderson_solver
 
@@ -69,3 +70,26 @@ def test_each_solve_warm_starts_from_the_previous_solution(monkeypatch):
     assert len(calls) == 2
     # the solve's fp32 output is handed back to the network in forward_dtype, then re-widened by the solver
     assert torch.equal(calls[1]["x0"], calls[0]["z_star"].to(torch.bfloat16).float())
+
+
+def test_solver_residuals_are_the_last_solves_per_row_errors(monkeypatch):
+    infos = []
+    real = trm_root.anderson_solver
+
+    def recording_solver(func, x0, **kwargs):
+        out = real(func, x0, **kwargs)
+        infos.append(out[2])
+        return out
+
+    monkeypatch.setattr(trm_root, "anderson_solver", recording_solver)
+    model, batch = _tiny_root(H_cycles=3, halt_max_steps=1)  # two solves per forward; every row halts after one step
+    model.eval()
+    with torch.no_grad():
+        _, _, metrics, _, _ = model(carry=model.initial_carry(batch), batch=batch, return_keys=[])
+
+    count = metrics["count"].item()
+    assert count == batch["inputs"].shape[0]
+    last = infos[-1]
+    for key, info_key in (("solver_abs_residual", "abs_lowest"), ("solver_rel_residual", "rel_lowest")):
+        assert metrics[key].item() / count == pytest.approx(last[info_key].mean().item(), rel=1e-5)
+    assert 0 < metrics["solver_rel_residual"].item() / count < metrics["solver_abs_residual"].item() / count

@@ -579,6 +579,8 @@ def train_batch(
                 "train/nfe",
                 "train/zH_rel_residual",
                 "train/zL_rel_residual",
+                "train/solver_abs_residual",
+                "train/solver_rel_residual",
                 "train/halt/quick_correct",
                 "train/halt/quick_wrong",
                 "train/halt/slow_correct",

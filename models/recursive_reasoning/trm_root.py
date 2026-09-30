@@ -236,6 +236,7 @@ class TRMRoot_Inner(InnerNetwork):
         x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
         seq_dict = {"cos_sin": self._cos_sin()}
         self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
+        self._last_info = None
 
         # Replace the L_cycle recursions with a root-finding operation
         with torch.no_grad():
@@ -289,6 +290,11 @@ class TRMRoot_Inner(InnerNetwork):
         }
         if jac_norm is not None:
             info["jacobian_norm"] = jac_norm.detach()
+        if self._last_info is not None:
+            # per-row fixed-point error of the last solve (the z_L that is carried): ||f(z)-z|| and ||f(z)-z|| / ||f(z)||,
+            # each the lowest the solver reached
+            info["solver_abs_residual"] = self._last_info["abs_lowest"]
+            info["solver_rel_residual"] = self._last_info["rel_lowest"]
         return LatentCarry(z_H.detach(), z_L.detach()), info
 
 

@@ -27,6 +27,8 @@ def _recursion_metrics(
 
     nfe: L_level evaluations used to reach the answer.
     zH_rel_residual / zL_rel_residual: ||z^T - z^(T-1)|| / ||z^T|| of z_H / z_L over the last step before halting.
+    solver_abs_residual / solver_rel_residual (DEQ inners only): the fixed-point solver's ||f(z)-z|| and
+    ||f(z)-z|| / ||f(z)|| for z_L in the last step before halting.
     With split_quick, halted puzzles are split into quick (halted within halt_max_steps // 2 supervision steps) vs slow,
     and correct vs wrong; the four fractions sum to 1. Only meaningful when halting is adaptive (training), since at
     eval every puzzle runs to halt_max_steps.
@@ -36,7 +38,7 @@ def _recursion_metrics(
     nfe = _carry_get(carry, "nfe", None)
     if nfe is not None:
         metrics["nfe"] = torch.where(valid, nfe.to(f32), 0).sum()
-    for key in ("zH_rel_residual", "zL_rel_residual"):
+    for key in ("zH_rel_residual", "zL_rel_residual", "solver_abs_residual", "solver_rel_residual"):
         if key in outputs:
             metrics[key] = torch.where(valid, outputs[key].to(f32), 0).sum()
     if split_quick:
