@@ -60,6 +60,10 @@ class TRMConfig(BaseModel):
     mlp_t: bool = False
     activation_function: str = "swiglu"  # "swiglu" or "conv_swiglu" (URM's ConvSwiGLU)
     conv_kernel: int = 2  # ConvSwiGLU depthwise conv kernel size
+    # Pre-norm with residual scaling (FPRM, arXiv 2606.18206) instead of post-norm; alphas are learnable per channel
+    prenorm: bool = False
+    res_alpha1_init: float = 0.75  # residual-stream scale within an L_level call
+    res_alpha2_init: float = 0.25  # state scale when mixing in the input injection
 
     # seq_len includes the puzzle_emb_len prefix slots; see _add_puzzle_emb_positions
     puzzle_emb_len: int = 16
@@ -114,7 +118,18 @@ class Block(nn.Module):
         
         self.norm_eps = config.rms_norm_eps
 
-    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor, res_scale: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> torch.Tensor:
+        if res_scale is not None:
+            # Pre-norm: z = alpha1 * z + beta1 * f(norm(z)) for each sub-layer
+            alpha1, beta1 = res_scale
+            normed = rms_norm(hidden_states, variance_epsilon=self.norm_eps)
+            if self.config.mlp_t:
+                out = self.mlp_t(normed.transpose(1, 2)).transpose(1, 2)
+            else:
+                out = self.self_attn(cos_sin=cos_sin, hidden_states=normed)
+            hidden_states = alpha1 * hidden_states + beta1 * out
+            return alpha1 * hidden_states + beta1 * self.mlp(rms_norm(hidden_states, variance_epsilon=self.norm_eps))
+
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1, 2)
             hidden_states = rms_norm(hidden_states + self.mlp_t(hidden_states), variance_epsilon = self.norm_eps)
@@ -133,9 +148,24 @@ class Blocks(nn.Module):
         self.layers = nn.ModuleList(layers)
         self.lambda_ = config.lambda_
         self.noise_scale = config.noise_scale
+        self.prenorm = config.prenorm
+        if self.prenorm:
+            # Stored as logits so the alphas stay in (0, 1), as FPRM's boundedness theorem requires
+            self.res_alpha1_logit = nn.Parameter(torch.full((config.hidden_size,), math.log(config.res_alpha1_init / (1 - config.res_alpha1_init))))
+            self.res_alpha2_logit = nn.Parameter(torch.full((config.hidden_size,), math.log(config.res_alpha2_init / (1 - config.res_alpha2_init))))
 
     def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-        updated_states = hidden_states + input_injection
+        if self.prenorm:
+            # Betas tied to the alphas as in FPRM Theorem 1, which keeps the iterates bounded (2 sub-layers per block)
+            alpha1, alpha2 = torch.sigmoid(self.res_alpha1_logit), torch.sigmoid(self.res_alpha2_logit)
+            alpha1_n = alpha1 ** (2 * len(self.layers))
+            beta2 = 1 - alpha2 * alpha1_n
+            beta1 = beta2 * (1 - alpha1) / (1 - alpha1_n)
+            dtype = hidden_states.dtype
+            updated_states = alpha2.to(dtype) * hidden_states + beta2.to(dtype) * input_injection
+            kwargs["res_scale"] = (alpha1.to(dtype), beta1.to(dtype))
+        else:
+            updated_states = hidden_states + input_injection
 
         for layer in self.layers:
             updated_states = layer(hidden_states=updated_states, **kwargs)
@@ -289,17 +319,20 @@ class InnerNetwork(nn.Module):
             z_L = self.L_level(z_L, z_H + x, **seq_dict)
         z_H = self.L_level(z_H, z_L, **seq_dict)
 
+        # Pre-norm leaves the residual stream unnormalized, so normalize it once before the heads
+        z_out = rms_norm(z_H, variance_epsilon=self.config.rms_norm_eps) if self.config.prenorm else z_H
+
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
             # The slice [:, puzzle_emb_len:] strips the prepended summary slot(s) (the [CLS]-like position 0 that the q_head reads),
             # so the logits line up 1:1 with actual puzzle cells.
-            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+            logits = self.lm_head(z_out[:, self.config.puzzle_emb_len :]).contiguous()
         else:
-            logits = self.lm_head(z_H).contiguous()
+            logits = self.lm_head(z_out).contiguous()
 
         # Struggling to find a super good reason for why z_H[:,0] is being passed in and not z_H. When there's a puzzle embedding, its added to the front of z_H, 
         # so z_H[:,0] is just running on the puzzle embedding of each batch, but otherwise it's hard to interpert exactly what z_H[0] is supposed to be
-        q = self.q_head(z_H[:, 0]).to(torch.float32) 
+        q = self.q_head(z_out[:, 0]).to(torch.float32) 
 
         info = {
             "q_halt_logits": q[..., 0],

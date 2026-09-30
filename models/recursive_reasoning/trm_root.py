@@ -273,13 +273,16 @@ class TRMRoot_Inner(InnerNetwork):
         self._nfe += self.root_config.bptt_through + 1
 
         
+        # Pre-norm leaves the residual stream unnormalized, so normalize it once before the heads
+        z_out = rms_norm(z_H, variance_epsilon=self.config.rms_norm_eps) if self.config.prenorm else z_H
+
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
-            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+            logits = self.lm_head(z_out[:, self.config.puzzle_emb_len :]).contiguous()
         else:
-            logits = self.lm_head(z_H).contiguous()
+            logits = self.lm_head(z_out).contiguous()
 
-        q = self.q_head(z_H[:, 0]).to(torch.float32) 
+        q = self.q_head(z_out[:, 0]).to(torch.float32) 
         
         info = {
             "q_halt_logits": q[..., 0],

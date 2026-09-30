@@ -24,6 +24,9 @@ forward_dtype: bfloat16
 mlp_t: False # use mlp on L instead of transformer
 activation_function: swiglu # swiglu or conv_swiglu (URM's ConvSwiGLU, arXiv 2512.14693)
 conv_kernel: 2 # ConvSwiGLU depthwise conv kernel size
+prenorm: False # pre-norm + residual scaling (FPRM, arXiv 2606.18206) instead of post-norm
+res_alpha1_init: 0.75
+res_alpha2_init: 0.25
 puzzle_emb_len: 16 # if non-zero, its specified to this value
 
 lambda_: 0.95
