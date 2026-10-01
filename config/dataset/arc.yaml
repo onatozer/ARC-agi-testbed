@@ -17,5 +17,6 @@ num_aug: 1000
 puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
 grid_size: 30 # canvas side length; seq_len = max_grid_size ** 2
 scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
+object_ids: false # also save per-cell object indices of the inputs, for arch.pos_encodings=absolute_2d_ope (ViTARC OPE)
 
 seed: null

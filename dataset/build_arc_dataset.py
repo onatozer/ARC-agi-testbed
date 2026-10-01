@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import numpy as np
+from scipy import ndimage
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -23,6 +24,7 @@ class DataProcessConfig(BaseModel):
     puzzle_identifiers_start: int = 1 # start > 1 to handle multiple datasets
     grid_size: int = 30 # canvas side length; seq_len = max_grid_size ** 2
     scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
+    object_ids: bool = False # also save a per-cell object index of each input (ViTARC OPE, arXiv 2410.06405)
     
 ARCMaxGridSize = 30
 ARCAugmentRetriesFactor = 5
@@ -78,6 +80,25 @@ def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_tr
         result.append(grid.flatten())
 
     return result
+
+
+def object_index_canvas(canvas: np.ndarray) -> np.ndarray:
+    """Object index of each cell of a 2D token canvas, for ViTARC's object-based positional encoding (arXiv 2410.06405,
+    Sec. 5). Objects are 8-connected same-color components of the non-black colors (tokens 3..11); each object's bounding
+    box gets an index 1..K, numbered in (top, left) order, with smaller boxes painted over larger ones they overlap.
+    Black, padding and boundary tokens outside every box get 0. The paper uses OpenCV contours + bounding boxes; external
+    contours of a color mask are exactly its 8-connected components."""
+    boxes = []
+    for token in range(3, 12):
+        labels, _ = ndimage.label(canvas == token, structure=np.ones((3, 3), dtype=bool))
+        boxes.extend(ndimage.find_objects(labels))
+    boxes.sort(key=lambda box: (box[0].start, box[1].start))
+
+    ids = np.zeros(canvas.shape, dtype=np.uint16)
+    area = lambda k: (boxes[k][0].stop - boxes[k][0].start) * (boxes[k][1].stop - boxes[k][1].start)
+    for k in sorted(range(len(boxes)), key=area, reverse=True):
+        ids[boxes[k]] = k + 1
+    return ids
 
 
 def grid_hash(grid: np.ndarray):
@@ -260,7 +281,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
         
         for subset_name, subset in split.items(): # "all" is the only subset
             # Construct subset
-            results = {k: [] for k in ["inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices"]}
+            results = {k: [] for k in ["inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices"] + (["object_ids"] if config.object_ids else [])}
             results["puzzle_indices"].append(0)
             results["group_indices"].append(0)
             
@@ -277,6 +298,8 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                             
                         results["inputs"].append(inp)
                         results["labels"].append(out)
+                        if config.object_ids:
+                            results["object_ids"].append(object_index_canvas(inp.reshape(config.grid_size, -1)).flatten())
                         example_id += 1
                         
                         total_examples += 1
@@ -292,7 +315,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                 total_groups += 1
             
             for k, v in results.items():
-                if k in {"inputs", "labels"}:
+                if k in {"inputs", "labels", "object_ids"}:
                     v = np.stack(v, 0)
                 else:
                     v = np.array(v, dtype=np.int32)
