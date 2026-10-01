@@ -582,7 +582,8 @@ def load_training_state(
             rank_zero_print_warning(warning_message, color="yellow")
 
         config.project_name = checkpoint_config.get("project_name", config.project_name)
-        config.run_name = checkpoint_config.get("run_name", config.run_name)
+        if config.wandb_on_resume == "continue":  # a new or forked W&B run keeps the run_name it was given
+            config.run_name = checkpoint_config.get("run_name", config.run_name)
         config.checkpoint_path = checkpoint_config.get("checkpoint_path", config.checkpoint_path)
 
     resume_info = {

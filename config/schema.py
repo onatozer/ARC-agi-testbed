@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import pydantic
 from pydantic import BaseModel
@@ -70,6 +70,9 @@ class PretrainConfig(BaseModel):
     load_checkpoint: Optional[str] = None
     load_weights_only: bool = False
     load_strict: bool = False
+    # W&B run for a full resume from load_checkpoint: "continue" the checkpoint's run, start a "new" one, or "fork" it
+    # (a new run that copies the old one's history up to the checkpoint step)
+    wandb_on_resume: Literal["continue", "new", "fork"] = "continue"
 
     seed: int = 0
     train_epochs_per_iter: Optional[int] = None
