@@ -234,7 +234,7 @@ class TRMRoot_Inner(InnerNetwork):
         """
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
-        seq_dict = {"cos_sin": self._cos_sin()}
+        seq_dict = self._seq_dict()
         self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
         self._last_info = None
 

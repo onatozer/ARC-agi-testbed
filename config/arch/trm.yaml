@@ -19,6 +19,7 @@ expansion: 4
 puzzle_emb_ndim: ${.hidden_size}
 
 pos_encodings: rope
+alibi_2d: false # ViTARC 2D-RPE (arXiv 2410.06405): per-head -r * Manhattan-distance attention bias; disables the flash SDPA kernel
 forward_dtype: bfloat16
 
 mlp_t: False # use mlp on L instead of transformer
