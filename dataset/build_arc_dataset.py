@@ -23,11 +23,15 @@ class DataProcessConfig(BaseModel):
     puzzle_identifiers_start: int = 1 # start > 1 to handle multiple datasets
     grid_size: int = 30 # canvas side length; seq_len = max_grid_size ** 2
     scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
+    border_tokens: bool = False # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); canvas becomes grid_size x (grid_size + 1)
     
 ARCMaxGridSize = 30
 ARCAugmentRetriesFactor = 5
 
 PuzzleIdSeparator = "|||"
+
+# ViTARC border-token ids (border_tokens=True). PAD (0) is only batch fill and stays unsupervised; colors stay at 2..11
+EndXToken, EndYToken, EndXYToken, NewlineToken, Pad2DToken = 1, 12, 13, 14, 15
     
 
 @dataclass
@@ -47,7 +51,7 @@ def arc_grid_to_np(grid: List[List[int]]):
     return arr.astype(np.uint8)
 
 
-def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_translation: bool, max_grid_size: int = ARCMaxGridSize, do_scale: bool = False):
+def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_translation: bool, max_grid_size: int = ARCMaxGridSize, do_scale: bool = False, border_tokens: bool = False):
     # PAD: 0, <eos>: 1, digits: 2 ... 11
     # Random integer upscale (each cell -> s x s block), shared by input and output, s.t. both still fit the canvas
     if do_scale:
@@ -66,6 +70,9 @@ def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_tr
     result = []
     for grid in [inp, out]:
         nrow, ncol = grid.shape
+        if border_tokens:
+            result.append(_border_token_canvas(grid, pad_r, pad_c, max_grid_size).flatten())
+            continue
         grid = np.pad(grid + 2, ((pad_r, max_grid_size - pad_r - nrow), (pad_c, max_grid_size - pad_c - ncol)), constant_values=0)
 
         # Add <eos>
@@ -78,6 +85,25 @@ def np_grid_to_seq_translational_augment(inp: np.ndarray, out: np.ndarray, do_tr
         result.append(grid.flatten())
 
     return result
+
+
+def _border_token_canvas(grid: np.ndarray, pad_r: int, pad_c: int, max_grid_size: int) -> np.ndarray:
+    """ViTARC visual tokens (arXiv 2410.06405, Sec. 4): the grid on a max_grid_size x (max_grid_size + 1) canvas, where
+    the extra last column is <2d_nl>, the true grid's right/bottom edges are <2d_endxgrid>/<2d_endygrid> with
+    <2d_endxygrid> at the corner, and every other canvas cell is a supervised <2d_pad>."""
+    nrow, ncol = grid.shape
+    canvas = np.full((max_grid_size, max_grid_size + 1), Pad2DToken, dtype=np.uint8)
+    canvas[:, max_grid_size] = NewlineToken
+    canvas[pad_r:pad_r + nrow, pad_c:pad_c + ncol] = grid + 2
+
+    end_row, end_col = pad_r + nrow, pad_c + ncol
+    if end_col < max_grid_size:
+        canvas[pad_r:end_row, end_col] = EndXToken
+    if end_row < max_grid_size:
+        canvas[end_row, pad_c:end_col] = EndYToken
+    if end_row < max_grid_size and end_col < max_grid_size:
+        canvas[end_row, end_col] = EndXYToken
+    return canvas
 
 
 def grid_hash(grid: np.ndarray):
@@ -273,7 +299,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                     no_aug_id = np.random.randint(0, len(puzzle.examples))
                     for _idx_ex, (inp, out) in enumerate(puzzle.examples):
                         do_aug = enable_translational_augment and _idx_ex != no_aug_id
-                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=do_aug, max_grid_size=config.grid_size, do_scale=do_aug and config.scale_aug)
+                        inp, out = np_grid_to_seq_translational_augment(inp, out, do_translation=do_aug, max_grid_size=config.grid_size, do_scale=do_aug and config.scale_aug, border_tokens=config.border_tokens)
                             
                         results["inputs"].append(inp)
                         results["labels"].append(out)
@@ -301,8 +327,8 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
         
         # Metadata
         metadata = PuzzleDatasetMetadata(
-            seq_len=config.grid_size * config.grid_size,
-            vocab_size=10 + 2,  # PAD + EOS + "0" ... "9"
+            seq_len=config.grid_size * (config.grid_size + 1 if config.border_tokens else config.grid_size),
+            vocab_size=Pad2DToken + 1 if config.border_tokens else 10 + 2,  # PAD + EOS + "0" ... "9" (+ ViTARC border tokens)
             pad_id=0,
             ignore_label_id=0,
             blank_identifier_id=0,
@@ -338,7 +364,12 @@ def launch(config: DictConfig):
     if config.seed is None:
         config.seed = int(np.random.default_rng().integers(low=0, high=1e8))
 
-    convert_dataset(DataProcessConfig(**OmegaConf.to_container(config, resolve=True)))
+    config = DataProcessConfig(**OmegaConf.to_container(config, resolve=True))
+    if config.border_tokens and not config.output_dir.endswith("-border"):
+        # Never overwrite a plain dataset with the border-token format
+        config.output_dir += "-border"
+        print(f"border_tokens: writing to {config.output_dir}")
+    convert_dataset(config)
 
 
 if __name__ == "__main__":
