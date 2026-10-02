@@ -6,12 +6,14 @@ import glob
 import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .build_arc_dataset import convert_single_arc_puzzle, convert_dataset
 
 
 class SmallARCDataProcessConfig(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
     input_file_prefix: str = "kaggle/combined/arc-agi"
     miniarc_dir: str = "data/MiniARC"
     train_subsets: List[str] = ["training", "concept"] # all pairs -> train

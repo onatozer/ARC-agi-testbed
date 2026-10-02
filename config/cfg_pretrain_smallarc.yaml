@@ -11,6 +11,7 @@ hydra:
 global_batch_size: 128 # has to be less than 1835 (train examples per epoch) for small arc
 optimizer: muon
 activation_function: conv_swiglu
+max_eval_steps: null
 
 # Ensure that the puzzle embedding is being used 
 arch:
