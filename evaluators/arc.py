@@ -12,9 +12,9 @@ from dataset.build_arc_dataset import inverse_aug, grid_hash, arc_grid_to_np
 from dataset.common import PuzzleDatasetMetadata
 
 @njit
-def _crop(grid: np.ndarray, grid_size: int):
+def _crop(grid: np.ndarray, grid_size: int, grid_width: int):
     """Find maximum-sized rectangle without any EOS token inside. """
-    grid = grid.reshape(grid_size, grid_size)
+    grid = grid.reshape(grid_size, grid_width)
 
     max_area = 0
     max_size = (0, 0)
@@ -51,6 +51,8 @@ class ARC:
         self.aggregated_voting = aggregated_voting
         self.blank_identifier_id = eval_metadata.blank_identifier_id
         self.grid_size = math.isqrt(eval_metadata.seq_len)
+        # grid_size wide, or grid_size + 1 with border tokens (the <2d_nl> column)
+        self.grid_width = eval_metadata.seq_len // self.grid_size
 
         # Load identifiers and test puzzles
         with open(os.path.join(data_path, "identifiers.json"), "r") as f:
@@ -92,9 +94,9 @@ class ARC:
             name = self.identifier_map[identifier]
             orig_name, _inverse_fn = inverse_aug(name)
             
-            input_hash = grid_hash(_inverse_fn(_crop(input, self.grid_size)))
+            input_hash = grid_hash(_inverse_fn(_crop(input, self.grid_size, self.grid_width)))
             
-            pred = _inverse_fn(_crop(pred, self.grid_size))
+            pred = _inverse_fn(_crop(pred, self.grid_size, self.grid_width))
             assert np.all((pred >= 0) & (pred <= 9)), f"Puzzle {name}'s prediction out of 0-9 range."  # Sanity check
 
             # Store into local state
