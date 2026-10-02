@@ -716,21 +716,25 @@ def launch(hydra_config: DictConfig):
         if wandb_kwargs["mode"] == "disable":
             wandb_kwargs["mode"] = "disabled"
         
-        if resume_info is None:
+        continue_run = resume_info is not None and config.wandb_on_resume == "continue"
+        if not continue_run:
             wandb_kwargs.update({"name": config.run_name, "tags": [f"{config.dataset.name}"]})
 
         if resume_info is not None and resume_info.get("wandb") is not None:
             wandb_meta = resume_info["wandb"]
-            if wandb_meta.get("name"):
-                config.run_name = wandb_meta["name"]
-                wandb_kwargs["name"] = config.run_name
+            if continue_run:
+                if wandb_meta.get("name"):
+                    config.run_name = wandb_meta["name"]
+                    wandb_kwargs["name"] = config.run_name
 
-            if (
-                wandb_meta.get("id")
-                and not config.load_weights_only
-            ):
-                wandb_kwargs["id"] = wandb_meta["id"]
-                wandb_kwargs["resume"] = "must"
+                if (
+                    wandb_meta.get("id")
+                    and not config.load_weights_only
+                ):
+                    wandb_kwargs["id"] = wandb_meta["id"]
+                    wandb_kwargs["resume"] = "must"
+            elif config.wandb_on_resume == "fork" and wandb_meta.get("id"):
+                wandb_kwargs["fork_from"] = f"{wandb_meta['id']}?_step={train_state.step}"
 
         # Honor a user-provided W&B run id when resuming a tracked run.
         env_run_id = os.environ.get("WANDB_RUN_ID")
@@ -777,9 +781,6 @@ def launch(hydra_config: DictConfig):
 
         if run is not None:
             run.config.update({"checkpoint_path": config.checkpoint_path}, allow_val_change=True)
-
-        if wandb.run is not None and train_state.step > 0:
-            wandb.run._step = train_state.step
 
         wandb_meta_for_config = {
             "id": WANDB_RUN_ID,
