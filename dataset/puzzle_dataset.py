@@ -128,10 +128,15 @@ class PuzzleDataset(IterableDataset):
         # Load data
         self._data = {}
         for set_name in self.metadata.sets:
+            # Optional per-cell object indices of the inputs (build_arc_dataset object_ids=true)
+            fields = dict(field_mmap_modes)
+            if os.path.exists(os.path.join(self.config.dataset_path, self.split, f"{set_name}__object_ids.npy")):
+                fields["object_ids"] = "r"
+
             # Load subset
             self._data[set_name] = {
                 field_name: np.load(os.path.join(self.config.dataset_path, self.split, f"{set_name}__{field_name}.npy"), mmap_mode=mmap_mode)
-                for field_name, mmap_mode in field_mmap_modes.items()
+                for field_name, mmap_mode in fields.items()
             }
 
     def _normalize_train_state(self, train_state: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -251,11 +256,14 @@ class PuzzleDataset(IterableDataset):
                         puzzle_index += 1
 
                     puzzle_indices.append(puzzle_index)
-                batch = self._collate_batch({
+                batch = {
                     "inputs": dataset["inputs"][local_start: local_end],
                     "labels": dataset["labels"][local_start: local_end],
                     "puzzle_identifiers": dataset["puzzle_identifiers"][puzzle_indices],
-                })
+                }
+                if "object_ids" in dataset:
+                    batch["object_ids"] = dataset["object_ids"][local_start: local_end]
+                batch = self._collate_batch(batch)
 
                 yield set_name, batch, end_index - start_index
                 
@@ -373,13 +381,14 @@ class PuzzleDataset(IterableDataset):
                     batch_puzzle_indices = batch_puzzle_indices[
                         self.config.rank * self.local_batch_size : (self.config.rank + 1) * self.local_batch_size
                     ]
-                    batch = self._collate_batch(
-                        {
-                            "inputs": dataset["inputs"][batch_indices],
-                            "labels": dataset["labels"][batch_indices],
-                            "puzzle_identifiers": dataset["puzzle_identifiers"][batch_puzzle_indices],
-                        }
-                    )
+                    batch = {
+                        "inputs": dataset["inputs"][batch_indices],
+                        "labels": dataset["labels"][batch_indices],
+                        "puzzle_identifiers": dataset["puzzle_identifiers"][batch_puzzle_indices],
+                    }
+                    if "object_ids" in dataset:
+                        batch["object_ids"] = dataset["object_ids"][batch_indices]
+                    batch = self._collate_batch(batch)
 
                     yield set_name, batch, global_effective_batch_size
 

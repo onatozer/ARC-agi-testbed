@@ -94,10 +94,10 @@ def _add_puzzle_emb_positions(config_dict: dict) -> dict:
 
 def _sinusoid(positions: torch.Tensor, dim: int) -> torch.Tensor:
     """Fixed sinusoidal encoding of the given positions, interleaved sin/cos over dim channels."""
-    pe = torch.zeros(positions.shape[0], dim, dtype=torch.float32)
+    pe = torch.zeros(positions.shape[0], dim, dtype=torch.float32, device=positions.device)
     if dim == 0:
         return pe
-    div = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32) * (-math.log(10000.0) / dim))
+    div = torch.exp(torch.arange(0, dim, 2, dtype=torch.float32, device=positions.device) * (-math.log(10000.0) / dim))
     angles = positions.to(torch.float32).unsqueeze(1) * div.unsqueeze(0)
     pe[:, 0::2] = torch.sin(angles)
     pe[:, 1::2] = torch.cos(angles[:, : pe[:, 1::2].shape[1]])
@@ -228,6 +228,12 @@ class InnerNetwork(nn.Module):
         elif self.config.pos_encodings == "absolute_2d":
             self.register_buffer("absolute_pos_embedding", _sinusoid_2d(*self._grid_dims(), self.config.hidden_size, self.config.puzzle_emb_len).to(self.forward_dtype), persistent=True)
 
+        elif self.config.pos_encodings == "absolute_2d_ope":
+            # ViTARC OPE (arXiv 2410.06405, eq. 13): concat(sinusoid(object), sinusoid(row), sinusoid(col)), about a third each.
+            # The (row, col) part is fixed; the object part is computed per batch from batch["object_ids"]
+            self.ope_dim = 2 * (self.config.hidden_size // 6)
+            self.register_buffer("absolute_pos_embedding", _sinusoid_2d(*self._grid_dims(), self.config.hidden_size - self.ope_dim, self.config.puzzle_emb_len).to(self.forward_dtype), persistent=True)
+
         self._init_pe_mixer()
 
     def _grid_dims(self) -> Tuple[int, int]:
@@ -240,18 +246,25 @@ class InnerNetwork(nn.Module):
     def _init_pe_mixer(self) -> None:
         if not self.config.pe_mixer:
             return
-        if self.config.pos_encodings not in ("learned", "absolute", "absolute_2d"):
-            raise ValueError(f"pe_mixer needs an additive pos_encodings (learned, absolute or absolute_2d), got {self.config.pos_encodings!r}.")
+        if self.config.pos_encodings not in ("learned", "absolute", "absolute_2d", "absolute_2d_ope"):
+            raise ValueError(f"pe_mixer needs an additive pos_encodings (learned, absolute, absolute_2d or absolute_2d_ope), got {self.config.pos_encodings!r}.")
         # Initialised to the fixed 1/sqrt(2) weights of the unmixed sum, so step 0 matches pe_mixer=False
         self.pe_alpha = nn.Parameter(torch.full((self.config.hidden_size,), 0.707106781))
         self.pe_beta = nn.Parameter(torch.full((self.config.hidden_size,), 0.707106781))
 
-    def _add_pos(self, x: torch.Tensor) -> torch.Tensor:
+    def _add_pos(self, x: torch.Tensor, object_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Adds the positional encoding to the (prefix + token) embeddings and applies the embedding scale."""
         if self.config.pos_encodings == "learned":
             pos = self.embed_pos.embedding_weight.to(self.forward_dtype)
         elif self.config.pos_encodings in ("absolute", "absolute_2d"):
             pos = self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype)
+        elif self.config.pos_encodings == "absolute_2d_ope":
+            if object_ids is None:
+                raise ValueError("pos_encodings=absolute_2d_ope needs batch['object_ids']; build the dataset with object_ids=true.")
+            obj = _sinusoid(object_ids.flatten(), self.ope_dim).view(*object_ids.shape, self.ope_dim)
+            obj = F.pad(obj, (0, 0, self.config.puzzle_emb_len, 0)).to(self.forward_dtype)  # prefix slots have no object
+            xy = self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype)
+            pos = torch.cat((obj, xy.expand(obj.shape[0], -1, -1)), dim=-1)
         else:
             return self.embed_scale*x
 
@@ -267,7 +280,7 @@ class InnerNetwork(nn.Module):
         """Per-sequence tensors every L_level call takes: RoPE tables and the attention bias (None when unused)."""
         return {"cos_sin": self._cos_sin(), "attn_bias": self.alibi_2d() if hasattr(self, "alibi_2d") else None}
 
-    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
+    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor, object_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.embed_tokens(input_ids.to(torch.int32))
 
         if self.config.puzzle_emb_ndim > 0:
@@ -277,7 +290,7 @@ class InnerNetwork(nn.Module):
             if pad > 0:
                 puzzle_embedding = torch.nn.functional.pad(puzzle_embedding, (0, pad))
             x = torch.cat((puzzle_embedding.view(-1, self.config.puzzle_emb_len, self.config.hidden_size), x), dim=1)
-        return self._add_pos(x)
+        return self._add_pos(x, object_ids)
 
     def empty_carry(self, batch_size: int, device: str = "cpu") -> LatentCarry:
         """Creates a LatentCarry containing no values"""
@@ -326,7 +339,7 @@ class InnerNetwork(nn.Module):
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         z_H, z_L = carry.z_H, carry.z_L
-        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
+        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"], batch.get("object_ids"))
         seq_dict = self._seq_dict()
 
         # Run the recursion cycle for H_cycle -1 times without the gadient
@@ -410,10 +423,13 @@ class InnerNetworkVIT(InnerNetwork):
         elif self.config.pos_encodings == "absolute_2d":
             self.register_buffer("absolute_pos_embedding", _sinusoid_2d(*self._grid_dims(), self.config.hidden_size, self.config.puzzle_emb_len).to(self.forward_dtype), persistent=True)
 
+        elif self.config.pos_encodings == "absolute_2d_ope":
+            raise ValueError("absolute_2d_ope gives each cell an object index, which is undefined for a multi-cell patch; use visual_attention=false.")
+
         self._init_pe_mixer()
 
 
-    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
+    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor, object_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = self.patch_embedding(F.one_hot(input_ids.long(), self.config.vocab_size).to(self.forward_dtype))
         
         if self.config.puzzle_emb_ndim > 0:
@@ -424,7 +440,7 @@ class InnerNetworkVIT(InnerNetwork):
                 puzzle_embedding = torch.nn.functional.pad(puzzle_embedding, (0, pad))
             x = torch.cat((puzzle_embedding.view(-1, self.config.puzzle_emb_len, self.config.hidden_size), x), dim=1)
 
-        return self._add_pos(x)
+        return self._add_pos(x, object_ids)
 
 
 def _disable_torch_compile(fn: Any) -> Any:

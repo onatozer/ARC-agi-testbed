@@ -233,7 +233,7 @@ class TRMRoot_Inner(InnerNetwork):
         then doing extra phantom-gradient iterations so that the inner network graph can be backpropagated through.
         """
         z_H, z_L = carry.z_H, carry.z_L
-        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
+        x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"], batch.get("object_ids"))
         seq_dict = self._seq_dict()
         self._nfe = 0  # L_level evaluations in this forward (solver iterations are data-dependent)
         self._last_info = None
