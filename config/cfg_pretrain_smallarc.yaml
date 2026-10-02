@@ -1,0 +1,20 @@
+# Small-ARC training config (MiniARC + ARC-AGI-1 + ConceptARC puzzles that fit in 10x10)
+
+defaults:
+  - cfg_pretrain
+  - override dataset: smallarc
+  - _self_
+
+hydra:
+  output_subdir: null
+
+global_batch_size: 128 # has to be less than 1835 (train examples per epoch) for small arc
+optimizer: muon
+activation_function: conv_swiglu
+max_eval_steps: null
+
+# Ensure that the puzzle embedding is being used 
+arch:
+  puzzle_emb_ndim: ${.hidden_size}
+  board_height: ${dataset.grid_size}
+  board_width: ${dataset.grid_size}

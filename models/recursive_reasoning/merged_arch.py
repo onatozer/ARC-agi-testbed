@@ -428,8 +428,7 @@ class InnerNetworkVIT(InnerNetwork):
 
         self._init_pe_mixer()
 
-
-    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor, object_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.patch_embedding(F.one_hot(input_ids.long(), self.config.vocab_size).to(self.forward_dtype))
         
         if self.config.puzzle_emb_ndim > 0:

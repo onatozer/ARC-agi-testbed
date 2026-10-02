@@ -130,6 +130,7 @@ class ARC:
 
         submission = {}
         correct = [0.0 for _ in range(len(self.pass_Ks))]
+        self.puzzle_correct = {}  # per-puzzle score for each K, for subclasses that break results down
 
         for name, puzzle in self.test_puzzles.items():
             # Process test examples in this puzzle
@@ -178,8 +179,9 @@ class ARC:
                 submission[name].append({f"attempt_{i + 1}": grid.tolist() for i, grid in enumerate(pred_grids)})
 
             # Total correctness
+            self.puzzle_correct[name] = [num_test_correct[i] / len(puzzle["test"]) for i in range(len(self.pass_Ks))]
             for i in range(len(self.pass_Ks)):
-                correct[i] += num_test_correct[i] / len(puzzle["test"])
+                correct[i] += self.puzzle_correct[name][i]
 
         # Save submission
         if save_path is not None:
