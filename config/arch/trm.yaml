@@ -20,7 +20,6 @@ puzzle_emb_ndim: ${.hidden_size}
 
 pos_encodings: rope # rope, learned, absolute (1D sinusoid), absolute_2d (ViTARC 2D sinusoid, arXiv 2410.06405), or none
 pe_mixer: false # ViTARC PEmixer: learned per-dim weights alpha*tok + beta*pos (needs learned/absolute/absolute_2d)
-pos_encodings: rope
 alibi_2d: false # ViTARC 2D-RPE (arXiv 2410.06405): per-head -r * Manhattan-distance attention bias; disables the flash SDPA kernel
 forward_dtype: bfloat16
 
