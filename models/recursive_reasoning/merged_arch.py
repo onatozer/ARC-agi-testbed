@@ -260,13 +260,6 @@ class InnerNetwork(nn.Module):
             return self.embed_scale * (self.pe_alpha.to(self.forward_dtype) * x + self.pe_beta.to(self.forward_dtype) * pos)
         return self.embed_scale* 0.707106781 * (x + pos)
 
-    def _grid_dims(self) -> Tuple[int, int]:
-        """(height, width) of the row-major token grid the blocks see after the puzzle prefix."""
-        h, w = self._board_dims()
-        if h * w != self.seq_len - self.config.puzzle_emb_len:
-            raise ValueError(f"board {h}x{w} does not match the {self.seq_len - self.config.puzzle_emb_len} grid tokens; set board_height and board_width.")
-        return h, w
-
     def _cos_sin(self) -> CosSin:
         return self.rotary_emb() if hasattr(self, "rotary_emb") else None
 
@@ -419,11 +412,6 @@ class InnerNetworkVIT(InnerNetwork):
 
         self._init_pe_mixer()
 
-
-    def _grid_dims(self) -> Tuple[int, int]:
-        """(height, width) of the patch grid."""
-        h, w = self._board_dims()
-        return h // self.config.patch_height, w // self.config.patch_width
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.patch_embedding(F.one_hot(input_ids.long(), self.config.vocab_size).to(self.forward_dtype))
