@@ -8,7 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from models.common import trunc_normal_init_
-from models.layers import Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, ConvSwiGLU, SwiGLU, rms_norm
+from models.layers import ALiBi2D, Attention, CastedEmbedding, CastedLinear, CosSin, RotaryEmbedding, RotaryEmbedding2D, ConvSwiGLU, SwiGLU, rms_norm
 from models.sparse_embedding import CastedSparseEmbedding
 from einops.layers.torch import Rearrange
 
@@ -76,6 +76,7 @@ class TRMConfig(BaseModel):
     random_initialization: bool = True
     visual_attention: bool = False
     pe_mixer: bool = False  # ViTARC PEmixer: learned per-dim weights on the token and positional embeddings
+    alibi_2d: bool = False  # ViTARC 2D-RPE: additive 2D ALiBi attention bias
 
 
 def _add_puzzle_emb_positions(config_dict: dict) -> dict:
@@ -138,14 +139,14 @@ class Block(nn.Module):
         
         self.norm_eps = config.rms_norm_eps
 
-    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor, attn_bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         if self.config.mlp_t:
             hidden_states = hidden_states.transpose(1, 2)
             hidden_states = rms_norm(hidden_states + self.mlp_t(hidden_states), variance_epsilon = self.norm_eps)
             hidden_states = hidden_states.transpose(1, 2)
         else:
             hidden_states = rms_norm(
-                hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states),
+                hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states, attn_bias=attn_bias),
                 variance_epsilon=self.norm_eps,
             )
         return rms_norm(hidden_states + self.mlp(hidden_states), variance_epsilon=self.norm_eps)
@@ -184,6 +185,8 @@ class InnerNetwork(nn.Module):
             self.puzzle_emb = CastedSparseEmbedding(config.num_puzzle_identifiers, config.puzzle_emb_ndim,
                                                     batch_size=config.batch_size, init_std=0, cast_to=self.forward_dtype)
         self._init_pos(embed_std)
+        if config.alibi_2d:
+            self.alibi_2d = ALiBi2D(config.num_heads, *self._grid_dims(), prefix_len=config.puzzle_emb_len, dtype=self.forward_dtype)
 
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
         self.q_head = CastedLinear(config.hidden_size, 2, bias=True) 
@@ -257,8 +260,19 @@ class InnerNetwork(nn.Module):
             return self.embed_scale * (self.pe_alpha.to(self.forward_dtype) * x + self.pe_beta.to(self.forward_dtype) * pos)
         return self.embed_scale* 0.707106781 * (x + pos)
 
+    def _grid_dims(self) -> Tuple[int, int]:
+        """(height, width) of the row-major token grid the blocks see after the puzzle prefix."""
+        h, w = self._board_dims()
+        if h * w != self.seq_len - self.config.puzzle_emb_len:
+            raise ValueError(f"board {h}x{w} does not match the {self.seq_len - self.config.puzzle_emb_len} grid tokens; set board_height and board_width.")
+        return h, w
+
     def _cos_sin(self) -> CosSin:
         return self.rotary_emb() if hasattr(self, "rotary_emb") else None
+
+    def _seq_dict(self) -> Dict[str, Any]:
+        """Per-sequence tensors every L_level call takes: RoPE tables and the attention bias (None when unused)."""
+        return {"cos_sin": self._cos_sin(), "attn_bias": self.alibi_2d() if hasattr(self, "alibi_2d") else None}
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.embed_tokens(input_ids.to(torch.int32))
@@ -320,7 +334,7 @@ class InnerNetwork(nn.Module):
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"])
-        seq_dict = {"cos_sin": self._cos_sin()}
+        seq_dict = self._seq_dict()
 
         # Run the recursion cycle for H_cycle -1 times without the gadient
         with torch.no_grad():
@@ -405,6 +419,11 @@ class InnerNetworkVIT(InnerNetwork):
 
         self._init_pe_mixer()
 
+
+    def _grid_dims(self) -> Tuple[int, int]:
+        """(height, width) of the patch grid."""
+        h, w = self._board_dims()
+        return h // self.config.patch_height, w // self.config.patch_width
 
     def _input_embeddings(self, input_ids: torch.Tensor, puzzle_identifiers: torch.Tensor) -> torch.Tensor:
         x = self.patch_embedding(F.one_hot(input_ids.long(), self.config.vocab_size).to(self.forward_dtype))
