@@ -9,6 +9,8 @@ loss:
   name: losses.loss_heads@ACTLossHeadRoot
   loss_type: stablemax_cross_entropy
   jacobian_reg_lambda: 0.6
+  jacobian_reg_warmup_steps: 0 # ramp lambda linearly from 0 over this many steps (0 = full weight from the start)
+  jacobian_reg_target: 0.0 # penalise only ||J||_F^2 / d above this (0 = the plain penalty); < 1 asks for contraction, not J = 0
 
 deq_max_iter: 8
 deq_tol: 1e-3
