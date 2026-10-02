@@ -93,3 +93,29 @@ def test_solver_residuals_are_the_last_solves_per_row_errors(monkeypatch):
     for key, info_key in (("solver_abs_residual", "abs_lowest"), ("solver_rel_residual", "rel_lowest")):
         assert metrics[key].item() / count == pytest.approx(last[info_key].mean().item(), rel=1e-5)
     assert 0 < metrics["solver_rel_residual"].item() / count < metrics["solver_abs_residual"].item() / count
+
+
+@pytest.mark.parametrize("deq_tol", [1e-12, 1e3])  # never stops early / stops at the first Anderson iteration
+def test_solver_residual_trace_is_logged_at_fixed_iterations(monkeypatch, deq_tol):
+    infos = []
+    real = trm_root.anderson_solver
+
+    def recording_solver(func, x0, **kwargs):
+        out = real(func, x0, **kwargs)
+        infos.append(out[2])
+        return out
+
+    monkeypatch.setattr(trm_root, "anderson_solver", recording_solver)
+    model, batch = _tiny_root(H_cycles=3, halt_max_steps=1, deq_max_iter=8, deq_tol=deq_tol)
+    model.eval()
+    with torch.no_grad():
+        _, _, metrics, _, _ = model(carry=model.initial_carry(batch), batch=batch, return_keys=[])
+
+    count = metrics["count"].item()
+    trace = infos[-1]["rel_trace"]  # column j is iteration j + 2
+    logged = sorted(int(k.split("@")[1]) for k in metrics if k.startswith("solver_rel_residual@"))
+    assert logged == [3, 4, 8]  # the same keys whether or not the solve stops early, so eval can aggregate them
+    for n in logged:
+        assert metrics[f"solver_rel_residual@{n}"].item() / count == pytest.approx(trace[:, n - 2].mean().item(), rel=1e-5)
+    # the last traced iteration is never better than the lowest residual the solve reached
+    assert metrics["solver_rel_residual@8"].item() >= metrics["solver_rel_residual"].item() - 1e-6

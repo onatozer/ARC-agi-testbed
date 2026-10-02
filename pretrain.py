@@ -589,6 +589,7 @@ def train_batch(
                 "train/halt/slow_correct",
                 "train/halt/slow_wrong",
             }
+                drop_when_empty.update(k for k in processed_metrics if k.startswith("train/solver_rel_residual@"))
                 for key in drop_when_empty:
                     processed_metrics.pop(key, None)
             return processed_metrics 
