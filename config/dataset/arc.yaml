@@ -18,6 +18,5 @@ puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
 grid_size: 30 # canvas side length; seq_len = max_grid_size ** 2
 scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
 border_tokens: false # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); builds into <output_dir>-border
-board_width: ${.grid_size} # model's grid width; set to grid_size + 1 when training on a border_tokens dataset
 
 seed: null

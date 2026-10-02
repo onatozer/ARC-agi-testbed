@@ -224,6 +224,9 @@ def create_model(
         num_puzzle_identifiers=train_metadata.num_puzzle_identifiers,
         causal=False,
     )
+    # The canvas width comes from the dataset like seq_len does: grid_size, or grid_size + 1 for an ARC border_tokens build
+    if model_cfg.get("board_height") and train_metadata.seq_len % model_cfg["board_height"] == 0:
+        model_cfg["board_width"] = train_metadata.seq_len // model_cfg["board_height"]
     print("*"*80)
     print(model_cfg, type(model_cfg))
 
