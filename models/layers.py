@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 import einops
 import torch
 from torch import nn
@@ -114,6 +114,33 @@ class RotaryEmbedding2D(nn.Module):
         return self.cos_cached, self.sin_cached
 
 
+class ALiBi2D(nn.Module):
+    """ViTARC 2D-RPE (arXiv 2410.06405, eq. 12): a per-head additive attention bias of -r * Manhattan distance between
+    grid tokens on a row-major (height, width) grid, with slope r_before for keys at or before the query in raster
+    order and r_after for keys after it. Slopes follow ALiBi's geometric 2^(-8/H) ratio, starting at 2^-1 (before)
+    and 2^-0.5 (after). The prefix_len leading tokens (e.g. puzzle embedding slots) get no bias to or from anything."""
+    def __init__(self, num_heads: int, height: int, width: int, prefix_len: int = 0, dtype: torch.dtype = torch.float32, device=None) -> None:
+        super().__init__()
+        rows = torch.arange(height, device=device).repeat_interleave(width)
+        cols = torch.arange(width, device=device).repeat(height)
+        dist = ((rows[:, None] - rows[None, :]).abs() + (cols[:, None] - cols[None, :]).abs()).float()
+
+        ratio = 2.0 ** (-8.0 / num_heads)
+        powers = ratio ** torch.arange(num_heads, dtype=torch.float32, device=device)
+        r_before, r_after = 2.0 ** -1 * powers, 2.0 ** -0.5 * powers
+
+        n = height * width
+        before = torch.ones(n, n, dtype=torch.bool, device=device).tril()  # key j <= query i
+        slope = torch.where(before, r_before[:, None, None], r_after[:, None, None])
+
+        bias = torch.zeros(num_heads, prefix_len + n, prefix_len + n, device=device)
+        bias[:, prefix_len:, prefix_len:] = -slope * dist
+        self.bias = nn.Buffer(bias.to(dtype), persistent=False)
+
+    def forward(self) -> torch.Tensor:
+        return self.bias
+
+
 class Attention(nn.Module):
     def __init__(self, hidden_size, head_dim, num_heads, num_key_value_heads, causal=False):
         super().__init__()
@@ -128,7 +155,7 @@ class Attention(nn.Module):
         self.qkv_proj = CastedLinear(self.hidden_size, (self.num_heads + 2 * self.num_key_value_heads) * self.head_dim, bias=False)
         self.o_proj = CastedLinear(self.output_size, self.hidden_size, bias=False)
 
-    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor, attn_bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.shape
 
         # hidden_states: [bs, seq_len, num_heads, head_dim]
@@ -147,7 +174,7 @@ class Attention(nn.Module):
 
         # flash attn
         query, key, value = map(lambda t: einops.rearrange(t, 'B S H D -> B H S D'), (query, key, value)) # needed for scaled_dot_product_attention but not flash_attn_func
-        attn_output = scaled_dot_product_attention(query=query, key=key, value=value, is_causal=self.causal)
+        attn_output = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=attn_bias, is_causal=self.causal)
         attn_output = einops.rearrange(attn_output, 'B H S D -> B S H D')
         attn_output = attn_output.reshape(batch_size, seq_len, self.output_size)  # type: ignore  # not .view: the math SDPA backend returns a non-contiguous tensor
         return self.o_proj(attn_output)
