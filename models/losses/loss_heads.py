@@ -314,7 +314,9 @@ class InferenceLossHead(ACTLossHead):
 
 class ACTLossHeadRoot(nn.Module):
     def __init__(self, model: nn.Module, *, loss_type: str,
-                 jacobian_reg_lambda: float = 0.0):
+                 jacobian_reg_lambda: float = 0.0,
+                 jacobian_reg_warmup_steps: int = 0,
+                 jacobian_reg_target: float = 0.0):
         super().__init__()
         self.model = model
         self.loss_fn = {
@@ -322,12 +324,27 @@ class ACTLossHeadRoot(nn.Module):
             "softmax_cross_entropy": softmax_cross_entropy,
         }[loss_type]
         self.jacobian_reg_lambda = float(jacobian_reg_lambda)
+        # lambda ramps linearly from 0 over this many training steps, like the LR warmup (0 = full weight from step 0)
+        self.jacobian_reg_warmup_steps = int(jacobian_reg_warmup_steps)
+        # only the part of ||J||_F^2 / d above this is penalised (0 = the plain penalty)
+        self.jacobian_reg_target = float(jacobian_reg_target)
         inner = getattr(model, "inner", None)
         if inner is not None and hasattr(inner, "compute_jacobian_reg"):
             inner.compute_jacobian_reg = self.jacobian_reg_lambda > 0
 
     def initial_carry(self, *args, **kwargs):
         return self.model.initial_carry(*args, **kwargs)
+
+    @torch.compiler.disable
+    def _jacobian_reg_weight(self, carry: Any, device: torch.device) -> torch.Tensor:
+        """jacobian_reg_lambda, ramped over jacobian_reg_warmup_steps of carry.global_step (the training step pretrain.py
+        sets; without one, e.g. outside pretrain.py, the full weight). Kept out of torch.compile and returned as a tensor
+        so a new step does not recompile the loss head."""
+        weight = self.jacobian_reg_lambda
+        step = getattr(carry, "global_step", None)
+        if self.jacobian_reg_warmup_steps > 0 and step is not None:
+            weight *= min(1.0, step / self.jacobian_reg_warmup_steps)
+        return torch.tensor(weight, dtype=torch.float32, device=device)
 
     def forward(
         self,
@@ -380,11 +397,15 @@ class ACTLossHeadRoot(nn.Module):
 
         # Jacobian regulariser
         jac_reg = outputs.get("jacobian_reg", torch.zeros((), device=lm_loss.device))
+        jac_weight = self._jacobian_reg_weight(model_kwargs.get("carry"), lm_loss.device)
+        jac_excess = F.relu(jac_reg - self.jacobian_reg_target)
         # jac_reg is a batch mean, but lm_loss is summed over rows and pretrain.py divides the total by global_batch_size.
         # Count it once per row so jacobian_reg_lambda weighs it against the per-puzzle lm_loss at any batch size.
-        jac_loss = self.jacobian_reg_lambda * jac_reg * labels.shape[0]
+        jac_loss = jac_weight * jac_excess * labels.shape[0]
         # the per-puzzle weighted term; batch-level scalar: the "fprl/" prefix makes pretrain.py average it over ranks instead of dividing by count
-        metrics["fprl/jacobian_reg"] = (self.jacobian_reg_lambda * jac_reg).detach()
+        metrics["fprl/jacobian_reg"] = (jac_weight * jac_excess).detach()
+        if self.jacobian_reg_warmup_steps > 0:
+            metrics["fprl/jacobian_reg_lambda"] = jac_weight
         if "jacobian_norm" in outputs:  # ||J||_F^2 / d, whenever TRMRoot estimated it (penalty on, or log_jacobian_norm)
             metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
 
