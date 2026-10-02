@@ -82,6 +82,13 @@ def jac_loss_estimate(f0, z0, vecs=2, create_graph=True):
     return result / (vecs * z0.numel())
 
 
+def _trace_iterations(max_iter: int) -> list:
+    """Solver iterations to log the residual at: 3 (the first traced), powers of two from 4, and the last one."""
+    if max_iter < 3:
+        return []
+    return sorted({3, max_iter} | {2 ** k for k in range(2, max_iter.bit_length()) if 2 ** k <= max_iter})
+
+
 class _InjectParamGrads(torch.autograd.Function):
     """Returns `value` unchanged; in backward, adds grad_out * precomputed gradient to each parameter.
 
@@ -295,6 +302,12 @@ class TRMRoot_Inner(InnerNetwork):
             # each the lowest the solver reached
             info["solver_abs_residual"] = self._last_info["abs_lowest"]
             info["solver_rel_residual"] = self._last_info["rel_lowest"]
+            # ...and its relative residual after n solver iterations (L_level evaluations), to show how the solve converges.
+            # torchdeq's rel_trace starts with a placeholder and skips the first two (plain) iterations, so column j holds
+            # iteration j + 2; it always has deq_max_iter - 1 columns (an early stop pads it with the lowest residual).
+            rel_trace = self._last_info["rel_trace"]
+            for n in _trace_iterations(rel_trace.shape[1] + 1):
+                info[f"solver_rel_residual@{n}"] = rel_trace[:, n - 2]
         return LatentCarry(z_H.detach(), z_L.detach()), info
 
 
