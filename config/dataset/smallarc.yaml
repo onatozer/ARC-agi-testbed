@@ -1,0 +1,23 @@
+# Configs for locating & running the dataset at train/eval time
+name: Small-ARC
+data_path: data/smallarc-aug-1000
+
+evaluators:
+  - name: small_arc@SmallARC
+
+data_paths: ['smallarc-aug-1000']
+
+# Configs for building the dataset itself (python -m dataset.build_smallarc_dataset)
+# MiniARC + ARC-AGI-1 training/evaluation + ConceptARC, restricted to puzzles whose grids all fit in max_grid x max_grid
+input_file_prefix: kaggle/combined/arc-agi
+miniarc_dir: data/MiniARC
+train_subsets: [training, concept]
+test_subsets: [evaluation]
+max_grid: 10
+output_dir: ${.data_path}
+num_aug: 1000
+puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
+grid_size: 10
+scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
+
+seed: null
