@@ -9,20 +9,20 @@ loss:
   name: losses.loss_heads@ACTLossHeadRoot
   loss_type: stablemax_cross_entropy
   jacobian_reg_lambda: 0.6
-  jacobian_reg_warmup_steps: 0 # ramp lambda linearly from 0 over this many steps (0 = full weight from the start)
-  jacobian_reg_target: 0.0 # penalise only ||J||_F^2 / d above this (0 = the plain penalty); < 1 asks for contraction, not J = 0
+  jacobian_reg_warmup_steps: 10000 # ramp lambda linearly from 0 over this many steps (0 = full weight from the start)
+  jacobian_reg_target: 0.2 # penalise only ||J||_F^2 / d above this (0 = the plain penalty); 
 
-deq_max_iter: 8
-deq_tol: 1e-3
+deq_max_iter: 16
+deq_tol: 5e-2
 deq_stop_mode: rel # rel: ||f(z)-z|| / ||f(z)||; abs: ||f(z)-z||, which grows with seq_len * hidden_size
 
-deq_anderson_m: 5
+deq_anderson_m: 5 #Number of past iterations Andreson solver stores (increasing increases memory usage at the pot benefit of potential runtime reduction)
 deq_anderson_tau: 1.0 # Anderson damping (torchdeq's tau)
 
 bptt_through: 6
 phantom_gradient_lambda: 0.5 # {0.1,0.5,0.9,1.0}
 
-jacobian_reg_n_samples: 2 
+jacobian_reg_n_samples: 1 
 log_jacobian_norm: true 
 
 # Memory savers; each gives the same gradients as with it off (tests/test_trm_root_memory_exact.py)
