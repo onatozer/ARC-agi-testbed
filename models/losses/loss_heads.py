@@ -410,6 +410,9 @@ class ACTLossHeadRoot(nn.Module):
             metrics["fprl/jacobian_reg_lambda"] = jac_weight
         if "jacobian_norm" in outputs:  # ||J||_F^2 / d, whenever TRMRoot estimated it (penalty on, or log_jacobian_norm)
             metrics["fprl/jacobian_norm"] = outputs["jacobian_norm"]
+        for key in ("jacobian_spectral_norm", "jacobian_spectral_norm_max"):  # J's largest singular value: mean / max over rows
+            if key in outputs:
+                metrics[f"fprl/{key}"] = outputs[key]
 
         total = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + jac_loss
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}

@@ -24,6 +24,7 @@ phantom_gradient_lambda: 0.5 # {0.1,0.5,0.9,1.0}
 
 jacobian_reg_n_samples: 1 
 log_jacobian_norm: true 
+log_jacobian_spectral_norm: true # log J's largest singular value (power iteration on 32 rows); < 1 means the solve contracts
 
 # Memory savers; each gives the same gradients as with it off (tests/test_trm_root_memory_exact.py)
 checkpoint_phantom: true # recompute the phantom-gradient L_level calls in backward instead of storing them (~+15% compute)
