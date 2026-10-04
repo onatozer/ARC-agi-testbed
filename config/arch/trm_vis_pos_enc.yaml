@@ -20,6 +20,6 @@ pos_encodings: absolute_2d_ope # rope, learned, absolute (1D sinusoid), absolute
 pe_mixer: true # ViTARC PEmixer: learned per-dim weights alpha*tok + beta*pos (needs learned/absolute/absolute_2d)
 alibi_2d: true # ViTARC 2D-RPE (arXiv 2410.06405): per-head -r * Manhattan-distance attention bias; disables the flash SDPA kernel
 
-visual_attention: true
+visual_attention: false
 patch_height: 2
 patch_width: 2

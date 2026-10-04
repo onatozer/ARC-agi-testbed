@@ -30,3 +30,5 @@ log_jacobian_spectral_norm: true # log J's largest singular value (power iterati
 checkpoint_phantom: true # recompute the phantom-gradient L_level calls in backward instead of storing them (~+15% compute)
 jac_two_pass: true # take the Jacobian penalty's parameter gradients during the forward, freeing its graph before the phantom graph exists
 jac_chunk_size: 128 # with jac_two_pass: compute the penalty over this many batch rows at a time (0 = whole batch); ~22 MB per row at seq_len 81, hidden 512
+
+random_initialization: true
