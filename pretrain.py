@@ -902,29 +902,35 @@ def launch(hydra_config: DictConfig):
                 and train_state.step > 0
                 and train_state.step % eval_interval_steps == 0
             ):
+                # Swap the EMA weights into the live model rather than deep-copying it: a copy duplicates every
+                # buffer (incl. the puzzle-embedding table) and can OOM larger models
                 if train_state.ema_helper is not None:
                     if RANK == 0:
                         _log_line("Switching to EMA weights for evaluation", progress_bar=progress_bar)
-                    eval_model = train_state.ema_helper.ema_copy(train_state.model)
-                else:
-                    eval_model = train_state.model
-                # Evaluate the bare model under the inference loss head, which scores each puzzle at the step it halts
-                eval_model = getattr(eval_model, "_orig_mod", eval_model).model
-                train_state_eval = replace(train_state, model=InferenceLossHead(eval_model, **config.arch.loss.__pydantic_extra__))
-                train_state_eval.model.eval()
+                    train_state.ema_helper.swap(train_state.model)
+                try:
+                    # Evaluate the bare model under the inference loss head, which scores each puzzle at the step it halts
+                    eval_model = getattr(train_state.model, "_orig_mod", train_state.model).model
+                    train_state_eval = replace(train_state, model=InferenceLossHead(eval_model, **config.arch.loss.__pydantic_extra__))
+                    train_state_eval.model.eval()
 
-                eval_metrics, eval_time_passed = evaluate(
-                    config,
-                    train_state_eval,
-                    eval_loader,
-                    eval_metadata,
-                    evaluators,
-                    rank=RANK,
-                    world_size=WORLD_SIZE,
-                    cpu_group=CPU_PROCESS_GROUP,
-                    progress_bar=progress_bar,
-                    max_eval_steps=config.max_eval_steps,
-                )
+                    eval_metrics, eval_time_passed = evaluate(
+                        config,
+                        train_state_eval,
+                        eval_loader,
+                        eval_metadata,
+                        evaluators,
+                        rank=RANK,
+                        world_size=WORLD_SIZE,
+                        cpu_group=CPU_PROCESS_GROUP,
+                        progress_bar=progress_bar,
+                        max_eval_steps=config.max_eval_steps,
+                    )
+                finally:
+                    if train_state.ema_helper is not None:
+                        train_state.ema_helper.swap(train_state.model)
+                del eval_model, train_state_eval
+                torch.cuda.empty_cache()
 
                 if RANK == 0 and eval_metrics is not None:
                     eval_metrics["step"] = train_state.step
