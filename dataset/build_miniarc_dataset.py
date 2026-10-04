@@ -18,6 +18,9 @@ class MiniARCDataProcessConfig(BaseModel):
     puzzle_identifiers_start: int = 1 # start > 1 to handle multiple datasets
     grid_size: int = 10
     scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
+    test_aug: bool = True # False: the test split keeps only each puzzle's original test pairs; augmented copies are for training only
+    border_tokens: bool = False # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405)
+    object_ids: bool = False # also save a per-cell object index of each input (ViTARC OPE, arXiv 2410.06405)
 
 
 def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
@@ -37,7 +40,7 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
     results = {}
     for name, puzzle in puzzles:
         test_puzzles[name] = puzzle
-        convert_single_arc_puzzle(results, name, puzzle, config.num_aug, dest_mapping)
+        convert_single_arc_puzzle(results, name, puzzle, config.num_aug, dest_mapping, test_aug=config.test_aug)
 
     print (f"Total puzzles: {len(puzzles)}")
     return results, test_puzzles

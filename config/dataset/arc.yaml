@@ -17,6 +17,7 @@ num_aug: 1000
 puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
 grid_size: 30 # canvas side length; seq_len = max_grid_size ** 2
 scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
+test_aug: true # false: the test split keeps only each puzzle's original test pairs (eval without augmented copies); training still gets them
 border_tokens: false # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); builds into <output_dir>-border
 object_ids: false # also save per-cell object indices of the inputs, for arch.pos_encodings=absolute_2d_ope (ViTARC OPE)
 
