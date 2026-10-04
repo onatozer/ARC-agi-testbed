@@ -53,11 +53,17 @@ class TRMRootConfig(BaseModel):
     phantom_gradient_lambda: float = .5
     jacobian_reg_n_samples: int = 1
     log_jacobian_norm: bool = False  # estimate + log ||J||_F^2 / d every training step, even when the penalty is off
+    log_jacobian_spectral_norm: bool = False  # estimate + log J's largest singular value every training step (diagnostic)
 
     # Memory savers; all give the same gradients as with them off
     checkpoint_phantom: bool = False  # recompute the phantom-gradient L_level calls in backward instead of storing them
     jac_two_pass: bool = False        # take the penalty's parameter gradients during the forward, freeing its graph early
     jac_chunk_size: int = 0           # with jac_two_pass: compute the penalty over this many batch rows at a time (0 = all)
+
+# Rows and power iterations for the logged spectral norm: J is block-diagonal over batch rows, so a few rows suffice
+_SPECTRAL_NORM_ROWS = 32
+_SPECTRAL_NORM_ITERS = 10
+
 
 def jac_loss_estimate(f0, z0, vecs=2, create_graph=True):
     """Estimating tr(J^TJ)=tr(JJ^T) via Hutchinson estimator
@@ -194,6 +200,34 @@ class TRMRoot_Inner(InnerNetwork):
         grads = [g.to(p.dtype) for g, p in zip(grads, params)]
         return _InjectParamGrads.apply(total, *params, *grads)
 
+    @torch.compiler.disable(recursive=True)
+    def _jacobian_spectral_norm(self, z, input_injection, seq_dict, rows=_SPECTRAL_NORM_ROWS, iters=_SPECTRAL_NORM_ITERS):
+        """Per-row largest singular value of J = dL_level/dz at z, by power iteration on J^T J. Diagnostic only.
+
+        The fixed-point solve converges when this is below 1; jacobian_norm (||J||_F^2 / d) is only the mean squared
+        singular value, so it can stay small while a few directions approach 1. J is block-diagonal over batch rows, so
+        each row has its own value; this estimates it for the first `rows` rows. J v comes from the double-vjp trick
+        (J^T w is linear in w), so only reverse-mode autograd is needed. Runs under fork_rng, so training randomness is
+        the same with or without it.
+        """
+        n = min(rows, z.shape[0])
+        per_row = lambda t: t.flatten(1).norm(dim=1).clamp_min(1e-12).view(-1, *([1] * (t.dim() - 1)))
+        devices = [z.device] if z.is_cuda else []
+        with torch.random.fork_rng(devices=devices), torch.enable_grad(), sdpa_kernel(SDPBackend.MATH):
+            z_in = z[:n].detach().requires_grad_(True)
+            seq = {k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in seq_dict.items()}
+            out = self.L_level(z_in, input_injection[:n].detach(), **seq)
+            w = torch.zeros_like(out, requires_grad=True)
+            jt_w = torch.autograd.grad(out, z_in, w, create_graph=True)[0]  # J^T w, linear in w
+            v = torch.randn(z_in.shape, device=z.device, dtype=torch.float32)
+            v = v / per_row(v)
+            for _ in range(iters):
+                jv = torch.autograd.grad(jt_w, w, v.to(jt_w.dtype), retain_graph=True)[0]  # J v
+                jtjv = torch.autograd.grad(out, z_in, jv, retain_graph=True)[0].float()  # J^T J v
+                v = jtjv / per_row(jtjv)
+            jv = torch.autograd.grad(jt_w, w, v.to(jt_w.dtype))[0].float()
+        return jv.flatten(1).norm(dim=1).detach()  # ||J v|| for the unit top right-singular vector estimate
+
     def _root_solve(self, z_L: torch.tensor, input_injection, seq_dict):
         """Uses the torch DEQ library to compute the fixed point of the inner network
 
@@ -270,6 +304,9 @@ class TRMRoot_Inner(InnerNetwork):
             if use_penalty:
                 jac_reg = jac_norm
                 self._nfe += 1  # a logging-only estimate is a diagnostic, not part of the model's computation
+        spectral_norm = None
+        if self.training and torch.is_grad_enabled() and self.root_config.log_jacobian_spectral_norm:
+            spectral_norm = self._jacobian_spectral_norm(z_L.detach(), injection, seq_dict)
 
         # Phantom Graidient iterations
         #TODO: Von-neuman convergance could also be added
@@ -297,6 +334,9 @@ class TRMRoot_Inner(InnerNetwork):
         }
         if jac_norm is not None:
             info["jacobian_norm"] = jac_norm.detach()
+        if spectral_norm is not None:
+            info["jacobian_spectral_norm"] = spectral_norm.mean()
+            info["jacobian_spectral_norm_max"] = spectral_norm.max()
         if self._last_info is not None:
             # per-row fixed-point error of the last solve (the z_L that is carried): ||f(z)-z|| and ||f(z)-z|| / ||f(z)||,
             # each the lowest the solver reached
