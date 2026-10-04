@@ -26,6 +26,7 @@ class DataProcessConfig(BaseModel):
     scale_aug: bool = False # random integer upscaling of train examples (arXiv:2511.14761)
     border_tokens: bool = False # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); canvas becomes grid_size x (grid_size + 1)
     object_ids: bool = False # also save a per-cell object index of each input (ViTARC OPE, arXiv 2410.06405)
+    test_aug: bool = True # False: the test split keeps only each puzzle's original test pairs; augmented copies are for training only
     
 ARCMaxGridSize = 30
 ARCAugmentRetriesFactor = 5
@@ -176,7 +177,7 @@ def inverse_aug(name: str):
     return name.split(PuzzleIdSeparator)[0], _map_grid
 
 
-def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]]):
+def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]], test_aug: bool = True):
     # Convert
     dests = set(dest_mapping.values())
     converted = {dest: ARCPuzzle(name, []) for dest in dests}
@@ -211,10 +212,12 @@ def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count:
     for dest in dests:
         # Convert the examples
         dest_split, dest_set = dest
+        # without test_aug the test split gets only the original puzzle (group[0]); its augmented copies stay in training
+        copies = group if test_aug or dest_split != "test" else group[:1]
 
         results.setdefault(dest_split, {})
         results[dest_split].setdefault(dest_set, [])
-        results[dest_split][dest_set].append([converted[dest] for converted in group])
+        results[dest_split][dest_set].append([converted[dest] for converted in copies])
 
 
 def load_puzzles_arcagi(config: DataProcessConfig):
@@ -268,7 +271,7 @@ def load_puzzles_arcagi(config: DataProcessConfig):
             if test_examples_dest[0] == "test":
                 test_puzzles[name] = puzzle
                 
-            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": train_examples_dest, "test": test_examples_dest})
+            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": train_examples_dest, "test": test_examples_dest}, test_aug=config.test_aug)
             total_puzzles += 1
 
     print (f"Total puzzles: {total_puzzles}")
