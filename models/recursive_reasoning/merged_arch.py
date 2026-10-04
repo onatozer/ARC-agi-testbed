@@ -327,8 +327,9 @@ class InnerNetwork(nn.Module):
                 buf_name = f"_random_reset_{name}_buffer"
                 buf = getattr(self, buf_name)
 
-                # Deciding whether or not to reinitialize the buffer
-                if buf is None or buf.device != state.device or buf.dtype != state.dtype or buf.shape[1:] != shape or buf.shape[0] < n:
+                # Deciding whether or not to reinitialize the buffer (one allocated during eval's inference_mode can't be written in training)
+                if buf is None or buf.device != state.device or buf.dtype != state.dtype or buf.shape[1:] != shape or buf.shape[0] < n \
+                        or (buf.is_inference() and not torch.is_inference_mode_enabled()):
                     buf = torch.empty((n if buf is None else max(n, buf.shape[0] * 2),) + shape, dtype=state.dtype, device=state.device)
                     setattr(self, buf_name, buf)
                 
