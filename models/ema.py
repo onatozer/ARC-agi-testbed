@@ -42,6 +42,15 @@ class EMAHelper(object):
                     continue
                 param.data.copy_(v.data)
 
+    def swap(self, module):
+        # Exchange the live weights with the EMA shadow in place (no new allocations); calling it again swaps them back.
+        if isinstance(module, nn.DataParallel):
+            module = module.module
+        for name, param in module.named_parameters():
+            v = self.shadow.get(name)
+            if param.requires_grad and v is not None:
+                param.data, self.shadow[name] = v, param.data
+
     def ema_copy(self, module):
         module_copy = copy.deepcopy(module)
         self.ema(module_copy)
