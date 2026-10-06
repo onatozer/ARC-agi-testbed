@@ -185,13 +185,14 @@ class InnerNetwork(nn.Module):
             self.puzzle_emb = CastedSparseEmbedding(config.num_puzzle_identifiers, config.puzzle_emb_ndim,
                                                     batch_size=config.batch_size, init_std=0, cast_to=self.forward_dtype)
         self._init_pos(embed_std)
+
+        
         if config.alibi_2d:
             self.alibi_2d = ALiBi2D(config.num_heads, *self._grid_dims(), prefix_len=config.puzzle_emb_len, dtype=self.forward_dtype)
+        
 
         self.lm_head = CastedLinear(config.hidden_size, config.vocab_size, bias=False)
         self.q_head = CastedLinear(config.hidden_size, 2, bias=True) 
-        #TODO: The way the Q-head is being implemented has to be wrong, 
-        # like no way it's optimal to use only the puzzle embedding and only the first of the 2 output dims
 
         self.L_level = Blocks(layers = [Block(config, self.seq_len) for _ in range(config.L_layers)], config = self.config)
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
@@ -248,6 +249,7 @@ class InnerNetwork(nn.Module):
             return
         if self.config.pos_encodings not in ("learned", "absolute", "absolute_2d", "absolute_2d_ope"):
             raise ValueError(f"pe_mixer needs an additive pos_encodings (learned, absolute, absolute_2d or absolute_2d_ope), got {self.config.pos_encodings!r}.")
+        
         # Initialised to the fixed 1/sqrt(2) weights of the unmixed sum, so step 0 matches pe_mixer=False
         self.pe_alpha = nn.Parameter(torch.full((self.config.hidden_size,), 0.707106781))
         self.pe_beta = nn.Parameter(torch.full((self.config.hidden_size,), 0.707106781))
@@ -256,8 +258,10 @@ class InnerNetwork(nn.Module):
         """Adds the positional encoding to the (prefix + token) embeddings and applies the embedding scale."""
         if self.config.pos_encodings == "learned":
             pos = self.embed_pos.embedding_weight.to(self.forward_dtype)
+
         elif self.config.pos_encodings in ("absolute", "absolute_2d"):
             pos = self.absolute_pos_embedding.to(device=x.device, dtype=self.forward_dtype)
+            
         elif self.config.pos_encodings == "absolute_2d_ope":
             if object_ids is None:
                 raise ValueError("pos_encodings=absolute_2d_ope needs batch['object_ids']; build the dataset with object_ids=true.")
@@ -271,6 +275,7 @@ class InnerNetwork(nn.Module):
         if self.config.pe_mixer:
             # ViTARC PEmixer (arXiv 2410.06405, eq. 10 / App. C weighted_sum_no_norm_vec): alpha * E_p + beta * E_pos
             return self.embed_scale * (self.pe_alpha.to(self.forward_dtype) * x + self.pe_beta.to(self.forward_dtype) * pos)
+        
         return self.embed_scale* 0.707106781 * (x + pos)
 
     def _cos_sin(self) -> CosSin:
@@ -290,6 +295,7 @@ class InnerNetwork(nn.Module):
             if pad > 0:
                 puzzle_embedding = torch.nn.functional.pad(puzzle_embedding, (0, pad))
             x = torch.cat((puzzle_embedding.view(-1, self.config.puzzle_emb_len, self.config.hidden_size), x), dim=1)
+            
         return self._add_pos(x, object_ids)
 
     def empty_carry(self, batch_size: int, device: str = "cpu") -> LatentCarry:
@@ -534,6 +540,7 @@ class TRMModel(nn.Module):
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
         q_halt = fpass_info["q_halt_logits"]
 
+
         with torch.no_grad():
             # NFE = L_level (the shared block f) evaluations; inners with a variable count (e.g. DEQ solvers) report it
             step_nfe = fpass_info.pop("nfe", self.config.H_cycles * (self.config.L_cycles + 1))
@@ -544,6 +551,7 @@ class TRMModel(nn.Module):
                 z, z_prev = getattr(inner_carry, name).float(), getattr(prev_latent, name).float()
                 d_z = (z - z_prev).flatten(1).norm(dim=1)
                 fpass_info[f"{name.replace('_', '')}_rel_residual"] = d_z / z.flatten(1).norm(dim=1).clamp_min(1e-8)
+
         
         # This section determines which puzzles in the batch to halt on based on if it's either
         # 1. Reached the max number of steps

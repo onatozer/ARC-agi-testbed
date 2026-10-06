@@ -78,3 +78,22 @@ def softmax_cross_entropy(
         ignore_index=ignore_index,
         reduction="none",
     ).view(labels.shape)
+
+
+def kl_balanced(
+    mu_post: torch.Tensor,
+    var_post: torch.Tensor,
+    mu_prior: torch.Tensor,
+    var_prior: torch.Tensor,
+    alpha: float,
+) -> torch.Tensor:
+    """Dreamer-V2 KL calculation """
+    
+    def gaussian_kl(mu_post: torch.Tensor, var_post: torch.Tensor, mu_prior: torch.Tensor, var_prior: torch.Tensor) -> torch.Tensor:
+        var_post = var_post.clamp_min(1e-4)
+        var_prior = var_prior.clamp_min(1e-4)
+        return 0.5 * (torch.log(var_prior / var_post) + (var_post + (mu_post - mu_p).pow(2)) / var_prior - 1.0).sum(dim=-1)
+    
+    kl_prior_update = gaussian_kl(mu_post.detach(), var_post.detach(), mu_prior, var_prior)
+    kl_posterior_update = gaussian_kl(mu_post, var_post, mu_post.detach(), var_post.detach())
+    return alpha * kl_prior_update + (1.0 - alpha) * kl_posterior_update

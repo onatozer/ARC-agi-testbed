@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from models.losses import IGNORE_LABEL_ID
-from models.losses.base import BaseLossHead, softmax_cross_entropy, stablemax_cross_entropy
+from models.losses.base import BaseLossHead, softmax_cross_entropy, stablemax_cross_entropy, kl_balanced
 from utils.training import tree_to_device
 
 
@@ -65,21 +65,6 @@ class ACTLossHead(BaseLossHead):
     def initial_carry(self, *args: Any, **kwargs: Any) -> Any:
         return self.model.initial_carry(*args, **kwargs)  # type: ignore[attr-defined]
 
-    def compute_lm_loss(
-        self,
-        logits: torch.Tensor,
-        labels: torch.Tensor,
-        valid_mask: torch.Tensor,
-        loss_divisor: torch.Tensor,
-        temperature: float = 1.0,
-    ) -> Dict[str, torch.Tensor]:
-
-        del temperature
-        lm_loss = (
-            self.loss_fn(logits, labels, ignore_index=IGNORE_LABEL_ID, valid_mask=valid_mask) / loss_divisor
-        ).sum()
-        return {"lm_loss": lm_loss}
-
     def forward(
         self,
         return_keys: Sequence[str],
@@ -126,18 +111,19 @@ class ACTLossHead(BaseLossHead):
                 count=count,
             )
 
-        losses = self.compute_lm_loss(outputs["logits"], labels, valid_mask=mask, loss_divisor=loss_divisor)
+        lm_loss = self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor
         q_halt_loss = F.binary_cross_entropy_with_logits(
             outputs["q_halt_logits"],
             seq_is_correct.to(outputs["q_halt_logits"].dtype),
             reduction="sum",
         )
+        total_loss = lm_loss + 0.5 * q_halt_loss
+
+        metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()
-        metrics.update({key: value.detach() for key, value in losses.items()})
+        metrics["total_loss"] = total_loss.detach()
 
         detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
-        total_loss = losses["lm_loss"] + 0.5 * q_halt_loss
-        metrics["total_loss"] = total_loss.detach()
         return new_carry, total_loss, metrics, detached_outputs, new_carry.halted.all()
 
     def _build_step_metrics(
@@ -417,3 +403,83 @@ class ACTLossHeadRoot(nn.Module):
         total = lm_loss + 0.5 * (q_halt_loss + q_continue_loss) + jac_loss
         detached_outputs = {k: outputs[k].detach() for k in return_keys if k in outputs}
         return new_carry, total, metrics, detached_outputs, new_carry.halted.all()
+
+
+class ACTLossHeadGRAM(ACTLossHead):
+
+    def __init__(self, model: nn.Module, loss_type: str, kl_grad_prior: float, kl_strength: float, **kwargs: Any) -> None:
+        del kwargs
+        self.kl_alpha = kl_grad_prior
+        self.kl_beta = kl_strength
+        super().__init__(model, loss_type)
+    
+    def forward(
+        self,
+        return_keys: Sequence[str],
+        **model_kwargs: Any,
+    ) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
+
+        new_carry, outputs = self.model(**model_kwargs)
+        logits = outputs.get("logits", None)
+
+        if isinstance(logits, torch.Tensor):
+            outputs["logits"] = logits.contiguous()
+
+        labels = new_carry.current_data["labels"]
+        new_carry = tree_to_device(new_carry, outputs["logits"].device)
+        preds = torch.argmax(outputs["logits"], dim=-1)
+
+        prev_halted = outputs.pop("prev_halted", None)
+        prev_preds = _carry_get(new_carry, "prev_preds", None)
+        if prev_preds is not None:
+            mask_source = prev_halted if prev_halted is not None else new_carry.halted
+            preds = torch.where(mask_source.unsqueeze(-1), prev_preds.to(preds.dtype), preds)
+            new_carry.prev_preds = preds.detach()
+
+        outputs["preds"] = preds
+        metrics: Dict[str, torch.Tensor]
+        
+        with torch.no_grad():
+            mask = labels != IGNORE_LABEL_ID
+            loss_counts = mask.sum(-1)
+            loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)
+            is_correct = mask & (outputs["preds"] == labels)
+            seq_is_correct = is_correct.sum(-1) == loss_counts
+            valid_metrics = new_carry.halted & (loss_counts > 0)
+            count = valid_metrics.sum()
+
+            metrics = self._build_step_metrics(
+                outputs=outputs,
+                carry=new_carry,
+                loss_divisor=loss_divisor,
+                loss_counts=loss_counts,
+                is_correct=is_correct,
+                seq_is_correct=seq_is_correct,
+                valid_metrics=valid_metrics,
+                count=count,
+            )
+
+        # Compute the losses from each of the sources
+        lm_loss = self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor
+        kl_loss = kl_balanced(
+            mu_post = outputs["mu_post"],
+            sigma_post = outputs["sigma_post"],
+            mu_prior = outputs["mu_prior"],
+            sigma_prior = outputs["sigma_prior"],
+            alpha=self.kl_alpha,
+        )
+
+        q_halt_loss = F.binary_cross_entropy_with_logits(
+            outputs["q_halt_logits"],
+            seq_is_correct.to(outputs["q_halt_logits"].dtype),
+            reduction="sum",
+        )
+        total_loss = lm_loss + 0.5 * q_halt_loss + self.kl_beta*kl_loss
+        
+        metrics["lm_loss"] = lm_loss.detach()
+        metrics["q_halt_loss"] = q_halt_loss.detach()
+        metrics["kl_loss"] = kl_loss.detach()
+        metrics["total_loss"] = total_loss.detach()
+
+        detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}
+        return new_carry, total_loss, metrics, detached_outputs, new_carry.halted.all()
