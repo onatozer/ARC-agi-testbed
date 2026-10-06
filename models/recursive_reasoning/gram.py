@@ -1,76 +1,40 @@
-from contextlib import nullcontext
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Tuple
 import math
 
 import torch
 import torch.nn.functional as F
-from pydantic import BaseModel, ConfigDict, Field
 from torch import nn
-from torch.func import functional_call, jacrev
-from torch.nn.attention import SDPBackend, sdpa_kernel
-from torch.utils.checkpoint import checkpoint
-from torchdeq.solver.anderson import anderson_solver
 
-from ..common import trunc_normal_init_
+from models.losses import IGNORE_LABEL_ID
 from ..layers import (
-    Attention,
     CastedEmbedding,
     CastedLinear,
-    LinearSwish,
-    RotaryEmbedding,
     SwiGLU,
     rms_norm,
 )
-from ..sparse_embedding import CastedSparseEmbedding
 from .merged_arch import (
-    Block,
-    Blocks,
-    TRMConfig,
-    InnerNetwork,
-    ModelCarry,
     LatentCarry,
-    _reset_rows,
+    InnerNetwork,
     _add_puzzle_emb_positions,
     TRMModel,
 )
 
-@dataclass
-class TransitionInfo:
-    """Diagnostics returned per transition; used by the loss + by ablation logging."""
-
-    u_t: torch.Tensor              # (B, L, D) — deterministic high-level update
-    eps: torch.Tensor              # (B, L, D) — sampled stochastic guidance
-    mu_p: torch.Tensor             # (B, L, D) — prior mean
-    var_p: torch.Tensor            # (B, L, D) — prior σ²
-    mu_q: torch.Tensor | None      # (B, L, D) — posterior mean (None at inference)
-    var_q: torch.Tensor | None     # (B, L, D) — posterior σ² (None at inference)
-
-@dataclass
-class GramCarry(ModelCarry):
-    transition: TransitionInfo
-
-
-# --------------------------------------------------------------------------- #
-# Config
-# --------------------------------------------------------------------------- #
-
-class GRAMConfig(BaseModel):
-    model_config = ConfigDict(extra='allow')
-    
-    kl_grad_prior: float = .8
-    kl_strength: float = .07
 
 class GaussianHead(nn.Module):
-    def __init__(self, dim: int, expansion):
+    def __init__(self, dim: int, expansion: float, norm_eps: float = 1e-5):
         super().__init__()
 
-        self.norm = rms_norm(dim)
+        self.norm_eps = norm_eps
         self.mlp = SwiGLU(dim, expansion)
         self.to_stats = CastedLinear(dim, 2 * dim, bias=True)
 
+        # Start the guidance neutral (mu = 0, var = softplus(0)), as both reference implementations do
+        with torch.no_grad():
+            self.to_stats.weight.zero_()
+            self.to_stats.bias.zero_()
+
     def forward(self, x: torch.Tensor):
-        x = self.norm(x)
+        x = rms_norm(x, variance_epsilon=self.norm_eps)
         x = self.mlp(x)
 
         mu, raw_var = self.to_stats(x).chunk(2, dim=-1)
@@ -79,41 +43,54 @@ class GaussianHead(nn.Module):
         var = F.softplus(raw_var) + 1e-4
         return mu, var
 
-class PosteriorHead(nn.module):
-    def __init__(self, hidden_size: int, vocab_size: int, dtype: str, expansion: int = 4):
+class PosteriorHead(nn.Module):
+    def __init__(self, hidden_size: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype, expansion: float = 4):
+        super().__init__()
+        self.puzzle_emb_len = puzzle_emb_len
         embed_std = 1.0 / math.sqrt(hidden_size)
         self.embedding = CastedEmbedding(vocab_size, hidden_size, embed_std, dtype)
 
-        self.head = nn.Sequential(
-            CastedLinear(2*hidden_size, hidden_size),
-            GaussianHead(dim=hidden_size, expansion=expansion),
-        )
+        self.combine = CastedLinear(2*hidden_size, hidden_size, bias=False)
+        self.head = GaussianHead(dim=hidden_size, expansion=expansion)
 
-    def forward(self, u_t: torch.tensor, y: torch.tensor) -> torch.tensor:
-        y = self.emebdding(y) * math.sqrt(u_t.shape[-1])
+    def forward(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Ignored label positions have no target token, so they get the pad token (0)
+        y = torch.where(y == IGNORE_LABEL_ID, 0, y)
+        y = self.embedding(y.to(torch.int32)) * math.sqrt(u_t.shape[-1])
+        # The puzzle embedding prefix has no target, so its slots are zeros
+        y = F.pad(y, (0, 0, self.puzzle_emb_len, 0))
 
-        return self.head(torch.cat([u_t, y]))
+        return self.head(self.combine(torch.cat([u_t, y], dim=-1)))
 
-        
 
 class GRAM_Inner(InnerNetwork):
-    def __init__(self, config: GRAMConfig):
+    def __init__(self, config: dict):
         super().__init__(config)
-        # super().__init__(config.TRM_cfg)
-        config = GRAMConfig(**config) if isinstance(config, dict) else config
-        self.gram_config = config
 
         self.prior_head = GaussianHead(
-            dim=config.hidden_size,
-            expansion=config.expansion,
+            dim=self.config.hidden_size,
+            expansion=self.config.expansion,
+            norm_eps=self.config.rms_norm_eps,
+        )
+        self.posterior_head = PosteriorHead(
+            hidden_size=self.config.hidden_size,
+            vocab_size=self.config.vocab_size,
+            puzzle_emb_len=self.config.puzzle_emb_len,
+            dtype=self.forward_dtype,
+            expansion=self.config.expansion,
         )
 
-        self.prior_head = nn.Sequential(
-            rms_norm(config.hidden_size),
-            SwiGLU(2, config.expansion),
-            CastedLinear(config.hidden_size, 2 * config.hidden_size),
-        )
+    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Samples the stochastic guidance eps for u_t: from the posterior q(eps | u_t, y) while training,
+        otherwise from the prior p(eps | u_t)."""
+        mu_prior, var_prior = self.prior_head(u_t)
+        if self.training:
+            mu_post, var_post = self.posterior_head(u_t, y)
+            eps = mu_post + torch.randn_like(u_t) * var_post.sqrt()
+            return eps, {"mu_prior": mu_prior, "var_prior": var_prior, "mu_post": mu_post, "var_post": var_post}
 
+        eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
+        return eps, {"mu_prior": mu_prior, "var_prior": var_prior}
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
@@ -126,37 +103,20 @@ class GRAM_Inner(InnerNetwork):
             for _ in range(self.config.H_cycles - 1):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
-                    
+
                 u_t = self.L_level(z_H, z_L, **seq_dict)
 
-                mu_post, sigma_post = self.posterior_head(u_t, y)
-                mu_prior, sigma_prior = self.prior_head(u_t)
-
                 # Change with the GRAM network is that now noise from added to the z_H at each iteration
-                if self.is_training: # Noise added from posterior network if training, otherwise from prior network
-                    eps = torch.randn_like(z_H)*sigma_post + mu_post
-                else:
-                    eps = torch.randn_like(z_H)*sigma_prior + mu_prior
-
+                eps, _ = self._guidance(u_t, y)
                 z_H = u_t + eps
-             
 
         # Finally, last recursion cycle is ran with the gradient attached
         for _ in range(self.config.L_cycles):
             z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
         u_t = self.L_level(z_H, z_L, **seq_dict)
-        mu_post, sigma_post = self.posterior_head(u_t, x, y)
-        mu_prior, sigma_prior = self.prior_head(u_t, x)
-
-        # Change with the GRAM network is that now noise from added to the u_t at each iteration
-        if self.is_training: # Noise added from posterior network if training, otherwise from prior network
-            eps = torch.randn_like(u_t)*sigma_post + mu_post
-        else:
-            eps = torch.randn_like(u_t)*sigma_prior + mu_prior
-            
-        z_H = z_H + eps
-
+        eps, guidance_stats = self._guidance(u_t, y)
+        z_H = u_t + eps
 
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
@@ -164,37 +124,21 @@ class GRAM_Inner(InnerNetwork):
         else:
             logits = self.lm_head(z_H).contiguous()
 
-        q = self.q_head(z_H[:, 0]).to(torch.float32) 
+        q = self.q_head(z_H[:, 0]).to(torch.float32)
 
         info = {
             "q_halt_logits": q[..., 0],
             "logits": logits,
-            "u_t": u_t,
-            "mu_prior": mu_prior,
-            "sigma_prior": sigma_prior,
-            "mu_post": mu_post,
-            "sigma_post": sigma_post,
+            **guidance_stats,
         }
-        
+
         return LatentCarry(z_H, z_L), info
 
 
-
-class GRAMModel(TRMModel):
-    def __init__(self, config: GRAMConfig):
+class GRAM(TRMModel):
+    def __init__(self, config: dict):
         super().__init__(config)
         print("~"*80)
         print(config)
         print("GRAM architecture initialized")
-
-
-class GRAM(TRMModel):
-    def __init__(self, config: GRAMConfig):
-        # config = GRAMConfig.model_validate(config)
-        # super().__init__(config.TRM_cfg)
-        super().__init__(config)
-        print("~"*80)
-        print(config)
-        print("DEQ architecture initialized")
-        self.root_config = GRAMConfig(**config)
         self.inner = GRAM_Inner(_add_puzzle_emb_positions(config))

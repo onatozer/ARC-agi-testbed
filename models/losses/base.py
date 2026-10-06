@@ -87,13 +87,14 @@ def kl_balanced(
     var_prior: torch.Tensor,
     alpha: float,
 ) -> torch.Tensor:
-    """Dreamer-V2 KL calculation """
-    
+    """Dreamer-V2 KL balancing: alpha * KL(sg(q) || p) + (1 - alpha) * KL(q || sg(p)), summed over the last dim."""
+    mu_post, var_post, mu_prior, var_prior = (t.float() for t in (mu_post, var_post, mu_prior, var_prior))
+
     def gaussian_kl(mu_post: torch.Tensor, var_post: torch.Tensor, mu_prior: torch.Tensor, var_prior: torch.Tensor) -> torch.Tensor:
         var_post = var_post.clamp_min(1e-4)
         var_prior = var_prior.clamp_min(1e-4)
-        return 0.5 * (torch.log(var_prior / var_post) + (var_post + (mu_post - mu_p).pow(2)) / var_prior - 1.0).sum(dim=-1)
-    
+        return 0.5 * (torch.log(var_prior / var_post) + (var_post + (mu_post - mu_prior).pow(2)) / var_prior - 1.0).sum(dim=-1)
+
     kl_prior_update = gaussian_kl(mu_post.detach(), var_post.detach(), mu_prior, var_prior)
-    kl_posterior_update = gaussian_kl(mu_post, var_post, mu_post.detach(), var_post.detach())
+    kl_posterior_update = gaussian_kl(mu_post, var_post, mu_prior.detach(), var_prior.detach())
     return alpha * kl_prior_update + (1.0 - alpha) * kl_posterior_update

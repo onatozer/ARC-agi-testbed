@@ -111,7 +111,7 @@ class ACTLossHead(BaseLossHead):
                 count=count,
             )
 
-        lm_loss = self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor
+        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
         q_halt_loss = F.binary_cross_entropy_with_logits(
             outputs["q_halt_logits"],
             seq_is_correct.to(outputs["q_halt_logits"].dtype),
@@ -409,9 +409,9 @@ class ACTLossHeadGRAM(ACTLossHead):
 
     def __init__(self, model: nn.Module, loss_type: str, kl_grad_prior: float, kl_strength: float, **kwargs: Any) -> None:
         del kwargs
+        super().__init__(model, loss_type)
         self.kl_alpha = kl_grad_prior
         self.kl_beta = kl_strength
-        super().__init__(model, loss_type)
     
     def forward(
         self,
@@ -460,14 +460,15 @@ class ACTLossHeadGRAM(ACTLossHead):
             )
 
         # Compute the losses from each of the sources
-        lm_loss = self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor
+        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
+        # Per-position KL summed over hidden dims; mean over positions, sum over the batch like lm_loss
         kl_loss = kl_balanced(
             mu_post = outputs["mu_post"],
-            sigma_post = outputs["sigma_post"],
+            var_post = outputs["var_post"],
             mu_prior = outputs["mu_prior"],
-            sigma_prior = outputs["sigma_prior"],
+            var_prior = outputs["var_prior"],
             alpha=self.kl_alpha,
-        )
+        ).mean(-1).sum()
 
         q_halt_loss = F.binary_cross_entropy_with_logits(
             outputs["q_halt_logits"],
