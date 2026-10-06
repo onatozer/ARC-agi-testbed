@@ -13,6 +13,7 @@ optimizer: muon
 activation_function: conv_swiglu
 max_eval_steps: null
 eval_interval_steps: 25000
+checkpoint_interval_steps: ${.eval_interval_steps}
 
 # Ensure that the puzzle embedding is being used 
 arch:

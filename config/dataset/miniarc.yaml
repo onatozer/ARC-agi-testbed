@@ -1,11 +1,11 @@
 # Configs for locating & running the dataset at train/eval time
 name: Mini-ARC
-data_path: data/miniarc-aug-1000
+data_path: data/miniarc
 
 evaluators:
   - name: arc@ARC
 
-data_paths: ['miniarc-aug-1000']
+data_paths: ['miniarc']
 
 # Configs for building the dataset itself (python -m dataset.build_miniarc_dataset)
 input_dir: data/MiniARC
@@ -14,6 +14,9 @@ num_aug: 1000
 puzzle_identifiers_start: 1 # start > 1 to handle multiple datasets
 grid_size: 10 
 scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
-test_aug: true # false: the test split keeps only each puzzle's original test pairs (eval without augmented copies); training still gets them
+test_aug: false 
+border_tokens: false # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); builds into <output_dir>-border
+object_ids: true # also save per-cell object indices of the inputs, for arch.pos_encodings=absolute_2d_ope (ViTARC OPE)
+
 
 seed: null

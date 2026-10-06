@@ -11,6 +11,8 @@ hydra:
 global_batch_size: 256 # has to be less than 528 for mini arc
 optimizer: muon
 activation_function: conv_swiglu
+eval_interval_steps: 10000
+checkpoint_interval_steps: ${.eval_interval_steps}
 
 max_eval_steps: null
 
