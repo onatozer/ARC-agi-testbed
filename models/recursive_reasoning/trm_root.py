@@ -40,7 +40,6 @@ from .merged_arch import (
 # --------------------------------------------------------------------------- #
 
 class TRMRootConfig(BaseModel):
-    # TRM_cfg: TRMConfig = Field(default_factory=TRMConfig)
     model_config = ConfigDict(extra='allow')
 
     deq_max_iter: int = 8             # forward Anderson iterations
@@ -118,7 +117,6 @@ class _InjectParamGrads(torch.autograd.Function):
 class TRMRoot_Inner(InnerNetwork):
     def __init__(self, config: TRMRootConfig):
         super().__init__(config)
-        # super().__init__(config.TRM_cfg)
         config = TRMRootConfig(**config) if isinstance(config, dict) else config
         self.root_config = config
         # Set to False by ACTLossHeadRoot when jacobian_reg_lambda == 0
