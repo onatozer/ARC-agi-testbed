@@ -475,11 +475,14 @@ class ACTLossHeadGRAM(ACTLossHead):
             seq_is_correct.to(outputs["q_halt_logits"].dtype),
             reduction="sum",
         )
-        total_loss = lm_loss + 0.5 * q_halt_loss + self.kl_beta*kl_loss
-        
+        # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
+        lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
+        total_loss = lm_loss + 0.5 * q_halt_loss + self.kl_beta*kl_loss + lprm_loss
+
         metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()
         metrics["kl_loss"] = kl_loss.detach()
+        metrics["lprm_loss"] = lprm_loss.detach()
         metrics["total_loss"] = total_loss.detach()
 
         detached_outputs = {key: outputs[key].detach() for key in return_keys if key in outputs}

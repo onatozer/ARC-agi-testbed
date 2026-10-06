@@ -79,6 +79,8 @@ class GRAM_Inner(InnerNetwork):
             dtype=self.forward_dtype,
             expansion=self.config.expansion,
         )
+        # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H, like q_head
+        self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)
 
     def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Samples the stochastic guidance eps for u_t: from the posterior q(eps | u_t, y) while training,
@@ -128,6 +130,7 @@ class GRAM_Inner(InnerNetwork):
 
         info = {
             "q_halt_logits": q[..., 0],
+            "lprm_value": torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1),
             "logits": logits,
             **guidance_stats,
         }

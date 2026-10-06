@@ -72,3 +72,18 @@ def test_act_loss_head_total_loss_is_scalar():
     batch = _batch(cfg)
     _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
     assert loss.ndim == 0 and metrics["lm_loss"].ndim == 0
+
+
+def test_gram_lprm_head_trains_and_outputs_value():
+    model, batch = _gram_head()
+    model.train()
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert metrics["lprm_loss"].ndim == 0 and metrics["lprm_loss"] > 0
+    loss.backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.model.inner.v_head.parameters())
+
+    model.eval()
+    with torch.inference_mode():
+        _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
+    value = outputs["lprm_value"]
+    assert value.shape == (batch["inputs"].shape[0],) and ((value > 0) & (value < 1)).all()
