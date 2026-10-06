@@ -164,10 +164,11 @@ train.sh <pretrain_cfg> --standalone # Use to tell Pytorch that you're running t
 --nproc-per-node=1 # Use to tell pytorch how many GPUs you're using per device  
 ```
 
-Similar design process goes into the usage of eval.sh
+Similar design process goes into the usage of eval.sh. evaluate.py is a hydra script (config/cfg_eval.yaml); pick the eval config with `eval=<name>` (a file in config/eval, depth_breadth by default) and override any field the same way
 ```bash
-scripts/eval.sh <checkpoint-path> <eval_cfg> [evaluate.py overrides...]
+scripts/eval.sh <checkpoint-path> [eval=<eval_cfg>] [evaluate.py overrides...]
 ``` 
+If the checkpoint was trained with W&B on, the eval metrics are also logged to that same run under `eval/<suffix>/...`, at the checkpoint's step (pass `wandb_mode=disabled` to skip). That run has to have ended (finished, crashed or killed): resuming it while training is still logging to it would clobber its history, so for a still-running run, and for checkpoints without a W&B run, the metrics are only saved to `<run_dir>/eval_preds/`.
 
 downlaod_arifacts.sh downloads the model & dataset paths from hugging-face, containing the following args:
 | Flag                  | Effect                                            |

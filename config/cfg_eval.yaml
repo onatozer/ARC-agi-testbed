@@ -1,0 +1,35 @@
+# Entry config for evaluate.py. The eval group (config/eval/*.yaml) fills in the sweep; pick one with eval=<name>.
+# Every EvalConfig field is declared here so it can be overridden from the CLI without a leading +.
+defaults:
+  - _self_
+  - eval: depth_breadth
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false # keep relative checkpoint and dataset paths relative to where evaluate.py was launched
+
+checkpoint: null
+checkpoint_list: []
+global_batch_size: null
+seed: null
+dataset_data_path: null
+load_strict: null
+top_k: null
+suffix: null
+save_outputs: []
+save_carry: false
+param_iter: {}
+shared_param_iter: {}
+description: null
+max_eval_steps: null
+force_rerun: false
+loss_head_name: losses@InferenceLossHead
+different_init: null
+different_init_reset_std: 1.0
+convergence_top_k: null
+convergence_window: 3
+convergence_vis_plots: []
+
+# Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it
+wandb_mode: null

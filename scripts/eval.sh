@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate a checkpoint with the shared depth/breadth evaluation config.
+# Evaluate a checkpoint with evaluate.py (Hydra: config/cfg_eval.yaml, eval group defaults to depth_breadth).
 
 set -euo pipefail
 
@@ -11,6 +11,7 @@ Examples:
   scripts/eval.sh downloaded_checkpoints/sudoku-extreme/eqr.pth
   scripts/eval.sh /path/to/checkpoint.pth halt_max_steps=64
   scripts/eval.sh /path/to/checkpoint.pth halt_max_steps=64 different_init=128 convergence_top_k=1 global_batch_size=16
+  scripts/eval.sh /path/to/checkpoint.pth eval=sudoku_lite_noise05 wandb_mode=disabled
 EOF
 }
 
@@ -31,4 +32,4 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-python evaluate.py eval_yaml=config/eval/depth_breadth.yaml checkpoint="${checkpoint_path}" "$@"
+python evaluate.py checkpoint="${checkpoint_path}" "$@"

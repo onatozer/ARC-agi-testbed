@@ -26,7 +26,6 @@ class EvalConfig(pydantic.BaseModel):
     dataset_data_path: Optional[str] = None
     load_strict: Optional[bool] = None
     top_k: Optional[Union[int, List[int]]] = None
-    eval_yaml: Optional[str] = Field(default=None, alias="eval_config")
     suffix: Optional[str] = None
     save_outputs: List[str] = Field(default_factory=list)
     save_carry: bool = False
@@ -43,3 +42,4 @@ class EvalConfig(pydantic.BaseModel):
     convergence_top_k: Optional[int] = None
     convergence_window: int = 3
     convergence_vis_plots: List[str] = Field(default_factory=list)
+    wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

@@ -1,3 +1,4 @@
+# @package _global_
 halt_max_steps: 64
 noise_scale: 0.5
 init_std: 1.0
