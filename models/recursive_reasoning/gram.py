@@ -83,9 +83,12 @@ class GRAM_Inner(InnerNetwork):
         # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H, like q_head
         self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)
 
-    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """Samples the stochastic guidance eps for u_t: from the posterior q(eps | u_t, y) while training,
-        otherwise from the prior p(eps | u_t)."""
+        if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
+            raise ValueError(f"grad_cycles must be in [1, H_cycles={self.config.H_cycles}], got {self.config.grad_cycles}.")
+
+    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor | int]:
+        """Samples the stochastic guidance eps for u_t and returns it with its beta-weighted balanced KL: from the
+        posterior q(eps | u_t, y) when gradients are on, otherwise from the prior p(eps | u_t) with no KL."""
         mu_prior, var_prior = self.prior_head(u_t)
 
         # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
@@ -99,8 +102,8 @@ class GRAM_Inner(InnerNetwork):
                 var_post = var_post,
                 mu_prior = mu_prior,
                 var_prior = var_prior,
-                alpha=self.config.grad_prior,
-            ).mean(-1).sum() * self.config.kl_stenght
+                alpha=self.config.kl_grad_prior,
+            ).mean(-1).sum() * self.config.kl_strength
 
             return eps, kl_loss
 
@@ -113,9 +116,9 @@ class GRAM_Inner(InnerNetwork):
         y = batch["labels"]
         seq_dict = self._seq_dict()
 
-        # Run the recursion cycle for H_cycle -1 times without the gadient
+        # Run the recursion cycle for H_cycles - grad_cycles times without the gadient
         with torch.no_grad():
-            for _ in range(self.config.H_cycles - self.config.supervision_steps):
+            for _ in range(self.config.H_cycles - self.config.grad_cycles):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
@@ -126,8 +129,9 @@ class GRAM_Inner(InnerNetwork):
                 z_H = u_t + eps
 
 
+        # The last grad_cycles cycles carry the gradient; each samples the posterior and pays its KL
         kl_loss = 0
-        for _ in range(self.config.supervision_steps):
+        for _ in range(self.config.grad_cycles):
             for __ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 

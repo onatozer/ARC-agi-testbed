@@ -31,12 +31,20 @@ def _batch(cfg):
     }
 
 
-def _gram_head():
+def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg()
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, **overrides})
     with torch.device("cuda"):
-        model = ACTLossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy", kl_grad_prior=0.8, kl_strength=0.07)
+        model = ACTLossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
+
+
+def _count_posterior_calls(model):
+    calls = []
+    head = model.model.inner.posterior_head
+    original = head.forward
+    head.forward = lambda *args, **kwargs: calls.append(1) or original(*args, **kwargs)
+    return calls
 
 
 def test_gram_train_step_trains_prior_and_posterior():
@@ -59,9 +67,26 @@ def test_gram_train_step_trains_prior_and_posterior():
 def test_gram_eval_samples_prior_only():
     model, batch = _gram_head()
     model.eval()
+    calls = _count_posterior_calls(model)
     with torch.inference_mode():
         _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
-    assert "mu_prior" in outputs and "mu_post" not in outputs
+    assert not calls and outputs["kl_loss"] == 0
+
+
+@pytest.mark.parametrize("grad_cycles", [1, 2])
+def test_gram_posterior_only_in_grad_cycles(grad_cycles):
+    # The no-grad cycles pay no KL, so a posterior there would leak the labels into z_H for free
+    model, batch = _gram_head(H_cycles=3, grad_cycles=grad_cycles)
+    model.train()
+    calls = _count_posterior_calls(model)
+    model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert len(calls) == grad_cycles
+
+
+@pytest.mark.parametrize("grad_cycles", [0, 3])
+def test_gram_rejects_grad_cycles_outside_h_cycles(grad_cycles):
+    with pytest.raises(ValueError, match="grad_cycles"):
+        _gram_head(H_cycles=2, grad_cycles=grad_cycles)
 
 
 def test_act_loss_head_total_loss_is_scalar():

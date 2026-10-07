@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from models.losses import IGNORE_LABEL_ID
-from models.losses.base import BaseLossHead, softmax_cross_entropy, stablemax_cross_entropy, kl_balanced
+from models.losses.base import BaseLossHead, softmax_cross_entropy, stablemax_cross_entropy
 from utils.training import tree_to_device
 
 
@@ -407,12 +407,11 @@ class ACTLossHeadRoot(nn.Module):
 
 class ACTLossHeadGRAM(ACTLossHead):
 
-    def __init__(self, model: nn.Module, loss_type: str, kl_grad_prior: float, kl_strength: float, **kwargs: Any) -> None:
+    # The KL settings (kl_grad_prior, kl_strength) are arch config: GRAM computes its beta-weighted KL in the forward
+    def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
         del kwargs
         super().__init__(model, loss_type)
-        self.kl_alpha = kl_grad_prior
-        self.kl_beta = kl_strength
-    
+
     def forward(
         self,
         return_keys: Sequence[str],
@@ -472,7 +471,7 @@ class ACTLossHeadGRAM(ACTLossHead):
         )
         # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
         lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
-        total_loss = lm_loss + 0.5 * q_halt_loss + kl_loss
+        total_loss = lm_loss + 0.5 * q_halt_loss + kl_loss + lprm_loss
 
         metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()
