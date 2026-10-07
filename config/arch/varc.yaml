@@ -1,5 +1,5 @@
 # VARC baseline, "ARC Is a Vision Problem!" (arXiv 2511.14761): ViT on a scaled/translated 64x64 canvas.
-# Defaults are the paper's ViT-18M. Per-task test-time training is a separate script: evaluate_varc_ttt.py.
+# Defaults are the paper's ViT-18M. Per-task test-time training: evaluate_ttt.py (ttt=varc, the default recipe).
 #
 # The paper's offline training hyperparameters, as top-level overrides:
 #   arch=varc lr=3e-4 lr_min_ratio=0.0 weight_decay=0 beta1=0.9 beta2=0.999 global_batch_size=32 lr_warmup_steps=<~10% of steps>

@@ -1,12 +1,8 @@
-from collections import Counter
-
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
 
-from dataset.build_arc_dataset import arc_grid_to_np, grid_hash
-from evaluate_varc_ttt import VARCTTTConfig, build_aux_tasks, decode_prediction, encode_pair, rank_votes, score_task
 from models.losses import IGNORE_LABEL_ID
 from models.losses.loss_heads import ACTLossHead, InferenceLossHead
 from models.varc import VARC
@@ -129,40 +125,3 @@ def test_rejects_border_token_vocab_and_bad_task_token_width():
     with pytest.raises(ValueError, match="puzzle_emb_ndim"):
         VARC(_cfg(puzzle_emb_ndim=16))
 
-
-TASK = {
-    "train": [
-        {"input": [[1, 2], [3, 4]], "output": [[4, 3], [2, 1]]},
-        {"input": [[5, 0, 6]], "output": [[6, 0, 5]]},
-    ],
-    "test": [{"input": [[7, 8], [0, 9]], "output": [[9, 0], [8, 7]]}],
-}
-
-
-def test_aux_tasks_are_distinct_and_invertible():
-    np.random.seed(0)
-    aux = build_aux_tasks("task", TASK, num_aux_tasks=6)
-    assert len(aux) == 6 and aux[0][0] == "task"
-    assert len({name for name, _ in aux}) == 6
-    grid = arc_grid_to_np(TASK["test"][0]["output"])
-    for name, map_grid in aux:
-        inputs, labels = encode_pair(map_grid(grid), map_grid(grid), grid_size=30)
-        assert (labels == IGNORE_LABEL_ID).sum() > 0 and (inputs == 0).sum() > 0
-        # A perfect prediction in the aux task's frame decodes back to the original grid
-        pred = np.where(labels == IGNORE_LABEL_ID, 0, labels)
-        assert np.array_equal(decode_prediction(pred, name, 30), grid)
-
-
-def test_scoring_uses_vote_ranking():
-    label = arc_grid_to_np(TASK["test"][0]["output"])
-    wrong = arc_grid_to_np([[1]])
-    grids = {grid_hash(label): label, grid_hash(wrong): wrong}
-    cfg = VARCTTTConfig(
-        checkpoint="x", use_ema=True, num_aux_tasks=2, epochs=1, warmup_epochs=0, batch_size=1, lr=1e-3, betas=(0.9, 0.999),
-        weight_decay=0.0, ttt_runs_per_task=1, num_views=1, eval_batch_size=1, pass_Ks=[1, 2], submission_K=2, seed=0,
-    )
-    votes = [Counter({grid_hash(wrong): 3, grid_hash(label): 2})]
-    assert rank_votes(votes[0])[0] == grid_hash(wrong)
-    result = score_task(TASK, votes, grids, cfg)
-    assert result["pass"] == {"1": 0.0, "2": 1.0}
-    assert result["test"][0]["attempts"] == [wrong.tolist(), label.tolist()]

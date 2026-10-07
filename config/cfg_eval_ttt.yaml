@@ -1,0 +1,28 @@
+# Entry config for evaluate_ttt.py: per-task test-time training on an ARC checkpoint, then the checkpoint's own evaluators.
+# The ttt group (config/ttt/*.yaml) holds a TTT recipe; pick one with ttt=<name>.
+# Every TTTConfig field is declared here so it can be overridden from the CLI without a leading +.
+defaults:
+  - _self_
+  - ttt: varc
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false # keep relative checkpoint and dataset paths relative to where evaluate_ttt.py was launched
+
+checkpoint: null
+suffix: ttt
+output_dir: null
+task_ids: null
+max_tasks: null
+
+num_aux_tasks: 1
+epochs: 1
+warmup_epochs: 0
+ttt_runs_per_task: 1
+num_views: 1
+train_overrides: {}
+seed: 0
+
+# Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it
+wandb_mode: null

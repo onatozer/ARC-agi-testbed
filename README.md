@@ -170,6 +170,13 @@ scripts/eval.sh <checkpoint-path> [eval=<eval_cfg>] [evaluate.py overrides...]
 ``` 
 If the checkpoint was trained with W&B on, the eval metrics are also logged to that same run under `eval/<suffix>/...`, at the checkpoint's step (pass `wandb_mode=disabled` to skip). That run has to have ended (finished, crashed or killed): resuming it while training is still logging to it would clobber its history, so for a still-running run, and for checkpoints without a W&B run, the metrics are only saved to `<run_dir>/eval_preds/`.
 
+evaluate_ttt.py does per-task test-time training before evaluating, for any architecture trained on an ARC-AGI build. It is a hydra script too (config/cfg_eval_ttt.yaml); pick the TTT recipe with `ttt=<name>` (a file in config/ttt, varc by default). Each eval task is turned into its own small dataset (the task plus `num_aux_tasks - 1` augmentations), trained on from the checkpoint with pretrain.py's training step (`train_overrides` sets PretrainConfig fields such as `lr`), and scored with the checkpoint's evaluators, which vote across the augmentations, `num_views` eval passes and `ttt_runs_per_task` runs
+```bash
+python evaluate_ttt.py checkpoint=<checkpoint-path> [ttt=<ttt_cfg>] [epochs=50 train_overrides.lr=1e-4 ...]
+torchrun --nproc_per_node=<gpus> evaluate_ttt.py checkpoint=<checkpoint-path>  # tasks are split across GPUs
+```
+Results go to `<run_dir>/eval_preds/step_<N>_<suffix>/` (one file per task, so an interrupted run resumes) and, like evaluate.py, to the checkpoint's W&B run under `eval/<suffix>/...`.
+
 downlaod_arifacts.sh downloads the model & dataset paths from hugging-face, containing the following args:
 | Flag                  | Effect                                            |
 | --------------------- | ------------------------------------------------- |
