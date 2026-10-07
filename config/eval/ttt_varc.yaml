@@ -1,0 +1,20 @@
+# @package _global_
+# Test-time training recipe of "ARC Is a Vision Problem!" (VARC, arXiv 2511.14761): 51 aux tasks, 100 epochs with 10 warmup,
+# batch 8, lr 3e-4 with a cosine decay, no weight decay, 2 runs per task and 10 views per aux task (510 views) for voting.
+# The paper uses Adam on everything; here the weights use the checkpoint's optimizer and the puzzle embeddings SignSGD.
+suffix: ttt_varc
+
+num_aux_tasks: 51
+epochs: 100
+warmup_epochs: 10
+ttt_runs_per_task: 2
+num_views: 10
+
+train_overrides:
+  global_batch_size: 8
+  lr: 3e-4
+  lr_min_ratio: 0.0
+  weight_decay: 0.0
+  beta1: 0.9
+  beta2: 0.999
+  ema: false

@@ -43,3 +43,22 @@ class EvalConfig(pydantic.BaseModel):
     convergence_window: int = 3
     convergence_vis_plots: List[str] = Field(default_factory=list)
     wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run
+
+
+class TTTConfig(pydantic.BaseModel):
+    """evaluate_ttt.py: per-task test-time training on an ARC checkpoint, then the checkpoint's own evaluators."""
+
+    checkpoint: str
+    suffix: str
+    output_dir: Optional[str] = None  # None: <run_dir>/eval_preds/step_<N>_<suffix>
+    task_ids: Optional[List[str]] = None
+    max_tasks: Optional[int] = None
+
+    num_aux_tasks: int  # the task itself + (num_aux_tasks - 1) dihedral/color augmentations, each with its own puzzle embedding
+    epochs: int  # passes over every aux task's demos
+    warmup_epochs: int
+    ttt_runs_per_task: int  # independent runs whose votes are pooled
+    num_views: int  # eval passes per run, pooled; > 1 only helps models with random views (e.g. VARC's canvas)
+    train_overrides: Dict[str, Any] = Field(default_factory=dict)  # PretrainConfig fields for the TTT training, e.g. lr
+    seed: int = 0
+    wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

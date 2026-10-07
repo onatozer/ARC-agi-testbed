@@ -1,0 +1,29 @@
+# VARC baseline, "ARC Is a Vision Problem!" (arXiv 2511.14761): ViT on a scaled/translated 64x64 canvas.
+# Defaults are the paper's ViT-18M. Per-task test-time training: evaluate_ttt.py (eval=ttt_varc, the default recipe).
+#
+# The paper's offline training hyperparameters, as top-level overrides:
+#   arch=varc lr=3e-4 lr_min_ratio=0.0 weight_decay=0 beta1=0.9 beta2=0.999 global_batch_size=32 lr_warmup_steps=<~10% of steps>
+# Deviations from the paper that come from the shared pipeline:
+#   - AdamAtan2 on the network and SignSGD (puzzle_emb_lr) on the task tokens, where the paper uses Adam on everything
+#   - ACTLossHead normalizes the loss per sequence, and its 0.5*BCE(q_halt) term adds a constant (~0.35) with no gradient
+#   - the dataset's EOS row/column is the [BD] border, so it is scaled with the grid instead of staying 1 pixel wide
+name: varc@VARC
+short_name: VARC
+loss:
+  name: losses@ACTLossHead
+  loss_type: softmax_cross_entropy
+
+halt_max_steps: 1 # one forward pass per example
+
+image_size: 64 # canvas side
+patch_size: 2
+hidden_size: 512
+num_layers: 10
+num_heads: 8
+mlp_dim: 512
+dropout: 0.1
+rope_theta: 10000.0
+task_emb_init_std: 0.02
+
+puzzle_emb_ndim: ${.hidden_size} # one task token per puzzle identifier; 0 disables it
+forward_dtype: bfloat16
