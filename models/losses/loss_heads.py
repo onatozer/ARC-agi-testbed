@@ -461,14 +461,9 @@ class ACTLossHeadGRAM(ACTLossHead):
 
         # Compute the losses from each of the sources
         lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
-        # Per-position KL summed over hidden dims; mean over positions, sum over the batch like lm_loss
-        kl_loss = kl_balanced(
-            mu_post = outputs["mu_post"],
-            var_post = outputs["var_post"],
-            mu_prior = outputs["mu_prior"],
-            var_prior = outputs["var_prior"],
-            alpha=self.kl_alpha,
-        ).mean(-1).sum()
+
+        # Kl loss is computed within the actual forward passes of the GRAM
+        kl_loss = outputs["kl_loss"]
 
         q_halt_loss = F.binary_cross_entropy_with_logits(
             outputs["q_halt_logits"],
@@ -477,7 +472,7 @@ class ACTLossHeadGRAM(ACTLossHead):
         )
         # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
         lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
-        total_loss = lm_loss + 0.5 * q_halt_loss + self.kl_beta*kl_loss + lprm_loss
+        total_loss = lm_loss + 0.5 * q_halt_loss + kl_loss
 
         metrics["lm_loss"] = lm_loss.detach()
         metrics["q_halt_loss"] = q_halt_loss.detach()

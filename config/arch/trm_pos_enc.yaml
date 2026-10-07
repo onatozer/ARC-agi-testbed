@@ -17,7 +17,7 @@ L_init_std: 1.0
 random_initialization: true
   
 pos_encodings: absolute_2d_ope # rope, learned, absolute (1D sinusoid), absolute_2d (ViTARC 2D sinusoid, arXiv 2410.06405), or absolute_2d_ope
-pe_mixer: true # ViTARC PEmixer: learned per-dim weights alpha*tok + beta*pos (needs learned/absolute/absolute_2d)
+pe_mixer: true # ViTARC PEmixer: learned per-dim weights alpha*tok + beta*pos (needs learned/absolute/absolute_2d*)
 alibi_2d: true # ViTARC 2D-RPE (arXiv 2410.06405): per-head -r * Manhattan-distance attention bias; disables the flash SDPA kernel
 
 visual_attention: false

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from models.losses import IGNORE_LABEL_ID
+from models.losses.base import kl_balanced
 from ..layers import (
     CastedEmbedding,
     CastedLinear,
@@ -86,13 +87,25 @@ class GRAM_Inner(InnerNetwork):
         """Samples the stochastic guidance eps for u_t: from the posterior q(eps | u_t, y) while training,
         otherwise from the prior p(eps | u_t)."""
         mu_prior, var_prior = self.prior_head(u_t)
-        if self.training:
+
+        # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
+        # Otherwise the posterior will 'leak' in the main trajectory without having to pay the KL div cost and crazy overfitting occurs
+        if torch.is_grad_enabled():
             mu_post, var_post = self.posterior_head(u_t, y)
             eps = mu_post + torch.randn_like(u_t) * var_post.sqrt()
-            return eps, {"mu_prior": mu_prior, "var_prior": var_prior, "mu_post": mu_post, "var_post": var_post}
+
+            kl_loss = kl_balanced(
+                mu_post = mu_post,
+                var_post = var_post,
+                mu_prior = mu_prior,
+                var_prior = var_prior,
+                alpha=self.config.grad_prior,
+            ).mean(-1).sum() * self.config.kl_stenght
+
+            return eps, kl_loss
 
         eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
-        return eps, {"mu_prior": mu_prior, "var_prior": var_prior}
+        return eps, 0
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
@@ -102,7 +115,7 @@ class GRAM_Inner(InnerNetwork):
 
         # Run the recursion cycle for H_cycle -1 times without the gadient
         with torch.no_grad():
-            for _ in range(self.config.H_cycles - 1):
+            for _ in range(self.config.H_cycles - self.config.supervision_steps):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
@@ -112,13 +125,17 @@ class GRAM_Inner(InnerNetwork):
                 eps, _ = self._guidance(u_t, y)
                 z_H = u_t + eps
 
-        # Finally, last recursion cycle is ran with the gradient attached
-        for _ in range(self.config.L_cycles):
-            z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
-        u_t = self.L_level(z_H, z_L, **seq_dict)
-        eps, guidance_stats = self._guidance(u_t, y)
-        z_H = u_t + eps
+        kl_loss = 0
+        for _ in range(self.config.supervision_steps):
+            for __ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+
+            u_t = self.L_level(z_H, z_L, **seq_dict)
+            eps, guidance_loss = self._guidance(u_t, y)
+            kl_loss += guidance_loss
+
+            z_H = u_t + eps
 
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
@@ -132,7 +149,7 @@ class GRAM_Inner(InnerNetwork):
             "q_halt_logits": q[..., 0],
             "lprm_value": torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1),
             "logits": logits,
-            **guidance_stats,
+            "kl_loss": kl_loss,
         }
 
         return LatentCarry(z_H, z_L), info
