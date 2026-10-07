@@ -1,3 +1,4 @@
+# @package _global_
 # 2048-sample Sudoku smoke eval:
 # global_batch_size (128) * max_eval_steps (16) = 2048 puzzles.
 halt_max_steps: 64

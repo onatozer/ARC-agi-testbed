@@ -7,9 +7,11 @@ import json
 import os
 import random
 
+import hydra
 import numpy as np
 import torch
 import torch.distributed as dist
+import wandb
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from config.schema import PretrainConfig
@@ -79,20 +81,6 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().tolist()
     return str(value)
-
-
-def _load_eval_config(raw: EvalConfig) -> EvalConfig:
-    if raw.eval_yaml is None:
-        return raw
-    path = Path(raw.eval_yaml)
-    if not path.exists():
-        colored_exception(FileNotFoundError, f"evaluation yaml not found: {path}")
-    base = OmegaConf.load(path)
-    cli = OmegaConf.create(raw.model_dump(mode="python", exclude_unset=True))
-    data = OmegaConf.to_container(OmegaConf.merge(base, cli), resolve=True)
-    if not isinstance(data, dict):
-        colored_exception(ValueError, "evaluation yaml must contain a dict")
-    return EvalConfig(**data)
 
 
 def _load_checkpoint(path: str) -> Tuple[Dict[str, Any], str]:
@@ -239,6 +227,32 @@ def _init_dist() -> Tuple[int, int, Optional[dist.ProcessGroup]]:
     return rank, world, dist.new_group(backend="gloo")
 
 
+def _attach_wandb_run(eval_cfg: EvalConfig, ckpt: Dict[str, Any], run_dir: str) -> Optional[Any]:
+    """Resumes the W&B run that trained the checkpoint (its id/project/entity are saved in the checkpoint).
+    Returns None, so results are only saved to disk, when logging is disabled, that run can't be found, or it's
+    still running: a second process resuming a live run would write over its history."""
+    if str(eval_cfg.wandb_mode or "").lower() in ("disabled", "disable"):
+        return None
+    meta = ckpt.get("wandb") or {}
+    if not meta.get("id") or not meta.get("project"):
+        rank_zero_print_warning("checkpoint names no W&B run (trained with W&B disabled?); eval metrics are saved to disk only")
+        return None
+    run_path = "/".join(str(p) for p in (meta.get("entity"), meta["project"], meta["id"]) if p)
+    try:
+        state = wandb.Api().run(run_path).state
+    except Exception as exc:
+        rank_zero_print_warning(f"W&B run {run_path} not found ({exc}); eval metrics are saved to disk only")
+        return None
+    if state == "running":
+        rank_zero_print_warning(f"W&B run {run_path} is still running; eval metrics are saved to disk only (re-run once it ends to log them)")
+        return None
+    run = wandb.init(id=meta["id"], project=meta["project"], entity=meta.get("entity"), resume="must", dir=run_dir)
+    # Plot against the checkpoint's training step, like the training run's own metrics
+    run.define_metric("eval/*", step_metric="step")
+    rank_zero_print_info(f"logging eval metrics to W&B run {run_path} under eval/")
+    return run
+
+
 def _run_checkpoint(eval_cfg: EvalConfig, ckpt_cfg: CheckpointEvalConfig, rank: int, world: int, cpu_group: Optional[dist.ProcessGroup]) -> None:
     ckpt, ckpt_path = _load_checkpoint(ckpt_cfg.checkpoint)
     config = _base_config(eval_cfg, ckpt, ckpt_path, rank)
@@ -258,6 +272,8 @@ def _run_checkpoint(eval_cfg: EvalConfig, ckpt_cfg: CheckpointEvalConfig, rank: 
     if "DISABLE_COMPILE" not in os.environ:
         train_state_eval.model = torch.compile(train_state_eval.model, dynamic=False)  # type: ignore[assignment]
 
+    # The training run's directory (checkpoints live in <run_dir>/checkpoints), so W&B's local files stay with it
+    run = _attach_wandb_run(eval_cfg, ckpt, str(Path(config.checkpoint_path).parent)) if rank == 0 else None
     combos = _param_combos(eval_cfg.shared_param_iter, eval_cfg.param_iter, ckpt_cfg.param_iter)
     for idx, combo in enumerate(combos):
         run_config = config.model_copy(deep=True)
@@ -294,6 +310,13 @@ def _run_checkpoint(eval_cfg: EvalConfig, ckpt_cfg: CheckpointEvalConfig, rank: 
             name = f"eval_metrics_step_{train_state_eval.step}"
             _write_metrics(eval_dir, name, rows, flat, elapsed, run_config)
             print_info(f"saved {eval_dir / (name + '.json')}")
+            if run is not None:
+                # One sub-section per eval setting, so different sweeps of the same checkpoint don't overwrite each other
+                section = f"eval/{suffix}" if len(combos) == 1 else f"eval/{suffix}_{label}"
+                run.log({**{f"{section}/{k}": v for k, v in flat.items()}, "step": train_state_eval.step})
+
+    if run is not None:
+        run.finish()
 
 
 def _init_state(config: PretrainConfig, rank: int, world: int):
@@ -318,12 +341,9 @@ def _init_state(config: PretrainConfig, rank: int, world: int):
     return init_train_state(config, train_metadata, rank=rank, world_size=world), eval_loader, eval_metadata
 
 
-def launch() -> None:
-    cli = OmegaConf.to_container(OmegaConf.from_cli(), resolve=True)
-    if not isinstance(cli, dict):
-        colored_exception(ValueError, "CLI arguments must parse to a dict")
-    cli = {str(k).lstrip("-"): v for k, v in cli.items()}
-    eval_cfg = _load_eval_config(EvalConfig(**cli))
+@hydra.main(config_path="config", config_name="cfg_eval", version_base=None)
+def launch(hydra_config: DictConfig) -> None:
+    eval_cfg = EvalConfig(**OmegaConf.to_container(hydra_config, resolve=True))  # type: ignore[arg-type]
     rank, world, cpu_group = _init_dist()
 
     checkpoints: List[CheckpointEvalConfig] = list(eval_cfg.checkpoint_list)
