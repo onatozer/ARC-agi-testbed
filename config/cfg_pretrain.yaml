@@ -10,7 +10,6 @@ arch:
   puzzle_emb_ndim: 0 # Puzzle embedding thing only exists for arc dataset and should be set to 0 in all other cases
   board_height: ${dataset.grid_size}
   board_width: ${dataset.grid_size}
-  supervision_steps: 1
   activation_function: swiglu
   
 
