@@ -1,9 +1,9 @@
 # Entry config for evaluate_ttt.py: per-task test-time training on an ARC checkpoint, then the checkpoint's own evaluators.
-# The ttt group (config/ttt/*.yaml) holds a TTT recipe; pick one with ttt=<name>.
+# The eval group (config/eval/*.yaml) holds the TTT recipe (ttt_*.yaml); pick one with eval=<name>.
 # Every TTTConfig field is declared here so it can be overridden from the CLI without a leading +.
 defaults:
   - _self_
-  - ttt: varc
+  - eval: ttt_varc
 
 hydra:
   output_subdir: null

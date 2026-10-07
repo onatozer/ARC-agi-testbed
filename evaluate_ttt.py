@@ -7,7 +7,7 @@ For every eval task, starting from the checkpoint's weights (EMA ones if it has 
   3. evaluate num_views times with evaluators/eval_fn.evaluate. The evaluators vote across the aux tasks (after undoing
      each augmentation), the views and the ttt_runs_per_task runs, since ARC's aggregated_voting pools them.
 
-    python evaluate_ttt.py checkpoint=<run_dir>/checkpoints/step_N_<id>.pth [ttt=varc] [epochs=50 train_overrides.lr=1e-4 ...]
+    python evaluate_ttt.py checkpoint=<run_dir>/checkpoints/step_N_<id>.pth [eval=ttt_varc] [epochs=50 train_overrides.lr=1e-4 ...]
     torchrun --nproc_per_node=<gpus> evaluate_ttt.py checkpoint=...
 
 Tasks are sharded across ranks with no process group, since tasks are independent and finish at different times.
