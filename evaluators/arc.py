@@ -38,7 +38,7 @@ def _crop(grid: np.ndarray, grid_size: int, grid_width: int):
 
 
 class ARC:
-    required_outputs = {"inputs", "puzzle_identifiers", "q_halt_logits", "preds"}  # q_halt_logits is optional
+    required_outputs = {"inputs", "puzzle_identifiers", "q_halt_logits", "preds"}
     
     def __init__(self, data_path: str, 
         eval_metadata: PuzzleDatasetMetadata, 
@@ -82,10 +82,8 @@ class ARC:
                         q_values = v.to(torch.float64).sigmoid().cpu()
                     else:
                         outputs[k] = v.cpu()
-
-        # Models without a halt head (GRAM) give no q, so equally-voted predictions are left unranked instead of ranked by q
-        if q_values is None:
-            q_values = torch.zeros(outputs["puzzle_identifiers"].shape[0], dtype=torch.float64)
+                        
+        assert q_values is not None
 
         # Remove padding from outputs
         mask = outputs["puzzle_identifiers"] != self.blank_identifier_id

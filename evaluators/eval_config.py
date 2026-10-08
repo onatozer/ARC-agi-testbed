@@ -36,7 +36,7 @@ class EvalConfig(pydantic.BaseModel):
     force_rerun: bool = False
     wandb_run_name: Optional[str] = Field(default=None, alias="name")
     wandb_tags: Optional[List[str]] = None
-    loss_head_name: Optional[str] = "losses@InferenceLossHead"
+    loss_head_name: Optional[str] = None  # None: the training loss head's inference_head_name, else losses@InferenceLossHead
     different_init: Optional[int] = None
     different_init_reset_std: float = 1.0
     convergence_top_k: Optional[int] = None

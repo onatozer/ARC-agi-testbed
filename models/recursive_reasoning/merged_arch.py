@@ -538,6 +538,8 @@ class TRMModel(nn.Module):
         counter = torch.zeros_like(steps) if carry.halt_counter is None else torch.where(reset, torch.zeros_like(steps), carry.halt_counter.to(device=device))
         prev_latent = inner_carry
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
+        q_halt = fpass_info["q_halt_logits"]
+
 
         with torch.no_grad():
             # NFE = L_level (the shared block f) evaluations; inners with a variable count (e.g. DEQ solvers) report it
@@ -551,37 +553,30 @@ class TRMModel(nn.Module):
                 fpass_info[f"{name.replace('_', '')}_rel_residual"] = d_z / z.flatten(1).norm(dim=1).clamp_min(1e-8)
 
         
+        # This section determines which puzzles in the batch to halt on based on if it's either
+        # 1. Reached the max number of steps
+        # 2. If the q-values from the ACT head say it's better to halt than to continue
         with torch.no_grad():
             steps = steps + 1
-            halted, counter = self._halt(steps, counter, fpass_info)
+            is_last = steps >= self.config.halt_max_steps # Condition 1
+            halted = is_last
+
+            if self.config.halt_max_steps > 1 and (self.training or self.config.act_inference) and not self.config.disable_act_halt:
+                # TRM-style ACT: halt once the predicted probability of being correct is high enough (no continue head)
+                signal = q_halt > float(self.config.halt_threshold)
+
+                if self.config.halt_confirm_steps > 0:
+                    mode = str(self.config.halt_confirm_mode or "consecutive").lower()
+                    counter = torch.where(signal, counter + 1, counter if mode in {"cumulative", "accumulate", "total"} else torch.zeros_like(counter))
+                    halted = halted | (counter >= 1 + int(self.config.halt_confirm_steps))
+                else:
+                    counter = torch.where(signal, counter + 1, torch.zeros_like(counter))
+                    halted = halted | signal
+
+                # Exploration (training only): with some probability, force a random minimum number of steps before halting
+                if self.training:
+                    min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
+                    halted = halted & (steps >= min_steps)
 
         return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=counter, nfe=nfe), fpass_info
-
-    def _halt(self, steps: torch.Tensor, counter: torch.Tensor, fpass_info: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Which puzzles in the batch halt after this supervision step (steps already counts it), based on if it's either
-        1. Reached the max number of steps
-        2. If the q-values from the ACT head say it's better to halt than to continue
-        Returns (halted, updated halt counter)."""
-        is_last = steps >= self.config.halt_max_steps # Condition 1
-        halted = is_last
-
-        if self.config.halt_max_steps > 1 and (self.training or self.config.act_inference) and not self.config.disable_act_halt:
-            q_halt = fpass_info["q_halt_logits"]
-            # TRM-style ACT: halt once the predicted probability of being correct is high enough (no continue head)
-            signal = q_halt > float(self.config.halt_threshold)
-
-            if self.config.halt_confirm_steps > 0:
-                mode = str(self.config.halt_confirm_mode or "consecutive").lower()
-                counter = torch.where(signal, counter + 1, counter if mode in {"cumulative", "accumulate", "total"} else torch.zeros_like(counter))
-                halted = halted | (counter >= 1 + int(self.config.halt_confirm_steps))
-            else:
-                counter = torch.where(signal, counter + 1, torch.zeros_like(counter))
-                halted = halted | signal
-
-            # Exploration (training only): with some probability, force a random minimum number of steps before halting
-            if self.training:
-                min_steps = (torch.rand_like(q_halt) < self.config.halt_exploration_prob) * torch.randint_like(steps, low=2, high=self.config.halt_max_steps + 1)
-                halted = halted & (steps >= min_steps)
-
-        return halted, counter
 

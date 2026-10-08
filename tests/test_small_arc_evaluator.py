@@ -2,7 +2,6 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 import torch
 
 from dataset.build_arc_dataset import np_grid_to_seq_translational_augment
@@ -23,8 +22,7 @@ def _evaluator(tmp_path, test_puzzles):
     return SmallARC(str(tmp_path), metadata, pass_Ks=(1, 2)), identifiers
 
 
-@pytest.mark.parametrize("with_q", [True, False])  # models without a halt head (GRAM) give no q_halt_logits
-def test_per_source_pass_at_k(tmp_path, with_q):
+def test_per_source_pass_at_k(tmp_path):
     # miniarc puzzles are predicted correctly, arc1_eval puzzles get a wrong grid
     test_puzzles = {"miniarc/a": _puzzle(0), "miniarc/b": _puzzle(1), "arc1_eval/c": _puzzle(2)}
     evaluator, identifiers = _evaluator(tmp_path, test_puzzles)
@@ -42,7 +40,7 @@ def test_per_source_pass_at_k(tmp_path, with_q):
     evaluator.begin_eval()
     evaluator.update_batch(
         {"inputs": torch.tensor(np.stack(inputs)), "puzzle_identifiers": torch.tensor(ids)},
-        {"preds": torch.tensor(np.stack(preds)), **({"q_halt_logits": torch.zeros(len(ids))} if with_q else {})},
+        {"preds": torch.tensor(np.stack(preds)), "q_halt_logits": torch.zeros(len(ids))},
     )
     results = evaluator.result(None, rank=0, world_size=1)
 

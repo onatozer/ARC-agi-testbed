@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 import math
 
 import torch
@@ -15,8 +15,10 @@ from ..layers import (
 )
 from .merged_arch import (
     LatentCarry,
+    ModelCarry,
     InnerNetwork,
     _add_puzzle_emb_positions,
+    _reset_rows,
     TRMModel,
 )
 
@@ -82,7 +84,7 @@ class GRAM_Inner(InnerNetwork):
         )
         # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H
         self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)
-        # No halt head: every puzzle runs all halt_max_steps supervision steps (see GRAM._halt)
+        # No halt head: every puzzle runs all halt_max_steps supervision steps (see GRAM.forward)
         del self.q_head
 
         if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
@@ -166,6 +168,41 @@ class GRAM(TRMModel):
         print("GRAM architecture initialized")
         self.inner = GRAM_Inner(_add_puzzle_emb_positions(config))
 
-    def _halt(self, steps: torch.Tensor, counter: torch.Tensor, fpass_info: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        # No ACT: a puzzle halts only after halt_max_steps supervision steps, in training and at eval
-        return steps >= self.config.halt_max_steps, counter
+    def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
+        """TRMModel.forward without ACT: there's no halt head, so a puzzle halts only after halt_max_steps
+        supervision steps, in training and at eval."""
+        del kwargs
+
+        if carry is None:
+            carry = self.initial_carry(batch)
+
+        # Replace the halted puzzles in the batch with new ones
+        device = batch["inputs"].device
+        reset = carry.halted.to(device=device)
+        inner_carry, current_data = _reset_rows(
+            inner = self.inner,
+            reset_flag = reset,
+            inner_carry = LatentCarry(carry.inner_carry.z_H.to(device=device), carry.inner_carry.z_L.to(device=device)),
+            current_data = carry.current_data,
+            batch = batch,
+            device = device,
+        )
+
+        steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
+        prev_latent = inner_carry
+        inner_carry, fpass_info = self.inner(inner_carry, current_data)
+
+        with torch.no_grad():
+            # NFE = L_level (the shared block f) evaluations
+            prev_nfe = carry.nfe.to(device=device) if carry.nfe is not None else torch.zeros_like(steps)
+            nfe = torch.where(reset, torch.zeros_like(prev_nfe), prev_nfe) + self.config.H_cycles * (self.config.L_cycles + 1)
+            # normalised residuals over this supervision step: ||z^t - z^(t-1)|| / ||z^t||, for z_H and z_L
+            for name in ("z_H", "z_L"):
+                z, z_prev = getattr(inner_carry, name).float(), getattr(prev_latent, name).float()
+                d_z = (z - z_prev).flatten(1).norm(dim=1)
+                fpass_info[f"{name.replace('_', '')}_rel_residual"] = d_z / z.flatten(1).norm(dim=1).clamp_min(1e-8)
+
+            steps = steps + 1
+            halted = steps >= self.config.halt_max_steps
+
+        return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=torch.zeros_like(steps), nfe=nfe), fpass_info

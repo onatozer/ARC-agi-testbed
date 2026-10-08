@@ -20,6 +20,7 @@ from evaluators.eval_fn import evaluate
 from pretrain import create_dataloader, create_evaluators, init_train_state
 from utils.checkpoint import load_ema, load_model_state_dict
 from utils.env import get_env
+from utils.functions import load_model_class
 from utils.printing import colored_exception, print_info, rank_zero_print_info, rank_zero_print_warning
 
 
@@ -109,8 +110,9 @@ def _base_config(eval_cfg: EvalConfig, ckpt: Dict[str, Any], ckpt_path: str, ran
     config.checkpoint_path = str(Path(ckpt_path).parent)
     config.eval_save_outputs = eval_cfg.save_outputs
     config.eval_save_carry = eval_cfg.save_carry
-    if eval_cfg.loss_head_name:
-        config.arch.loss.name = eval_cfg.loss_head_name
+    # Default eval head: the one the training loss head names (GRAM, which has no halt head), else InferenceLossHead
+    train_head_cls = load_model_class(config.arch.loss.name)
+    config.arch.loss.name = eval_cfg.loss_head_name or getattr(train_head_cls, "inference_head_name", "losses@InferenceLossHead")
     if eval_cfg.global_batch_size is not None:
         config.global_batch_size = eval_cfg.global_batch_size
     if eval_cfg.seed is not None:

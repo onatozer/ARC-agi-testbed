@@ -910,8 +910,11 @@ def launch(hydra_config: DictConfig):
                     train_state.ema_helper.swap(train_state.model)
                 try:
                     # Evaluate the bare model under the inference loss head, which scores each puzzle at the step it halts
-                    eval_model = getattr(train_state.model, "_orig_mod", train_state.model).model
-                    train_state_eval = replace(train_state, model=InferenceLossHead(eval_model, **config.arch.loss.__pydantic_extra__))
+                    train_head = getattr(train_state.model, "_orig_mod", train_state.model)
+                    eval_model = train_head.model
+                    # A loss head can name its own eval head (GRAM, which has no halt head); otherwise InferenceLossHead
+                    eval_head_cls = load_model_class(train_head.inference_head_name) if hasattr(train_head, "inference_head_name") else InferenceLossHead
+                    train_state_eval = replace(train_state, model=eval_head_cls(eval_model, **config.arch.loss.__pydantic_extra__))
                     train_state_eval.model.eval()
 
                     eval_metrics, eval_time_passed = evaluate(
