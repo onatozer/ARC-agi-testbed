@@ -24,7 +24,7 @@ shared_param_iter: {}
 description: null
 max_eval_steps: null
 force_rerun: false
-loss_head_name: null # eval loss head; null uses the one the training loss head names, else losses@InferenceLossHead
+loss_head_name: null # eval loss head override; null uses the checkpoint's arch.loss.inference_name
 different_init: null
 different_init_reset_std: 1.0
 convergence_top_k: null

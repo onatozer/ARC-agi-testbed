@@ -3,7 +3,6 @@ import torch
 
 from models.losses import IGNORE_LABEL_ID
 from models.losses.loss_heads import ACTLossHead, ACTLossHeadGRAM, InferenceLossHeadGRAM
-from utils.functions import load_model_class
 from models.recursive_reasoning.gram import GRAM
 from models.recursive_reasoning.merged_arch import TRMModel
 
@@ -79,8 +78,6 @@ def test_gram_has_no_halt_head_and_runs_every_supervision_step():
 
 def test_gram_inference_loss_head_needs_no_halt_head():
     model, batch = _gram_head()
-    # pretrain.py / evaluate.py build the eval head the training head names
-    assert load_model_class(model.inference_head_name) is InferenceLossHeadGRAM
     head = InferenceLossHeadGRAM(model.model, loss_type="stablemax_cross_entropy")
     head.eval()
     carry = head.initial_carry(batch)

@@ -406,8 +406,6 @@ class ACTLossHeadRoot(nn.Module):
 
 
 class ACTLossHeadGRAM(ACTLossHead):
-    # Eval-time head for this model (pretrain.py / evaluate.py use it instead of InferenceLossHead)
-    inference_head_name = "losses.loss_heads@InferenceLossHeadGRAM"
 
     # The KL settings (kl_grad_prior, kl_strength) are arch config: GRAM computes its beta-weighted KL in the forward
     def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:

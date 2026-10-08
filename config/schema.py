@@ -12,6 +12,9 @@ class LossConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     name: str
+    # Loss head used for evaluation (pretrain.py's training-time eval, evaluate.py, evaluate_ttt.py). The default only
+    # covers configs saved before this field existed; the arch yamls state it explicitly
+    inference_name: str = "losses@InferenceLossHead"
 
 
 class ArchConfig(BaseModel):

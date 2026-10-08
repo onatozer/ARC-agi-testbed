@@ -7,6 +7,7 @@ short_name: GRAM
 
 loss:
   name: losses.loss_heads@ACTLossHeadGRAM
+  inference_name: losses.loss_heads@InferenceLossHeadGRAM # loss head used for eval: GRAM has no halt head
   loss_type: stablemax_cross_entropy
   
 
