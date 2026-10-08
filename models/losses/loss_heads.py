@@ -445,9 +445,21 @@ class ACTLossHeadRoot(nn.Module):
 class LossHeadGRAM(MaxStepsLossHead):
     """GRAM has no halt head: MaxStepsLossHead plus its beta-weighted KL (computed in the forward) and the LPRM loss."""
 
-    def compute_losses(self, *, outputs: Dict[str, torch.Tensor], seq_is_correct: torch.Tensor, **kwargs: Any) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        total_loss, losses = super().compute_losses(outputs=outputs, seq_is_correct=seq_is_correct, **kwargs)
-        losses["kl_loss"] = outputs["kl_loss"]
+    def compute_losses(
+        self,
+        *,
+        outputs: Dict[str, torch.Tensor],
+        labels: torch.Tensor,
+        mask: torch.Tensor,
+        loss_divisor: torch.Tensor,
+        seq_is_correct: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """Returns (total loss, the unweighted loss terms to log): lm + KL + 0.5 * LPRM."""
+        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
+        # Already beta-weighted: GRAM computes the KL in its forward, on the grad cycles' posterior samples
+        kl_loss = outputs["kl_loss"]
         # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
-        losses["lprm_loss"] = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
-        return total_loss + losses["kl_loss"] + .5*losses["lprm_loss"], losses
+        lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
+
+        total_loss = lm_loss + kl_loss + 0.5 * lprm_loss
+        return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}

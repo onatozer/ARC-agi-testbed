@@ -40,6 +40,7 @@ class TRMConfig(BaseModel):
     vocab_size: int
     H_cycles: int
     L_cycles: int
+    grad_cycles: int = 1  # how many of the H_cycles carry the gradient; 1 = TRM's original H_cycles - 1 no-grad cycles
     H_layers: int
     L_layers: int
     hidden_size: int
