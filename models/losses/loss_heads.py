@@ -442,7 +442,7 @@ class ACTLossHeadRoot(nn.Module):
         return new_carry, total, metrics, detached_outputs, new_carry.halted.all()
 
 
-class ACTLossHeadGRAM(MaxStepsLossHead):
+class LossHeadGRAM(MaxStepsLossHead):
     """GRAM has no halt head: MaxStepsLossHead plus its beta-weighted KL (computed in the forward) and the LPRM loss."""
 
     def compute_losses(self, *, outputs: Dict[str, torch.Tensor], seq_is_correct: torch.Tensor, **kwargs: Any) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -450,4 +450,4 @@ class ACTLossHeadGRAM(MaxStepsLossHead):
         losses["kl_loss"] = outputs["kl_loss"]
         # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
         losses["lprm_loss"] = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
-        return total_loss + losses["kl_loss"] + losses["lprm_loss"], losses
+        return total_loss + losses["kl_loss"] + .5*losses["lprm_loss"], losses

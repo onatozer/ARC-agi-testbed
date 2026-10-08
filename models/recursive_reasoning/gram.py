@@ -145,6 +145,8 @@ class GRAM_Inner(InnerNetwork):
 
             z_H = u_t + eps
 
+        z_H = rms_norm(z_H, self.config.rms_norm_eps)
+        
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
             logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
