@@ -351,15 +351,16 @@ class InnerNetwork(nn.Module):
 
         # Run the recursion cycle for H_cycle -1 times without the gadient
         with torch.no_grad():
-            for _ in range(self.config.H_cycles - 1):
+            for _ in range(self.config.H_cycles - self.config.grad_cycles):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
                 z_H = self.L_level(z_H, z_L, **seq_dict)
 
-        # Finally, last recursion cycle is ran with the gradient attached
-        for _ in range(self.config.L_cycles):
-            z_L = self.L_level(z_L, z_H + x, **seq_dict)
-        z_H = self.L_level(z_H, z_L, **seq_dict)
+        # Finally, last recursion cycle(s) is ran with the gradient attached
+        for _ in range(self.config.grad_cycles):
+            for __ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            z_H = self.L_level(z_H, z_L, **seq_dict)
 
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:

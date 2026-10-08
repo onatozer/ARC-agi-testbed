@@ -26,6 +26,7 @@ mlp_t: False # use mlp on L instead of transformer
 activation_function: swiglu # swiglu or conv_swiglu (URM's ConvSwiGLU, arXiv 2512.14693)
 conv_kernel: 2 # ConvSwiGLU depthwise conv kernel size
 puzzle_emb_len: 16 # if non-zero, its specified to this value
+grad_cycles: 1 
 
 lambda_: 0.95
 noise_scale: 0 # Setting to 0 to set input injection to effectively 0
