@@ -139,20 +139,48 @@ class ACTLossHead(BaseLossHead):
         count: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
 
+        # Models without a halt head (GRAM) output no q_halt_logits, so they get no q metrics
+        has_q = "q_halt_logits" in outputs
         metrics: Dict[str, torch.Tensor] = {
             "count": count,
             "accuracy": torch.zeros_like(count, dtype=torch.float32),
             "exact_accuracy": torch.zeros_like(count),
-            "halted_q_logits": torch.zeros_like(count),
-            "q_halt_accuracy": torch.zeros_like(count),
-            "q_halt_precision": torch.zeros_like(count, dtype=torch.float32),
-            "q_halt_recall": torch.zeros_like(count, dtype=torch.float32),
             "steps": torch.zeros_like(count, dtype=torch.float32),
             "max_steps": torch.zeros_like(count, dtype=torch.float32),
             "min_steps": torch.full_like(count, float("inf"), dtype=torch.float32),
             "raw_steps": torch.zeros_like(carry.steps, dtype=torch.float32),
         }
+        if has_q:
+            metrics.update({
+                "halted_q_logits": torch.zeros_like(count),
+                "q_halt_accuracy": torch.zeros_like(count),
+                "q_halt_precision": torch.zeros_like(count, dtype=torch.float32),
+                "q_halt_recall": torch.zeros_like(count, dtype=torch.float32),
+            })
         if (count > 0).any():
+            if has_q:
+                metrics.update(
+                    {
+                        "halted_q_logits": torch.where(
+                            valid_metrics,
+                            outputs["q_halt_logits"],
+                            torch.zeros_like(loss_counts, dtype=torch.float32),
+                        ).sum(),
+                        "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
+                        "q_halt_precision": torch.where(
+                            valid_metrics,
+                            ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
+                            / ((outputs["q_halt_logits"] >= 0).to(torch.float32).sum().clamp_min(1)),
+                            0,
+                        ).sum(),
+                        "q_halt_recall": torch.where(
+                            valid_metrics,
+                            ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
+                            / (seq_is_correct.to(torch.float32).sum().clamp_min(1)),
+                            0,
+                        ).sum(),
+                    }
+                )
             metrics.update(
                 {
                     "accuracy": torch.where(
@@ -161,24 +189,6 @@ class ACTLossHead(BaseLossHead):
                         0,
                     ).sum(),
                     "exact_accuracy": (valid_metrics & seq_is_correct).sum(),
-                    "halted_q_logits": torch.where(
-                        valid_metrics,
-                        outputs["q_halt_logits"],
-                        torch.zeros_like(loss_counts, dtype=torch.float32),
-                    ).sum(),
-                    "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
-                    "q_halt_precision": torch.where(
-                        valid_metrics,
-                        ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
-                        / ((outputs["q_halt_logits"] >= 0).to(torch.float32).sum().clamp_min(1)),
-                        0,
-                    ).sum(),
-                    "q_halt_recall": torch.where(
-                        valid_metrics,
-                        ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
-                        / (seq_is_correct.to(torch.float32).sum().clamp_min(1)),
-                        0,
-                    ).sum(),
                     "steps": torch.where(valid_metrics, carry.steps.to(torch.float32), 0).sum(),
                     "max_steps": torch.where(
                         valid_metrics,
@@ -242,6 +252,7 @@ class InferenceLossHead(ACTLossHead):
 
         outputs["preds"] = preds
         mask = (labels != IGNORE_LABEL_ID).to(device)
+        has_q = "q_halt_logits" in outputs
         with torch.no_grad():
             loss_counts = mask.sum(-1)
             loss_divisor = loss_counts.clamp_min(1).unsqueeze(-1)
@@ -262,38 +273,44 @@ class InferenceLossHead(ACTLossHead):
                     torch.zeros_like(loss_counts, dtype=torch.float32),
                 ).sum(),
                 "exact_accuracy": (valid_metrics & seq_is_correct).sum(),
-                "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
-                "q_halt_precision": torch.where(
-                    valid_metrics,
-                    ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
-                    / ((outputs["q_halt_logits"] >= 0).to(torch.float32).sum().clamp_min(1)),
-                    torch.zeros_like(loss_counts, dtype=torch.float32),
-                ).sum(),
-                "q_halt_recall": torch.where(
-                    valid_metrics,
-                    ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
-                    / (seq_is_correct.to(torch.float32).sum().clamp_min(1)),
-                    torch.zeros_like(loss_counts, dtype=torch.float32),
-                ).sum(),
                 "steps": torch.where(valid_metrics, steps.to(torch.float32), torch.zeros_like(loss_counts, dtype=torch.float32)).sum(),
                 **_recursion_metrics(outputs, carry, valid_metrics, seq_is_correct, max_steps, split_quick=False),
             }
+            # Models without a halt head (GRAM) output no q_halt_logits, so they get no q metrics or q loss
+            if has_q:
+                metrics.update({
+                    "q_halt_accuracy": (valid_metrics & ((outputs["q_halt_logits"] > 0) == seq_is_correct)).sum(),
+                    "q_halt_precision": torch.where(
+                        valid_metrics,
+                        ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
+                        / ((outputs["q_halt_logits"] >= 0).to(torch.float32).sum().clamp_min(1)),
+                        torch.zeros_like(loss_counts, dtype=torch.float32),
+                    ).sum(),
+                    "q_halt_recall": torch.where(
+                        valid_metrics,
+                        ((outputs["q_halt_logits"] > 0) & seq_is_correct).to(torch.float32).sum()
+                        / (seq_is_correct.to(torch.float32).sum().clamp_min(1)),
+                        torch.zeros_like(loss_counts, dtype=torch.float32),
+                    ).sum(),
+                })
 
         lm_loss = (
             self.loss_fn(outputs["logits"], labels, ignore_index=IGNORE_LABEL_ID, valid_mask=mask) / loss_divisor
         ).sum()
-        q_halt_loss = F.binary_cross_entropy_with_logits(
-            outputs["q_halt_logits"],
-            seq_is_correct.to(outputs["q_halt_logits"].dtype),
-            reduction="sum",
-        )
         metrics["lm_loss"] = lm_loss.detach()
-        metrics["q_halt_loss"] = q_halt_loss.detach()
+        total_loss = lm_loss
+        if has_q:
+            q_halt_loss = F.binary_cross_entropy_with_logits(
+                outputs["q_halt_logits"],
+                seq_is_correct.to(outputs["q_halt_logits"].dtype),
+                reduction="sum",
+            )
+            metrics["q_halt_loss"] = q_halt_loss.detach()
+            total_loss = total_loss + 0.5 * q_halt_loss
 
         # return_keys=None returns every tensor output (the eval loop holds them per row)
         keys = [k for k, v in outputs.items() if torch.is_tensor(v)] if return_keys is None else return_keys
         detached_outputs = {key: outputs[key].detach() for key in keys if key in outputs}
-        total_loss = lm_loss + 0.5 * q_halt_loss
         metrics["total_loss"] = total_loss.detach()
         finished_mask = carry.halted.to(device)
         if max_steps > 0:
@@ -464,17 +481,12 @@ class ACTLossHeadGRAM(ACTLossHead):
         # Kl loss is computed within the actual forward passes of the GRAM
         kl_loss = outputs["kl_loss"]
 
-        q_halt_loss = F.binary_cross_entropy_with_logits(
-            outputs["q_halt_logits"],
-            seq_is_correct.to(outputs["q_halt_logits"].dtype),
-            reduction="sum",
-        )
         # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
         lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
-        total_loss = lm_loss + 0.5 * q_halt_loss + kl_loss + lprm_loss
+        # No halt head, so no q_halt loss: GRAM runs every puzzle for halt_max_steps
+        total_loss = lm_loss + kl_loss + lprm_loss
 
         metrics["lm_loss"] = lm_loss.detach()
-        metrics["q_halt_loss"] = q_halt_loss.detach()
         metrics["kl_loss"] = kl_loss.detach()
         metrics["lprm_loss"] = lprm_loss.detach()
         metrics["total_loss"] = total_loss.detach()

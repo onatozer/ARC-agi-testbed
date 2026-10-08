@@ -80,8 +80,10 @@ class GRAM_Inner(InnerNetwork):
             dtype=self.forward_dtype,
             expansion=self.config.expansion,
         )
-        # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H, like q_head
+        # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H
         self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)
+        # No halt head: every puzzle runs all halt_max_steps supervision steps (see GRAM._halt)
+        del self.q_head
 
         if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
             raise ValueError(f"grad_cycles must be in [1, H_cycles={self.config.H_cycles}], got {self.config.grad_cycles}.")
@@ -147,10 +149,7 @@ class GRAM_Inner(InnerNetwork):
         else:
             logits = self.lm_head(z_H).contiguous()
 
-        q = self.q_head(z_H[:, 0]).to(torch.float32)
-
         info = {
-            "q_halt_logits": q[..., 0],
             "lprm_value": torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1),
             "logits": logits,
             "kl_loss": kl_loss,
@@ -166,3 +165,7 @@ class GRAM(TRMModel):
         print(config)
         print("GRAM architecture initialized")
         self.inner = GRAM_Inner(_add_puzzle_emb_positions(config))
+
+    def _halt(self, steps: torch.Tensor, counter: torch.Tensor, fpass_info: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        # No ACT: a puzzle halts only after halt_max_steps supervision steps, in training and at eval
+        return steps >= self.config.halt_max_steps, counter

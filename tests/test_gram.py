@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from models.losses import IGNORE_LABEL_ID
-from models.losses.loss_heads import ACTLossHead, ACTLossHeadGRAM
+from models.losses.loss_heads import ACTLossHead, ACTLossHeadGRAM, InferenceLossHead
 from models.recursive_reasoning.gram import GRAM
 from models.recursive_reasoning.merged_arch import TRMModel
 
@@ -62,6 +62,30 @@ def test_gram_train_step_trains_prior_and_posterior():
     inner = model.model.inner
     for head in (inner.prior_head, inner.posterior_head):
         assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in head.parameters())
+
+
+def test_gram_has_no_halt_head_and_runs_every_supervision_step():
+    # A halt_threshold this low would make TRM's ACT halt every row after its first step
+    model, batch = _gram_head(halt_threshold=-1e9)
+    model.train()
+    assert not hasattr(model.model.inner, "q_head")
+    carry = model.initial_carry(batch)
+    for step in range(1, 5):  # halt_max_steps = 4
+        carry, loss, metrics, outputs, _ = model(return_keys=["q_halt_logits"], carry=carry, batch=batch)
+        assert bool(carry.halted.all()) == (step == 4) and bool(carry.halted.any()) == (step == 4)
+    assert torch.isfinite(loss) and not outputs and not any(k.startswith(("q_halt", "halted_q")) for k in metrics)
+
+
+def test_gram_inference_loss_head_needs_no_halt_head():
+    model, batch = _gram_head()
+    head = InferenceLossHead(model.model, loss_type="stablemax_cross_entropy")
+    head.eval()
+    carry = head.initial_carry(batch)
+    with torch.inference_mode():
+        for _ in range(4):
+            carry, loss, metrics, _, finished = head(return_keys=None, carry=carry, batch=batch)
+    assert bool(finished) and torch.isfinite(loss) and metrics["count"] == batch["inputs"].shape[0]
+    assert not any(k.startswith("q_halt") for k in metrics)
 
 
 def test_gram_eval_samples_prior_only():
