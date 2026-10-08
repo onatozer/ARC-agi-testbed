@@ -1,10 +1,11 @@
-name: Nqueens-8x8
+board_size: 8
+
+name: Nqueens-${.board_size}x${.board_size}
 data_path: data/nqueens
 
 evaluators:
   - name: nqueens@NQueens
 
-board_size: 8
 
 source_repo: null
 output_dir: "data/nqueens"

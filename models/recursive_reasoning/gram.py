@@ -94,6 +94,7 @@ class GRAM_Inner(InnerNetwork):
         """Samples the stochastic guidance eps for u_t and returns it with its beta-weighted balanced KL: from the
         posterior q(eps | u_t, y) when gradients are on, otherwise from the prior p(eps | u_t) with no KL."""
         mu_prior, var_prior = self.prior_head(u_t)
+        print(mu_prior.shape, var_prior.shape, u_t.shape)
 
         # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
         # Otherwise the posterior will 'leak' in the main trajectory without having to pay the KL div cost and crazy overfitting occurs
@@ -107,7 +108,7 @@ class GRAM_Inner(InnerNetwork):
                 mu_prior = mu_prior,
                 var_prior = var_prior,
                 alpha=self.config.kl_grad_prior,
-            ).mean(-1).sum() * self.config.kl_strength
+            ).sum() * self.config.kl_strength
 
             return eps, kl_loss
 
