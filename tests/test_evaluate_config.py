@@ -82,7 +82,7 @@ def test_wandb_attach_resumes_the_checkpoint_run(monkeypatch):
     assert run.defined == [("eval/*", "step")]
 
 
-@pytest.mark.parametrize("arch, head", [("trm", "InferenceLossHead"), ("trm_root", "InferenceLossHead"), ("gram", "InferenceLossHeadGRAM")])
+@pytest.mark.parametrize("arch, head", [("trm", "InferenceLossHead"), ("trm_root", "InferenceLossHead"), ("gram", "MaxStepsInferenceLossHead")])
 def test_arch_config_states_its_inference_loss_head(arch, head):
     # pretrain.py, evaluate.py and evaluate_ttt.py all evaluate under arch.loss.inference_name
     with initialize_config_dir(config_dir=CONFIG_DIR, version_base=None):
