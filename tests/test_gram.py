@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from models.losses import IGNORE_LABEL_ID
-from models.losses.loss_heads import ACTLossHead, ACTLossHeadGRAM, MaxStepsInferenceLossHead
+from models.losses.loss_heads import ACTLossHead, LossHeadGRAM, MaxStepsInferenceLossHead
 from models.recursive_reasoning.gram import GRAM
 from models.recursive_reasoning.merged_arch import TRMModel
 
@@ -35,7 +35,7 @@ def _gram_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, **overrides})
     with torch.device("cuda"):
-        model = ACTLossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
+        model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
 
 
