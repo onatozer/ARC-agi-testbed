@@ -1,10 +1,14 @@
 from pathlib import Path
 
+import pytest
+
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 import evaluate
+from config.schema import PretrainConfig
 from evaluators.eval_config import EvalConfig
+from utils.functions import load_model_class
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[1] / "config")
 
@@ -76,3 +80,14 @@ def test_wandb_attach_resumes_the_checkpoint_run(monkeypatch):
     run = evaluate._attach_wandb_run(EvalConfig(), META, "run_dir")
     assert seen == {"id": "abc", "project": "proj", "entity": "me", "resume": "must", "dir": "run_dir"}
     assert run.defined == [("eval/*", "step")]
+
+
+@pytest.mark.parametrize("arch, head", [("trm", "InferenceLossHead"), ("trm_root", "InferenceLossHead"), ("gram", "MaxStepsInferenceLossHead")])
+def test_arch_config_states_its_inference_loss_head(arch, head):
+    # pretrain.py, evaluate.py and evaluate_ttt.py all evaluate under arch.loss.inference_name
+    with initialize_config_dir(config_dir=CONFIG_DIR, version_base=None):
+        cfg = compose(config_name="cfg_pretrain", overrides=[f"arch={arch}", "seed=0"])
+    config = PretrainConfig(**OmegaConf.to_container(cfg, resolve=True))
+    assert load_model_class(config.arch.loss.inference_name).__name__ == head
+    # A declared field, so it isn't passed to the loss-head constructors with the other loss kwargs
+    assert "inference_name" not in config.arch.loss.__pydantic_extra__

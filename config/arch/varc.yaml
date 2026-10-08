@@ -12,6 +12,7 @@ short_name: VARC
 loss:
   name: losses@ACTLossHead
   loss_type: softmax_cross_entropy
+  inference_name: losses@InferenceLossHead # loss head used for eval
 
 halt_max_steps: 1 # one forward pass per example
 

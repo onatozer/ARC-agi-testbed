@@ -33,9 +33,9 @@ from dataset.build_arc_dataset import DataProcessConfig, convert_dataset, conver
 from evaluate import _apply_overrides, _attach_wandb_run, _load_checkpoint, _seed, _summarize
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
-from models.losses import InferenceLossHead
 from pretrain import create_dataloader, create_evaluators, init_train_state, train_batch
 from utils.checkpoint import load_model_state_dict
+from utils.functions import load_model_class
 from utils.printing import print_info
 
 
@@ -120,7 +120,8 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
 
         if train_state.ema_helper is not None:
             train_state.ema_helper.swap(train_state.model)
-        train_state_eval = replace(train_state, model=InferenceLossHead(train_state.model.model, **config.arch.loss.__pydantic_extra__))
+        eval_head_cls = load_model_class(config.arch.loss.inference_name)
+        train_state_eval = replace(train_state, model=eval_head_cls(train_state.model.model, **config.arch.loss.__pydantic_extra__))
         train_state_eval.model.eval()
         for _ in range(cfg.num_views):
             metrics, _ = evaluate(config, train_state_eval, eval_loader, eval_metadata, evaluators, rank=0, world_size=1, cpu_group=None)

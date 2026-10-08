@@ -109,8 +109,8 @@ def _base_config(eval_cfg: EvalConfig, ckpt: Dict[str, Any], ckpt_path: str, ran
     config.checkpoint_path = str(Path(ckpt_path).parent)
     config.eval_save_outputs = eval_cfg.save_outputs
     config.eval_save_carry = eval_cfg.save_carry
-    if eval_cfg.loss_head_name:
-        config.arch.loss.name = eval_cfg.loss_head_name
+    # Eval under the arch's inference loss head unless loss_head_name overrides it
+    config.arch.loss.name = eval_cfg.loss_head_name or config.arch.loss.inference_name
     if eval_cfg.global_batch_size is not None:
         config.global_batch_size = eval_cfg.global_batch_size
     if eval_cfg.seed is not None:
