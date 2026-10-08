@@ -1,0 +1,27 @@
+# Mini-ARC training config for the VARC baseline
+
+defaults:
+  - cfg_pretrain
+  - override dataset: miniarc
+  - override arch: varc
+  - _self_
+
+hydra:
+  output_subdir: null
+
+global_batch_size: 256 # has to be less than 528 for mini arc
+optimizer: adam_atan2
+eval_interval_steps: 10000
+checkpoint_interval_steps: ${.eval_interval_steps}
+
+max_eval_steps: null
+
+# Ensure that the puzzle embedding is being used 
+arch:
+  image_size: ${dataset.grid_size}
+  hidden_size: 256
+  num_layers: 5
+  mlp_dim: 512
+  puzzle_emb_ndim: ${.hidden_size}
+  board_height: ${dataset.grid_size}
+  board_width: ${dataset.grid_size}
