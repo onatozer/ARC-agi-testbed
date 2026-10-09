@@ -94,21 +94,24 @@ class GRAM_Inner(InnerNetwork):
         """Samples the stochastic guidance eps for u_t and returns it with its beta-weighted balanced KL: from the
         posterior q(eps | u_t, y) when gradients are on, otherwise from the prior p(eps | u_t) with no KL."""
         mu_prior, var_prior = self.prior_head(u_t)
-        print(mu_prior.shape, var_prior.shape, u_t.shape)
 
         # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
         # Otherwise the posterior will 'leak' in the main trajectory without having to pay the KL div cost and crazy overfitting occurs
-        if torch.is_grad_enabled():
+        # if torch.is_grad_enabled():
+        if self.is_training():
             mu_post, var_post = self.posterior_head(u_t, y)
             eps = mu_post + torch.randn_like(u_t) * var_post.sqrt()
 
-            kl_loss = kl_balanced(
-                mu_post = mu_post,
-                var_post = var_post,
-                mu_prior = mu_prior,
-                var_prior = var_prior,
-                alpha=self.config.kl_grad_prior,
-            ).sum() * self.config.kl_strength
+            kl_loss = 0
+
+            if torch.is_grad_enabled():
+                kl_loss = kl_balanced(
+                    mu_post = mu_post,
+                    var_post = var_post,
+                    mu_prior = mu_prior,
+                    var_prior = var_prior,
+                    alpha=self.config.kl_grad_prior,
+                ).sum() * self.config.kl_strength
 
             return eps, kl_loss
 
