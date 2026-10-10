@@ -266,6 +266,9 @@ def create_model(
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
+    if config.freeze_alternation_epochs is not None and (config.arch.puzzle_emb_ndim == 0 or config.freeze_weights):
+        raise ValueError("freeze_alternation_epochs needs puzzle embeddings (arch.puzzle_emb_ndim > 0) and freeze_weights=False.")
+
     # Set to 0 to avoid using the puzzle embedding trick at all
     if config.arch.puzzle_emb_ndim == 0:
         optimizers = [
@@ -494,15 +497,22 @@ def train_batch(
         norms["train/grad_norm/max"] = float(max_norm)
         norms["train/grad_norm/num_tensors"] = float(num_tensors)
 
+    # Alternating freezing: even blocks of freeze_alternation_epochs step only the puzzle embedding optimizer (always
+    # optimizers[0]), odd blocks only the weight optimizers. Gradients are still zeroed for all of them
+    train_embeddings = None
+    if config.freeze_alternation_epochs is not None:
+        train_embeddings = (current_epoch // config.freeze_alternation_epochs) % 2 == 0
+
     # Backpropogate the loss through the network
     lr_this_step = None
-    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
+    for i, (optim, base_lr) in enumerate(zip(train_state.optimizers, train_state.optimizer_lrs)):
         lr_this_step = compute_lr(base_lr, config, train_state)
 
         for param_group in optim.param_groups:
             param_group["lr"] = lr_this_step
 
-        optim.step()
+        if train_embeddings is None or (i == 0) == train_embeddings:
+            optim.step()
         optim.zero_grad()
     
 
@@ -552,6 +562,8 @@ def train_batch(
 
             processed_metrics["train/lr"] = lr_this_step
             processed_metrics["train/epoch"] = current_epoch
+            if train_embeddings is not None:
+                processed_metrics["train/freeze_phase"] = 0 if train_embeddings else 1  # 0: embeddings, 1: weights
             if train_state.flops_per_step:
                 processed_metrics["train/flops_per_step"] = train_state.flops_per_step
                 processed_metrics["train/flops_total"] = train_state.flops_total

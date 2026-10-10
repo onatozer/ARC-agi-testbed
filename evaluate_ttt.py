@@ -9,6 +9,8 @@ For every eval task, starting from the checkpoint's weights (EMA ones if it has 
 
     python evaluate_ttt.py checkpoint=<run_dir>/checkpoints/step_N_<id>.pth [eval=ttt_varc] [epochs=50 train_overrides.lr=1e-4 ...]
     torchrun --nproc_per_node=<gpus> evaluate_ttt.py checkpoint=...
+    # Embeddings first, then weights (arXiv 2609.21181), with ttt_varc's 100 epochs; any N alternates every N epochs
+    python evaluate_ttt.py checkpoint=... train_overrides.freeze_alternation_epochs=50
 
 Tasks are sharded across ranks with no process group, since tasks are independent and finish at different times.
 Each task writes <output_dir>/tasks/<name>.json (existing ones are skipped, so a run can be resumed), and whichever rank
