@@ -6,4 +6,6 @@ name: recursive_reasoning.grampd@GRAMDP
 short_name: GRAMDP
 
 noise_options: 8 # number of candidate guidance vectors the prior / posterior choose between
-gumbel_temp: 1.0 # Gumbel-softmax temperature for the choice
+gumbel_temp: 1.0 # starting Gumbel-softmax temperature (training only: eval samples one candidate exactly)
+gumbel_temp_min: 0.5 # temperature reached after gumbel_anneal_steps
+gumbel_anneal_steps: 20000 # training steps to anneal gumbel_temp -> gumbel_temp_min linearly; 0 = start at gumbel_temp_min

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUD
 
 def _grampd_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "noise_options": 4, "gumbel_temp": 1.0, **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "noise_options": 4, "gumbel_temp": 1.0, "gumbel_temp_min": 0.5, "gumbel_anneal_steps": 100, **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAMDP(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
@@ -75,3 +75,27 @@ def test_grampd_runs_every_supervision_step_and_infers():
         for _ in range(4):
             carry, loss, _, _, finished = head(return_keys=None, carry=carry, batch=batch)
     assert bool(finished) and torch.isfinite(loss)
+
+
+def test_grampd_eval_picks_exactly_one_candidate():
+    model, batch = _grampd_head()
+    model.eval()
+    inner = model.model.inner
+    u_t = torch.randn(batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
+    with torch.inference_mode():
+        cand = inner.candidate_head(u_t)
+        torch.manual_seed(1)
+        eps, kl_loss = inner._guidance(u_t, batch["labels"])
+    # Gumbel-max: eps is one of the candidates, not a blend of several
+    dist = (eps.float().unsqueeze(1) - cand.float()).flatten(2).abs().amax(-1)
+    assert kl_loss == 0 and (dist.amin(-1) < 1e-2).all()
+
+
+def test_grampd_anneals_gumbel_temperature_with_global_step():
+    model, batch = _grampd_head(gumbel_temp=1.0, gumbel_temp_min=0.5, gumbel_anneal_steps=100)
+    model.train()
+    for step, tau in [(0, 1.0), (50, 0.75), (100, 0.5), (500, 0.5)]:
+        carry = model.initial_carry(batch)
+        carry.global_step = step
+        model(return_keys=[], carry=carry, batch=batch)
+        assert model.model.inner.gumbel_tau.item() == pytest.approx(tau)
