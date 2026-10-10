@@ -1,0 +1,9 @@
+defaults:
+  - gram
+  - _self_
+
+name: recursive_reasoning.grampd@GRAMDP
+short_name: GRAMDP
+
+noise_options: 8 # number of candidate guidance vectors the prior / posterior choose between
+gumbel_temp: 1.0 # Gumbel-softmax temperature for the choice

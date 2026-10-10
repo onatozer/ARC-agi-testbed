@@ -98,7 +98,7 @@ class GRAM_Inner(InnerNetwork):
         # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
         # Otherwise the posterior will 'leak' in the main trajectory without having to pay the KL div cost and crazy overfitting occurs
         # if torch.is_grad_enabled():
-        if self.is_training():
+        if self.training:
             mu_post, var_post = self.posterior_head(u_t, y)
             eps = mu_post + torch.randn_like(u_t) * var_post.sqrt()
 

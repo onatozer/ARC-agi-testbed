@@ -98,3 +98,15 @@ def kl_balanced(
     kl_prior_update = gaussian_kl(mu_post.detach(), var_post.detach(), mu_prior, var_prior)
     kl_posterior_update = gaussian_kl(mu_post, var_post, mu_prior.detach(), var_prior.detach())
     return alpha * kl_prior_update + (1.0 - alpha) * kl_posterior_update
+
+def kl_balanced_logits(prior_logits: torch.Tensor, post_logits: torch.Tensor, alpha: float) -> torch.Tensor:
+    """Categorical counterpart of kl_balanced: alpha * KL(sg(q) || p) + (1 - alpha) * KL(q || sg(p)), summed over the last dim."""
+    prior_logits, post_logits = prior_logits.float(), post_logits.float()
+
+    def categorical_kl(post_logits: torch.Tensor, prior_logits: torch.Tensor) -> torch.Tensor:
+        log_q = F.log_softmax(post_logits, dim=-1)
+        return (log_q.exp() * (log_q - F.log_softmax(prior_logits, dim=-1))).sum(dim=-1)
+
+    kl_prior_update = categorical_kl(post_logits.detach(), prior_logits)
+    kl_posterior_update = categorical_kl(post_logits, prior_logits.detach())
+    return alpha * kl_prior_update + (1.0 - alpha) * kl_posterior_update
