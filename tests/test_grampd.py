@@ -77,18 +77,18 @@ def test_grampd_runs_every_supervision_step_and_infers():
     assert bool(finished) and torch.isfinite(loss)
 
 
-def test_grampd_eval_picks_exactly_one_candidate():
+@pytest.mark.parametrize("training", [True, False])
+def test_grampd_eps_is_exactly_one_candidate(training):
     model, batch = _grampd_head()
-    model.eval()
+    model.train(training)
     inner = model.model.inner
     u_t = torch.randn(batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
-    with torch.inference_mode():
+    with torch.no_grad():
         cand = inner.candidate_head(u_t)
-        torch.manual_seed(1)
-        eps, kl_loss = inner._guidance(u_t, batch["labels"])
-    # Gumbel-max: eps is one of the candidates, not a blend of several
+        eps, _ = inner._guidance(u_t, batch["labels"])
+    # Gumbel-max forward pass: eps is one of the candidates, not a blend of several
     dist = (eps.float().unsqueeze(1) - cand.float()).flatten(2).abs().amax(-1)
-    assert kl_loss == 0 and (dist.amin(-1) < 1e-2).all()
+    assert (dist.amin(-1) < 1e-2).all()
 
 
 def test_grampd_anneals_gumbel_temperature_with_global_step():

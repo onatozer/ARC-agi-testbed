@@ -73,7 +73,7 @@ class PosteriorCandidateScorer(CandidateScorer):
 
 class GRAMDP_Inner(GRAM_Inner):
     """GRAM_Inner with discrete guidance: a prior p(k | u_t) / posterior q(k | u_t, y) over noise_options candidate
-    vectors picks eps. Training uses the Gumbel-softmax relaxation; eval draws one candidate exactly (Gumbel-max)."""
+    vectors picks eps as exactly one candidate (Gumbel-max), trained with straight-through Gumbel-softmax gradients."""
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -98,16 +98,17 @@ class GRAMDP_Inner(GRAM_Inner):
             expansion=self.config.expansion,
             norm_eps=self.config.rms_norm_eps,
         )
-        # Gumbel-softmax temperature; a buffer so GRAMDP can anneal it each step without recompiling
+        # Straight-through gradient temperature; a buffer so GRAMDP can anneal it each step without recompiling
         self.register_buffer("gumbel_tau", torch.tensor(float(self.config.gumbel_temp)), persistent=False)
 
     def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor | int]:
-        """Samples the guidance eps for u_t from the candidates, with its beta-weighted balanced KL: a Gumbel-softmax
-        mixture from the posterior q(k | u_t, y) in training, otherwise one candidate drawn from the prior p(k | u_t) with no KL."""
+        """Samples the guidance eps for u_t as one of the candidates, with its beta-weighted balanced KL: drawn from the
+        posterior q(k | u_t, y) in training, otherwise from the prior p(k | u_t) with no KL."""
         cand = self.candidate_head(u_t)
         prior_logits = self.prior_head(u_t, cand)
 
         kl_loss = 0
+        logits = prior_logits
         if self.training:
             post_logits = self.posterior_head(u_t, y, cand)
 
@@ -118,10 +119,11 @@ class GRAMDP_Inner(GRAM_Inner):
                     post_logits=post_logits,
                     alpha=self.config.kl_grad_prior,
                 ).sum() * self.config.kl_strength
-            weights = F.gumbel_softmax(post_logits.float(), tau=self.gumbel_tau, dim=-1)
-        else:
-            # Gumbel-max: one-hot argmax(logits + g), an exact sample of Cat(softmax(prior_logits)); no gradient needed
-            weights = F.gumbel_softmax(prior_logits.float(), hard=True, dim=-1)
+            logits = post_logits
+
+        # Straight-through Gumbel-softmax: the forward pass is the one-hot Gumbel-max sample argmax(logits + g), an exact
+        # draw from Cat(softmax(logits)); the backward pass uses the gradient of softmax((logits + g) / tau)
+        weights = F.gumbel_softmax(logits.float(), tau=self.gumbel_tau, hard=True, dim=-1)
 
         eps = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         return eps, kl_loss
