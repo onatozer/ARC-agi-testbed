@@ -93,6 +93,8 @@ class PretrainConfig(BaseModel):
 
     ema: bool = False
     ema_rate: float = 0.999
+    # Alternate every N epochs between training only the puzzle embeddings (first) and only the weights; None trains both
+    freeze_alternation_epochs: Optional[int] = None
 
     debug: bool = False
     debug_trace_steps: int = 0
@@ -126,6 +128,8 @@ class PretrainConfig(BaseModel):
             colored_exception(ValueError, "checkpoint_interval_steps must be a positive integer when provided.")
         if self.max_steps is not None and self.max_steps <= 0:
             colored_exception(ValueError, "max_steps must be a positive integer when provided.")
+        if self.freeze_alternation_epochs is not None and self.freeze_alternation_epochs <= 0:
+            colored_exception(ValueError, "freeze_alternation_epochs must be a positive integer when provided.")
         if self.ema_rate <= 0.0 or self.ema_rate > 1.0:
             colored_exception(ValueError, "ema_rate must be in the interval (0, 1].")
         return self
