@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 import math
 
 import torch
@@ -13,7 +13,7 @@ from ..layers import (
     SwiGLU,
     rms_norm,
 )
-from .merged_arch import _add_puzzle_emb_positions
+from .merged_arch import ModelCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
 
 
@@ -72,8 +72,8 @@ class PosteriorCandidateScorer(CandidateScorer):
 
 
 class GRAMDP_Inner(GRAM_Inner):
-    """GRAM_Inner with discrete guidance: eps is a Gumbel-softmax mixture of noise_options candidate vectors,
-    chosen by a prior p(k | u_t) / posterior q(k | u_t, y) over the candidates."""
+    """GRAM_Inner with discrete guidance: a prior p(k | u_t) / posterior q(k | u_t, y) over noise_options candidate
+    vectors picks eps as exactly one candidate (Gumbel-max), trained with straight-through Gumbel-softmax gradients."""
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -98,17 +98,19 @@ class GRAMDP_Inner(GRAM_Inner):
             expansion=self.config.expansion,
             norm_eps=self.config.rms_norm_eps,
         )
+        # Straight-through gradient temperature; a buffer so GRAMDP can anneal it each step without recompiling
+        self.register_buffer("gumbel_tau", torch.tensor(float(self.config.gumbel_temp)), persistent=False)
 
     def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor | int]:
-        """Samples the guidance eps for u_t as a Gumbel-softmax mixture of the candidates, with its beta-weighted
-        balanced KL: from the posterior q(k | u_t, y) in training, otherwise from the prior p(k | u_t) with no KL."""
+        """Samples the guidance eps for u_t as one of the candidates, with its beta-weighted balanced KL: drawn from the
+        posterior q(k | u_t, y) in training, otherwise from the prior p(k | u_t) with no KL."""
         cand = self.candidate_head(u_t)
         prior_logits = self.prior_head(u_t, cand)
 
         kl_loss = 0
+        logits = prior_logits
         if self.training:
             post_logits = self.posterior_head(u_t, y, cand)
-            logits = post_logits
 
             # Only the grad cycles pay the KL
             if torch.is_grad_enabled():
@@ -117,10 +119,12 @@ class GRAMDP_Inner(GRAM_Inner):
                     post_logits=post_logits,
                     alpha=self.config.kl_grad_prior,
                 ).sum() * self.config.kl_strength
-        else:
-            logits = prior_logits
+            logits = post_logits
 
-        weights = F.gumbel_softmax(logits, tau=self.config.gumbel_temp, dim=-1)
+        # Straight-through Gumbel-softmax: the forward pass is the one-hot Gumbel-max sample argmax(logits + g), an exact
+        # draw from Cat(softmax(logits)); the backward pass uses the gradient of softmax((logits + g) / tau)
+        weights = F.gumbel_softmax(logits.float(), tau=self.gumbel_tau, hard=True, dim=-1)
+
         eps = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         return eps, kl_loss
 
@@ -129,3 +133,17 @@ class GRAMDP(GRAM):
     def __init__(self, config: dict):
         super().__init__(config)
         self.inner = GRAMDP_Inner(_add_puzzle_emb_positions(config))
+
+    @torch.compiler.disable
+    def _anneal_gumbel_tau(self, carry: ModelCarry | None) -> None:
+        """Linearly anneals the Gumbel-softmax temperature from gumbel_temp to gumbel_temp_min over gumbel_anneal_steps of
+        carry.global_step (the training step pretrain.py sets; without one, e.g. outside pretrain.py, it stays at gumbel_temp)."""
+        step = getattr(carry, "global_step", None)
+        if step is None:
+            return
+        frac = min(1.0, step / self.config.gumbel_anneal_steps) if self.config.gumbel_anneal_steps > 0 else 1.0
+        self.inner.gumbel_tau.fill_(self.config.gumbel_temp + frac * (self.config.gumbel_temp_min - self.config.gumbel_temp))
+
+    def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
+        self._anneal_gumbel_tau(carry)
+        return super().forward(carry, batch, **kwargs)
