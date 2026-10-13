@@ -203,6 +203,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | **treerm128_v2_flags_lr1e-3_heads0.1_s1** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.463 | **0.828** | 0.94 | 35 min† | seed 1 replicate. @1750 = 0.736 |
 | treerm128_v2_flags_lr1e-3_heads0.03 | TreeRM | ~790k | 1e-3 / heads 3e-5 | 2000 | 0 | 0.002 | 0.207 | 0.734 | 0.88 | 37 min† | heads too slow: 0.1–0.3× is the range. @1750 = 0.562 |
 | **treerm128_v2_flags_lr1e-3_heads0.1_vb0.5** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.516 | **0.930** | 0.94 | 51 min† | + value_bootstrap_weight=0.5: @1750 = 0.824. +11 over the recipe, +20 over TRM |
+| treerm128_v2_flags_lr1e-3_heads0.1_s2 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.271 | 0.799 | 0.95 | 53 min† | seed 2. **Recipe over 3 seeds: 81.1 / 82.8 / 79.9 (mean 81.3)** vs TRM 66–74 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
