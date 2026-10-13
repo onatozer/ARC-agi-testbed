@@ -142,6 +142,10 @@ These are changes to the model code that were needed to run the experiments at a
    shrink the flags, so the collapse point is plain TRM rather than "TRM + MLP". Adds just a 2H→K linear.
    Queued as `flags` at lr 3e-4 and 1e-3.
 
+10. **`argmax_pick`** (backlog item e): outside the grad cycle (no-grad cycles, eval) take the argmax candidate
+    instead of a Gumbel sample. TRM's recursion is deterministic; TreeRM injects a random pick at every z_H
+    update at eval, which can only hurt exact match if the prior is already right. Queued with flags.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
