@@ -50,6 +50,23 @@ thing for an ambiguous-solution task. Exact-match against the stored label is al
 - Hardware: one RTX 3050 Ti laptop GPU (4 GB). This caps what's feasible: ~15 min per TRM run, ~40 min per TreeRM
   run at K=4, 8 simulations.
 
+### Fast tier: 6x6 Sudoku (added after the first baseline)
+A TreeRM run on 8x8 N-Queens is ~45 min (1.5–2 h with `horizon=full`), i.e. ~10 experiments a night — too slow
+for a hyper-param loop. So there are now two tiers:
+- **Fast tier: 6x6 Sudoku** (`data/sudoku-6`): 10k puzzles x (1 + 8 shuffle augs) = 90k train rows, 1000 test, 10
+  clues of 36 (`clue_ratio=0.3`). **0% test-in-train overlap and 89,862 distinct labels**, so unlike N-Queens this
+  measures generalisation. seq_len 36 vs 64 halves the per-step cost. Budget: batch 64, 1500 steps, eval every 500
+  on 512 test puzzles. Target ~10 min per TreeRM run, ~3 min per TRM run. 6x6 N-Queens was rejected for this role
+  because it has only 4 solutions.
+  Metric: `all/exact_accuracy`. The first build (`sudoku-6`, 10 clues) turned out to have **0% unique-solution
+  puzzles**, so exact match would have been a lottery among valid completions and the training label an arbitrary
+  one of them. Sweeping clue counts on the same boards: 12 clues -> 5% unique, 16 -> 45%, 20 -> 75%, 22 -> 86%;
+  even easy puzzles aren't reliably unique. So I added `unique_solution: true` to `build_sudoku_dataset.py`
+  (commit `2899cef`): remove cells to the clue ratio, then reveal them back one at a time until a backtracking
+  solver finds exactly one solution. The fast tier uses that build (`data/sudoku-6u`); with unique solutions,
+  exact match is the correct metric and no validity evaluator is needed.
+- **Confirmation tier: 8x8 N-Queens**, as above, for variants that win on the fast tier.
+
 ### Harness
 Runs are launched from a scratch directory with `+wandb_mode=offline`; eval rows are parsed back out of the offline
 `.wandb` file (`summary.py`). Nothing is uploaded. Each run's config and log are under
@@ -80,18 +97,34 @@ These are changes to the model code that were needed to run the experiments at a
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
-steps. `exact` = exact match with the stored label at 3k. Wall-clock is the full run including evals.
+steps. `exact` = exact match with the stored label at 3k. Wall-clock is the full run including evals; `*` = GPU
+was shared with a fast-tier run, so wall-clock is inflated.
 
 | run | arch | params | lr | acc @1k | acc @2k | acc @3k | exact @3k | wall | notes |
 |---|---|---|---|---|---|---|---|---|---|
 | trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | 0.210 | 0.210 | 12.3 min | baseline |
-| trm192_lr1e-3 | TRM | 886k | 1e-3 | | | | | | baseline |
-| gram112_lr3e-4 | GRAM | 865k | 3e-4 | | | | | | baseline |
+| trm192_lr1e-3 | TRM | 886k | 1e-3 | 0.000 | 0.019 | 0.050 | 0.050 | 14.5 min* | baseline; lr too high |
+| gram112_lr3e-4 | GRAM | 865k | 3e-4 | 0.001 | 0.016 | 0.031 | 0.031 | 17.0 min* | baseline; eval zH_rel_residual 0.94 (prior noise dominates at eval) |
 | gram112_lr1e-3 | GRAM | 865k | 1e-3 | | | | | | baseline |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 886k | 3e-4 | | | | | | horizon=full |
+
+### Fast tier: 6x6 Sudoku (unique), exact match on 512 test puzzles
+
+| run | arch | params | lr | steps | exact @500 | @1000 | @1500 | @2000 | train exact (end) | wall | notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| cal_u_trm128_lr1e-3 | TRM | 525k | 1e-3 | 1500 | 0 | 0 | 0.178 | – | 0.90 | 5.2 min* | calibration |
+| cal_u_trm128_lr3e-4 | TRM | 525k | 3e-4 | 1500 | 0 | 0 | 0.020 | – | 0.47 | 5.5 min* | calibration |
+| trm192_lr1e-3 | TRM | 888k | 1e-3 | 2000 | | | | | | | parity baseline |
+| trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | | | | | | | parity baseline |
+| gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | | | | | | | parity baseline |
+| treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | | | | | | | K=4, 8 sims, horizon=step |
+| treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | | | | | | | |
+| treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
+| treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
+| grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
 
 ---
 
@@ -124,6 +157,28 @@ kl_strength=0.05 (GRAM's default), kl_grad_prior=0.8:
   forward pass. With H_cycles=3 and horizon=step, the search at the last cycle of a step has depth 1 and
   rollout 0 — it's just scoring the K candidates directly by CE. `full` gives the search something to look ahead
   into, at ~8x the rollout cost on average.
+
+### 3. Fast-tier calibration (6x6 Sudoku)
+- TRM h=128, lr 1e-3, batch 64, 1500 steps on the **non-unique** 10-clue build: token acc 41% / 50% / 55% at
+  500 / 1000 / 1500, **exact match 0%** throughout. 6.5 min sharing the GPU. 10 clues is 28% of the cells, so
+  55% token accuracy means the model is barely past the givens. Non-unique labels make the CE target
+  inconsistent, which is the likely cause — the model can't fit a label that's one of several arbitrary
+  completions. Rebuilding with `unique_solution=true`; the unique build has more clues (revealed until unique),
+  so it should be both better-posed and faster to learn.
+- Same TRM on the **unique** build (`sudoku-6u`, mean 17.6 clues): token acc 62% / 71% / 83%, exact match
+  0 / 0 / **17.8%** at 500 / 1000 / 1500, train exact 90%, 5.2 min. So the labels were the problem. Signal
+  exists at this budget; the curve is still steep at 1500, so small differences between variants will be
+  amplified (good for ranking, but a 2-seed check is needed before believing a small gap).
+- Same at lr 3e-4: exact 0 / 0 / 2.0%, train exact 47%. lr 1e-3 is the fast-tier default — the opposite of
+  N-Queens, where 1e-3 hurt TRM. (Reasonable: Sudoku h=128 with 2000 steps is a short run that benefits from a
+  high lr; the N-Queens run at h=192 for 3000 steps didn't.) This means lr must be swept per arch on each tier
+  rather than carried across.
+
+### 4. First fast-tier sweep (queue q6a, 6x6 Sudoku unique, 2000 steps x batch 64)
+Budget raised from 1500 to 2000 steps (eval every 500 on 512 test puzzles) so the readout isn't taken on the
+steepest part of the curve. Runs, in order: TRM h=192 at lr 1e-3 and 3e-4 (parity baselines), GRAM h=112, then
+TreeRM h=128 (K=4, 8 sims) at lr 1e-3 / 3e-4, `candidate_residual`, `mcts_horizon=full`, and GRAMDP h=120.
+The 8x8 N-Queens TreeRM sweep (q2) was cancelled in favour of this; N-Queens is now the confirmation tier.
 
 Open questions I'm tracking, to be answered by the runs:
 - (a) Does the search help at all vs. GRAMDP-style learned posterior? If `base` ≈ GRAM, the search isn't adding
