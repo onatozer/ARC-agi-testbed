@@ -191,6 +191,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_lr1e-3_heads0.3 | TreeRM | 888k | 1e-3 / heads 3e-4 | 2000 | 0 | 0.002 | 0.064 | **0.564** | 0.83 | 47 min† | param_lr_scales candidate_=0.3: @1750 = 0.279 |
 | treerm128_v2_lr1e-3_heads0.1 | TreeRM | 888k | 1e-3 / heads 1e-4 | 2000 | 0 | 0 | 0.025 | **0.557** | 0.95 | 48 min† | candidate_=0.1: @1750 = 0.209 |
 | treerm128_v2_flags_K1_lr5e-4 | TreeRM | ~530k | 5e-4 | 2000 | 0 | 0 | 0.182 | **0.736** | 0.91 | 24 min† | **K=1 control** (no choice): = TRM-128 (0.668 at 5e-4). @1750 = 0.488 |
+| treerm128_v2_flags_lr1e-3 | TreeRM | ~790k | 1e-3 | 2000 | 0 | 0.004 | 0.062 | **0.707** | 0.94 | 49 min† | **K=4 flags at uniform lr 1e-3 = TRM level** (TRM-192 band 0.66–0.74). @1750 = 0.273 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
