@@ -161,6 +161,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | trm192_lr1e-3 | TRM | 886k | 1e-3 | 0.000 | 0.019 | 0.050 | 0.050 | 14.5 min* | baseline; lr too high |
 | gram112_lr3e-4 | GRAM | 865k | 3e-4 | 0.001 | 0.016 | 0.031 | 0.031 | 17.0 min* | baseline; eval zH_rel_residual 0.94 (prior noise dominates at eval) |
 | gram112_lr1e-3 | GRAM | 865k | 1e-3 | 0.004 | 0.026 | 0.023 | 0.023 | 12.4 min | baseline; eval zH_rel_residual 0.95 |
+| **treerm128_flags_heads0.1_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0 | 0.234 | **0.335** | 0.329 | 75 min† | **confirmation: above TRM (0.210)**. @1500 = 0.136, @2500 = 0.304. First model whose valid boards aren't all the stored label |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
