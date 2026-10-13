@@ -175,6 +175,10 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_K2_s8 | TreeRM | ~820k | 1e-3 | 2000 | 0 | 0 | 0.014 | 0.117 | 0.66 (label-informed) | 53 min† | K=2: same as K=4 |
 | treerm128_noevalsearch | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.010 | 0.078 | 0.63 (label-informed) | 43 min† | eval_search=false: eval search worth ≤2 pts |
 | treerm192_lr1e-3 | TreeRM | ~1.5M | 1e-3 | 2000 | 0 | 0.002 | 0.006 | 0.020 | 0.16 | 63 min† | width control (not parity): wider is *worse* at 1e-3 |
+| **v2 runs** (search on the grad cycle only, forced root visits, eval every 250) | | | | | | | | | | | |
+| treerm128_v2_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | 0 | 0 | 0.002 | 0.164 | 0.94 (label-inf.) | 29 min† | @1750 = 0.037. Below the leaky 0.316 |
+| treerm128_v2_lr5e-4 | TreeRM | 888k | 5e-4 | 2000 | 0 | 0 | 0.031 | **0.229** | 0.80 | 29 min† | @1250 = 0.008, @1750 = 0.111; still steep |
+| treerm128_v2_lr1e-4 | TreeRM | 888k | 1e-4 | 2000 | 0 | 0 | 0.002 | | | | @1750 = 0.004; too low |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
