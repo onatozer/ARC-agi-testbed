@@ -316,6 +316,11 @@ file was recorded before the reboot and is intact. The harness now lives in `scr
 to `~/ARC-agi-testbed/autoresearch_runs/`, both outside `/tmp`. Relaunched at 10:50: `fix_lr3e-4`,
 `resid_lr3e-4`, `fix_div0.1_lr3e-4` (three concurrent).
 
+**v2 (grad-cycle-only search) diagnostics, first 480 steps, lr 3e-4 and 5e-4:** identical shape to before —
+`cand_div` 0.73 → 0.04 by step 400, posterior entropy ~1.28 (near-uniform over K=4), `kl_nats` ~0.08,
+`argmax_agree` ~0.8, `cand_norm_ratio` 1.35 (3e-4) / 2.5 (5e-4) — the generator makes candidates larger than
+u_t. The leak fix doesn't touch the collapse. → backlog (c), implemented as `candidate_mode: flags`.
+
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
      the issue is that full-vector candidates are all *bad*, this should jump.

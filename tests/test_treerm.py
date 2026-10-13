@@ -1,3 +1,5 @@
+import math
+
 import pytest
 import torch
 
@@ -15,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -204,3 +206,19 @@ def test_treerm_prior_rollouts_pick_candidates_inside_rollouts():
         states = [(b, z_H[b], z_L[b]) for b in range(shape[0])]
         values = inner._rollout_values(states, [2] * shape[0], x, batch["labels"])
     assert len(values) == shape[0] and len(calls) == 2  # one scorer call per rollout update
+
+
+@needs_cuda
+def test_flag_candidates_are_u_t_plus_orthonormal_directions():
+    model, batch = _treerm_head(candidate_mode="flags")
+    inner = model.model.inner
+    directions = inner.candidate_generator.directions.float()
+    torch.testing.assert_close(directions @ directions.T, torch.eye(directions.shape[0], device=directions.device), atol=1e-5, rtol=0)
+    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+    z_L, u_t = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(2))
+    with torch.no_grad():
+        cand = inner._candidates(z_L, u_t)
+    delta = (cand.float() - u_t.float().unsqueeze(1))  # [B, K, S, H]
+    # At init the gate is 1, so each slot's offset is sqrt(H) * e_k at every token
+    expected = (math.sqrt(inner.config.hidden_size) * directions)[None, :, None, :].expand_as(delta)
+    torch.testing.assert_close(delta, expected, atol=0.1, rtol=0.02)

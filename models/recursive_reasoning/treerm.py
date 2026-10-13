@@ -1,3 +1,4 @@
+import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -37,6 +38,30 @@ class CandidateGenerator(nn.Module):
         return x.unflatten(-1, (self.num_candidates, -1)).transpose(1, 2)
 
 
+class FlagCandidates(nn.Module):
+    """Candidates that can't collapse onto one another: u_t plus, per slot k, a fixed random unit direction e_k scaled by
+    a learned per-token gate, cand_k = u_t + g_k(z_L, u_t) * sqrt(H) * e_k. The directions are orthonormal and frozen,
+    so the slots differ by construction; the network downstream can learn what each "flag" means, and the gates can
+    only shrink the flags (collapse point: plain TRM). [B, S, H] x [B, S, H] -> [B, K, S, H]."""
+
+    def __init__(self, hidden_size: int, num_candidates: int):
+        super().__init__()
+        self.scale = math.sqrt(hidden_size)
+        # Drawn on the CPU with a fixed seed so every instance gets the same directions, whatever device the model is built on
+        self.gate = CastedLinear(2 * hidden_size, num_candidates, bias=True)
+        directions, _ = torch.linalg.qr(torch.randn(hidden_size, num_candidates, generator=torch.Generator().manual_seed(0), device="cpu"))
+        self.register_buffer("directions", directions.T.contiguous().to(self.gate.weight.device), persistent=True)  # [K, H], orthonormal rows
+        # Start with every flag at full strength (gate = 1) and no input dependence
+        with torch.no_grad():
+            self.gate.weight.zero_()
+            self.gate.bias.fill_(1.0)
+
+    def forward(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
+        gate = self.gate(torch.cat([z_L, u_t], dim=-1)).transpose(1, 2).unsqueeze(-1)  # [B, K, S, 1]
+        flags = (self.scale * self.directions).to(u_t.dtype)[None, :, None, :]  # [1, K, 1, H]
+        return u_t.unsqueeze(1) + gate.to(u_t.dtype) * flags
+
+
 class TreeRMInner(GRAM_Inner):
     """GRAM_Inner where each z_H update is one of num_candidates proposals, picked by a per-puzzle MCTS. The prior p(k)
     is the candidate scorer; the posterior is the search's root visit distribution, valued by the label CE of a rollout
@@ -47,11 +72,16 @@ class TreeRMInner(GRAM_Inner):
 
         # Replace GRAM's Gaussian prior / posterior heads: the prior is the scorer, the posterior comes from the search
         del self.prior_head, self.posterior_head
-        self.candidate_generator = CandidateGenerator(
-            hidden_size=self.config.hidden_size,
-            num_candidates=self.config.num_candidates,
-            expansion=self.config.expansion,
-        )
+        if self.config.candidate_mode not in ("full", "residual", "flags"):
+            raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
+        if self.config.candidate_mode == "flags":
+            self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
+        else:
+            self.candidate_generator = CandidateGenerator(
+                hidden_size=self.config.hidden_size,
+                num_candidates=self.config.num_candidates,
+                expansion=self.config.expansion,
+            )
         self.candidate_scorer = CandidateScorer(
             hidden_size=self.config.hidden_size,
             num_heads=self.config.num_heads,
@@ -80,9 +110,9 @@ class TreeRMInner(GRAM_Inner):
         return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
 
     def _candidates(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
-        """The K proposals for the new z_H: the generator's output, or with candidate_residual u_t plus it."""
+        """The K proposals for the new z_H (see candidate_mode)."""
         cand = self.candidate_generator(z_L, u_t)
-        if self.config.candidate_residual:
+        if self.config.candidate_mode == "residual":
             cand = cand + u_t.unsqueeze(1)
         return cand
 
