@@ -14,7 +14,7 @@ def _cfg(**overrides):
         batch_size=4, seq_len=16, vocab_size=6, H_cycles=2, L_cycles=2, H_layers=0, L_layers=1,
         hidden_size=32, expansion=2, num_heads=2, pos_encodings="rope", halt_max_steps=4,
         halt_exploration_prob=0.1, puzzle_emb_ndim=32, puzzle_emb_len=2, num_puzzle_identifiers=3,
-        noise_scale=0.0, random_initialization=False, causal=False,
+        noise_scale=0.0, random_initialization=False, causal=False, eval_prior_mean=False,
     )
     cfg.update(overrides)
     return cfg

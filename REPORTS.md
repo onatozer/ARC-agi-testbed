@@ -70,7 +70,10 @@ for a hyper-param loop. So there are now two tiers:
 ### Harness
 Runs are launched from a scratch directory with `+wandb_mode=offline`; eval rows are parsed back out of the offline
 `.wandb` file (`summary.py`). Nothing is uploaded. Each run's config and log are under
-`scratchpad/runs/<name>/`.
+`scratchpad/runs/<name>/` (N-Queens) and `scratchpad/runs6/<name>/` (Sudoku).
+Harness mishap worth recording: chaining queue B behind queue A with `until ! pgrep -f "queue A"` never fires,
+because the waiter's own command line matches the pattern. Cost ~25 min of idle GPU once. Queues are now
+launched as one sequential command instead.
 
 ---
 
@@ -94,6 +97,18 @@ These are changes to the model code that were needed to run the experiments at a
 
 ---
 
+3. **`eval_prior_mean` option for GRAM** (baseline fairness). At eval GRAM samples eps ~ N(mu_prior, var_prior)
+   with var starting at softplus(0) ≈ 0.69 per dim on an rms-normalised z_H; on both tiers its eval
+   `zH_rel_residual` is ~0.9 (the state is rewritten by noise every step) and it scores 2–6% exact. With
+   `eval_prior_mean: true` eval uses mu_prior with no noise. Off by default (reference behaviour); run as an extra
+   baseline so TreeRM isn't compared only against a handicapped GRAM.
+
+4. **Throughput: TreeRM is Python-bound, not GPU-bound.** On the fast tier (batch 64, seq 36) TreeRM runs at the
+   same 1.2 it/s as on N-Queens (batch 128, seq 64); GPU utilisation is 18% and memory 0.7 GB of 4 GB. The
+   lockstep search still does per-tree PUCT selection in Python (64 trees x depth per simulation x 8
+   simulations x 3 cycles per step). Rather than optimise further, I run two or three queues concurrently; they
+   barely slow each other. Wall-clock in the tables is therefore only comparable within a queue.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
@@ -105,7 +120,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | 0.210 | 0.210 | 12.3 min | baseline |
 | trm192_lr1e-3 | TRM | 886k | 1e-3 | 0.000 | 0.019 | 0.050 | 0.050 | 14.5 min* | baseline; lr too high |
 | gram112_lr3e-4 | GRAM | 865k | 3e-4 | 0.001 | 0.016 | 0.031 | 0.031 | 17.0 min* | baseline; eval zH_rel_residual 0.94 (prior noise dominates at eval) |
-| gram112_lr1e-3 | GRAM | 865k | 1e-3 | | | | | | baseline |
+| gram112_lr1e-3 | GRAM | 865k | 1e-3 | 0.004 | 0.026 | 0.023 | 0.023 | 12.4 min | baseline; eval zH_rel_residual 0.95 |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
@@ -117,9 +132,9 @@ was shared with a fast-tier run, so wall-clock is inflated.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | cal_u_trm128_lr1e-3 | TRM | 525k | 1e-3 | 1500 | 0 | 0 | 0.178 | – | 0.90 | 5.2 min* | calibration |
 | cal_u_trm128_lr3e-4 | TRM | 525k | 3e-4 | 1500 | 0 | 0 | 0.020 | – | 0.47 | 5.5 min* | calibration |
-| trm192_lr1e-3 | TRM | 888k | 1e-3 | 2000 | | | | | | | parity baseline |
-| trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | | | | | | | parity baseline |
-| gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | | | | | | | parity baseline |
+| trm192_lr1e-3 | TRM | 888k | 1e-3 | 2000 | 0 | 0 | 0.119 | **0.738** | 0.93 | 4.4 min | parity baseline |
+| trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | 0 | 0 | 0.076 | 0.383 | 0.81 | 4.5 min | parity baseline |
+| gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | – | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
 | treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | | | | | | | |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
@@ -148,7 +163,14 @@ i.e. every valid board the model produces is exactly the stored label. With 95% 
 model is recalling the train solution for those givens rather than searching for any valid completion. Nothing
 wrong with that for the comparison, but "accuracy" here is close to "recall of a memorised label".
 
-### 2. First TreeRM sweep (queue q2, queued behind q1)
+All four N-Queens baselines done. **TRM lr 3e-4 at 21.0% is the confirmation-tier number to beat.** GRAM at
+parity reaches only 2–3% at either lr. Its eval `zH_rel_residual` is ~0.95 (vs 0.006 for TRM): at eval GRAM
+samples eps from the Gaussian prior, whose variance starts at softplus(0) ≈ 0.69 per dimension on an
+rms-normalised z_H, so the noise is as large as the state itself and the recursion never settles. This is the
+reference GRAM behaviour (the paper's), not a bug I introduced, but it means GRAM here is a weak baseline; a
+GRAM variant with the eval noise removed (mean of the prior) would be fairer. Parked — TreeRM first.
+
+### 2. First TreeRM sweep (queue q2, queued behind q1) — CANCELLED, see §4
 Four single-change variants off a base of K=4, 8 simulations, horizon=step, c_puct=1.25, gumbel_temp=1.0,
 kl_strength=0.05 (GRAM's default), kl_grad_prior=0.8:
 - `base` and `lr1e-3`: same lr sweep as the baselines.
@@ -179,6 +201,12 @@ Budget raised from 1500 to 2000 steps (eval every 500 on 512 test puzzles) so th
 steepest part of the curve. Runs, in order: TRM h=192 at lr 1e-3 and 3e-4 (parity baselines), GRAM h=112, then
 TreeRM h=128 (K=4, 8 sims) at lr 1e-3 / 3e-4, `candidate_residual`, `mcts_horizon=full`, and GRAMDP h=120.
 The 8x8 N-Queens TreeRM sweep (q2) was cancelled in favour of this; N-Queens is now the confirmation tier.
+
+First result: TRM h=192 lr 1e-3 goes 0 / 0 / 11.9% / **73.8%** at 500 / 1000 / 1500 / 2000 (4.4 min). The curve
+"clicks" between 1500 and 2000, so the endpoint is very sensitive to *when* a model clicks: a variant that
+clicks 300 steps later will read ~10% vs 74% and look terrible while being nearly identical. Subsequent queues
+eval every 250 steps (`queue6b.sh`) to get the curve; comparisons should use the step at which exact match
+crosses e.g. 25% / 50% as well as the endpoint.
 
 Open questions I'm tracking, to be answered by the runs:
 - (a) Does the search help at all vs. GRAMDP-style learned posterior? If `base` ≈ GRAM, the search isn't adding
