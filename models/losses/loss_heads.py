@@ -463,3 +463,11 @@ class LossHeadGRAM(MaxStepsLossHead):
 
         total_loss = lm_loss + kl_loss + 0.5 * lprm_loss
         return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}
+
+
+class LossHeadTreeRM(LossHeadGRAM):
+    """LossHeadGRAM that hands its loss_fn to TreeRM, whose training search values rollouts by the same token-wise CE."""
+
+    def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
+        super().__init__(model, loss_type, **kwargs)
+        self.model.inner.rollout_loss_fn = self.loss_fn

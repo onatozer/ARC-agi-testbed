@@ -1,167 +1,209 @@
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
 import torch
 import torch.nn.functional as F
 from torch import nn
-from .merged_arch import TRMModel, ModelCarry, InnerNetwork, LatentCarry, _add_puzzle_emb_positions, _reset_rows
-from einops.layers.torch import Rearrange 
-from typing import Any, Dict, Tuple
-import math
-
 
 from models.losses import IGNORE_LABEL_ID
 from models.losses.base import kl_balanced_logits
+from models.mcts import MCTS, Node
 from ..layers import (
-    CastedEmbedding,
     CastedLinear,
-    CosSin,
     SwiGLU,
-    apply_rotary_pos_emb,
     rms_norm,
 )
+from .merged_arch import ModelCarry, LatentCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
-
-from layers import SwiGLU, CastedLinear, rms_norm
-
-class CandidateGenerator(nn.module):
-    def __init__(self, hidden_dim: int, num_candidates: int):
-
-        self.hidden_dim = hidden_dim
-        self.num_candidates = num_candidates
-
-        self.head = nn.Sequential(
-            CastedLinear(hidden_dim*2, hidden_dim, bias=True),
-            SwiGLU(hidden_dim),
-            CastedLinear(hidden_dim, hidden_dim*num_candidates, bias=True),
-        )
-
-    def forward(self, z_L: torch.Tensor, z_H: torch.Tensor):
-        x = torch.cat([z_L, z_H], dim=-1)
-        x = self.head(x) # K, B, L, D
-        return Rearrange('K B L D -> B (K L D)')
+from .grampd import CandidateScorer
 
 
-class CandidateScorer(nn.Module):
-    """Logits over the candidates by cross-attention: for each candidate, the context tokens (queries) attend over that
-    candidate's tokens (keys / values), the attended tokens are averaged and a linear layer gives the logit.
-    [B, S, H] x [B, K, S, H] -> [B, K]."""
+class CandidateGenerator(nn.Module):
+    """Proposes num_candidates full z_H vectors from the new z_H and z_L: [B, S, H] x [B, S, H] -> [B, K, S, H]."""
 
-    def __init__(self, hidden_size: int, num_heads: int, norm_eps: float = 1e-5):
+    def __init__(self, hidden_size: int, num_candidates: int, expansion: float):
         super().__init__()
 
-        self.num_heads = num_heads
-        self.head_dim = hidden_size // num_heads
-        self.norm_eps = norm_eps
-        self.q_proj = CastedLinear(hidden_size, hidden_size, bias=False)
-        self.kv_proj = CastedLinear(hidden_size, 2 * hidden_size, bias=False)
-        self.o_proj = CastedLinear(hidden_size, hidden_size, bias=False)
-        self.to_logit = CastedLinear(hidden_size, 1, bias=True)
+        self.num_candidates = num_candidates
 
-    def forward(self, ctx: torch.Tensor, cand: torch.Tensor, cos_sin: CosSin) -> torch.Tensor:
-        batch_size, num_candidates, seq_len, hidden_size = cand.shape
-
-        # One attention problem per (puzzle, candidate): the same context queries against each candidate's tokens
-        query = self.q_proj(rms_norm(ctx, variance_epsilon=self.norm_eps)).view(batch_size, 1, seq_len, self.num_heads, self.head_dim)
-        query = query.expand(-1, num_candidates, -1, -1, -1).reshape(batch_size * num_candidates, seq_len, self.num_heads, self.head_dim)
-        kv = self.kv_proj(rms_norm(cand, variance_epsilon=self.norm_eps)).view(batch_size * num_candidates, seq_len, 2, self.num_heads, self.head_dim)
-        key, value = kv.unbind(2)
-
-        # Context token s and candidate token s are the same cell, so both get that cell's RoPE position
-        if cos_sin is not None:
-            cos, sin = cos_sin
-            query, key = apply_rotary_pos_emb(query, key, cos, sin)
-
-        # [B*K, S, heads, head_dim] -> [B*K, heads, S, head_dim] for SDPA, then back
-        attended = F.scaled_dot_product_attention(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
-        attended = self.o_proj(attended.transpose(1, 2).reshape(batch_size * num_candidates, seq_len, hidden_size))
-
-        return self.to_logit(attended.mean(dim=1)).view(batch_size, num_candidates).float()
-
-
-class TreeRMInner(InnerNetwork):
-    def __int__(self, config):
-        self.candidate_generator = CandidateGenerator(
-            hidden_dim=config.hidden_dim, 
-            num_candidates=config.num_candidates)
-
-        self.candidate_scorer = CandidateScorer(
-            hidden_size=config.hidden_size,
-            num_heads=config.num_scorer_heads
+        # Not zero-initialised: identical candidates would all get the same gradient direction and never separate
+        self.head = nn.Sequential(
+            CastedLinear(hidden_size*2, hidden_size, bias=True),
+            SwiGLU(hidden_size, expansion),
+            CastedLinear(hidden_size, hidden_size*num_candidates, bias=True),
         )
-        
-        self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)
+
+    def forward(self, z_L: torch.Tensor, z_H: torch.Tensor) -> torch.Tensor:
+        x = self.head(torch.cat([z_L, z_H], dim=-1))
+        return x.unflatten(-1, (self.num_candidates, -1)).transpose(1, 2)
+
+
+class TreeRMInner(GRAM_Inner):
+    """GRAM_Inner where each z_H update is one of num_candidates proposals, picked by a per-puzzle MCTS. The prior p(k)
+    is the candidate scorer; the posterior is the search's root visit distribution, valued by the label CE of a rollout
+    in training and by the LPRM head at eval."""
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+
+        # Replace GRAM's Gaussian prior / posterior heads: the prior is the scorer, the posterior comes from the search
+        del self.prior_head, self.posterior_head
+        self.candidate_generator = CandidateGenerator(
+            hidden_size=self.config.hidden_size,
+            num_candidates=self.config.num_candidates,
+            expansion=self.config.expansion,
+        )
+        self.candidate_scorer = CandidateScorer(
+            hidden_size=self.config.hidden_size,
+            num_heads=self.config.num_heads,
+            norm_eps=self.config.rms_norm_eps,
+        )
+        self.mcts = MCTS(num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
+
+        if self.config.mcts_horizon not in ("step", "full"):
+            raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
+
+        # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
+        self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
+        # Per-puzzle supervision steps already run, set by TreeRM.forward; the 'full' horizon needs it
+        self.steps_done: Optional[torch.Tensor] = None
+
+    def _decode(self, z_H: torch.Tensor) -> torch.Tensor:
+        # Clip out the puzzle embedding dims from the decoder
+        if self.config.puzzle_emb_ndim != 0:
+            return self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+        return self.lm_head(z_H).contiguous()
+
+    def _lprm_value(self, z_H: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
+
+    def _remaining_updates(self, cycle: int, batch_size: int) -> List[int]:
+        """z_H updates left from this cycle's on (inclusive), per puzzle: to the end of this supervision step, or with
+        mcts_horizon = 'full' to the end of the last one."""
+        left = self.config.H_cycles - cycle
+        if self.config.mcts_horizon == "step":
+            return [left] * batch_size
+        return [left + self.config.H_cycles * (self.config.halt_max_steps - int(s) - 1) for s in self.steps_done.tolist()]
+
+    def _expand(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], List[float]]:
+        """The transition: one L-cycle pass from (z_H, z_L), then the candidates for the new z_H and their prior."""
+        seq_dict = self._seq_dict()
+        for _ in range(self.config.L_cycles):
+            z_L = self.L_level(z_L, z_H + x, **seq_dict)
+        u_t = self.L_level(z_H, z_L, **seq_dict)
+
+        cand = self.candidate_generator(z_L, u_t)
+        priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1)[0]
+        return [(cand[:, k], z_L) for k in range(cand.shape[1])], priors.tolist()
+
+    def _rollout_value(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, n_updates: int) -> float:
+        """The simulation: n_updates plain TRM updates (no candidates), then the label's -mean token CE in training or the
+        LPRM value at eval."""
+        seq_dict = self._seq_dict()
+        for _ in range(n_updates):
+            for _ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            z_H = self.L_level(z_H, z_L, **seq_dict)
+        z_H = rms_norm(z_H, self.config.rms_norm_eps)
+
+        if not self.training:
+            return self._lprm_value(z_H).item()
+
+        if self.rollout_loss_fn is None:
+            raise RuntimeError("TreeRM's training search needs rollout_loss_fn; wrap the model in LossHeadTreeRM.")
+        mask = y != IGNORE_LABEL_ID
+        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum() / mask.sum().clamp_min(1)
+        return -ce.item()
+
+    @torch.compiler.disable
+    @torch.no_grad()
+    def _search(self, cand: torch.Tensor, prior_logits: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> torch.Tensor:
+        """One MCTS per puzzle from the root candidates; returns the posterior logits log(visit distribution) [B, K]."""
+        priors = prior_logits.float().softmax(dim=-1)
+        visits = torch.zeros_like(priors)
+
+        for b in range(cand.shape[0]):
+            x_b, y_b = x[b : b + 1], y[b : b + 1]
+            root = Node(latent=None, allowed_depth=remaining[b])
+            root.expand([(cand[b : b + 1, k], z_L[b : b + 1]) for k in range(cand.shape[1])], priors[b].tolist())
+
+            counts = self.mcts.run(
+                root,
+                expand_fn=lambda state: self._expand(*state, x_b),
+                evaluate_fn=lambda state, depth: self._rollout_value(*state, x_b, y_b, depth),
+            )
+            visits[b] = torch.tensor(counts, dtype=visits.dtype)
+
+        return torch.log((visits / visits.sum(dim=-1, keepdim=True)).clamp_min(1e-8))
+
+    def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> Tuple[torch.Tensor, torch.Tensor | int]:
+        """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
+        scorer's prior (only when gradients are on)."""
+        cand = self.candidate_generator(z_L, u_t)
+        prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
+        post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining)
+
+        kl_loss = 0
+        # Only the grad cycles pay the KL; the posterior has no parameters, so only the prior-update term trains anything
+        if torch.is_grad_enabled():
+            kl_loss = kl_balanced_logits(
+                prior_logits=prior_logits,
+                post_logits=post_logits,
+                alpha=self.config.kl_grad_prior,
+            ).sum() * self.config.kl_strength
+
+        # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
+        # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
+        logits = prior_logits + (post_logits - prior_logits).detach()
+        weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
+
+        z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
+        return z_H, kl_loss
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"], batch.get("object_ids"))
         y = batch["labels"]
         seq_dict = self._seq_dict()
+        batch_size = z_H.shape[0]
 
-        # Run the recursion cycle for H_cycles - grad_cycles times without the gadient
+        # Run the recursion cycle for H_cycles - grad_cycles times without the gradient; every z_H update is searched
         with torch.no_grad():
-            for _ in range(self.config.H_cycles - self.config.grad_cycles):
+            for cycle in range(self.config.H_cycles - self.config.grad_cycles):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
-                z_H = self.L_level(z_H, z_L, **seq_dict)
+                u_t = self.L_level(z_H, z_L, **seq_dict)
+                z_H, _ = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
 
-        # The last grad_cycles cycles carry the gradient; each samples the posterior and pays its KL
+        # The last grad_cycles cycles carry the gradient; each pays the KL of its search's posterior from the prior
         kl_loss = 0
-        for _ in range(self.config.grad_cycles):
+        for cycle in range(self.config.H_cycles - self.config.grad_cycles, self.config.H_cycles):
             for __ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            eps, guidance_loss = self._guidance(u_t, y)
+            z_H, guidance_loss = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
             kl_loss += guidance_loss
 
-            z_H = u_t + eps
-
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
-        
-        # Clip out the puzzle embedding dims from the decoder
-        if self.config.puzzle_emb_ndim != 0:
-            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
-        else:
-            logits = self.lm_head(z_H).contiguous()
 
         info = {
-            "lprm_value": torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1),
-            "logits": logits,
+            "lprm_value": self._lprm_value(z_H),
+            "logits": self._decode(z_H),
             "kl_loss": kl_loss,
         }
 
         return LatentCarry(z_H, z_L), info
 
 
-
-
-class TreeRM(TRMModel):
-
+class TreeRM(GRAM):
     def __init__(self, config: dict):
-        self.inner = TreeRMInner(config=config)
+        super().__init__(config)
+        self.inner = TreeRMInner(_add_puzzle_emb_positions(config))
 
     def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
-        del kwargs
-        
+        """GRAM.forward, after handing the inner each puzzle's supervision steps so far (halted puzzles restart at 0)."""
         if carry is None:
             carry = self.initial_carry(batch)
-        
-        # Bring everything from the carry onto the same device used by the batch
-        device = batch["inputs"].device
-        reset = carry.halted.to(device=device)
-
-        # Call the helper function that replaces all the problems in the batch that have been halted on and replaced them with new ones
-        inner_carry, current_data = _reset_rows(
-            inner = self.inner,
-            reset_flag = reset,
-            inner_carry = LatentCarry(carry.inner_carry.z_H.to(device=device), carry.inner_carry.z_L.to(device=device)),
-            current_data = carry.current_data,
-            batch = batch,
-            device = device,
-        )
-        
-        steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
-        counter = torch.zeros_like(steps) if carry.halt_counter is None else torch.where(reset, torch.zeros_like(steps), carry.halt_counter.to(device=device))
-        inner_carry, fpass_info = self.inner(inner_carry, current_data)
-
-
-        return ModelCarry(inner_carry, steps, halted, current_data, halt_counter=counter, nfe=nfe), fpass_info
+        self.inner.steps_done = torch.where(carry.halted, 0, carry.steps).cpu()
+        return super().forward(carry, batch, **kwargs)

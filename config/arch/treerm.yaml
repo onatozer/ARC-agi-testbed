@@ -1,0 +1,15 @@
+defaults:
+  - gram
+  - _self_
+
+name: recursive_reasoning.treerm@TreeRM
+short_name: TreeRM
+
+loss:
+  name: losses.loss_heads@LossHeadTreeRM # LossHeadGRAM that also gives the search its rollout CE
+
+num_candidates: 8 # number of z_H proposals the prior scorer / MCTS choose between at every z_H update
+mcts_simulations: 16 # MCTS simulations per puzzle per z_H update
+mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
+mcts_horizon: step # how far a search looks ahead: 'step' = to the end of this supervision step, 'full' = to the end of the last one
+gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
