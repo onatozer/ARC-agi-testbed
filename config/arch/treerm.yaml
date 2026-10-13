@@ -14,11 +14,12 @@ mcts_simulations: 16 # MCTS simulations per puzzle per z_H update
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
 mcts_horizon: step # how far a search looks ahead: 'step' = to the end of this supervision step, 'full' = to the end of the last one
 gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
-candidate_mode: full # full = generator outputs K z_H vectors; residual = u_t + generator output; flags = u_t + gated fixed orthonormal direction per slot (cannot collapse)
+candidate_mode: flags # flags = u_t + gated fixed orthonormal direction per slot (cannot collapse; best); full = generator outputs K z_H vectors; residual = u_t + generator output
 eval_search: true # run the LPRM-valued search at eval; false = the prior scorer alone picks the candidate (diagnostic)
 posterior_smoothing: 0.0 # mix this much uniform into the visit distribution before the KL / sampling (bounds the KL target)
 candidate_diversity_weight: 0.0 # penalty on the mean pairwise cosine between a puzzle's candidates (added to the guidance loss on grad cycles)
-value_bootstrap_weight: 0.0 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
+value_bootstrap_weight: 0.5 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
 rollout_policy: trm # how a rollout updates z_H after the leaf: trm = the plain TRM update; prior = the scorer's argmax candidate (the policy being trained)
 argmax_pick: false # outside the grad cycle (no-grad cycles, eval) take the argmax candidate instead of a Gumbel sample
-eval_mcts_simulations: null # simulations per search at eval; null = mcts_simulations
+eval_mcts_simulations: 16 # simulations per search at eval; null = mcts_simulations. Pays once the value head is bootstrapped
+# Train with +param_lr_scales.candidate_=0.1: the candidate heads diverge at the backbone lr (see REPORTS.md section 6)
