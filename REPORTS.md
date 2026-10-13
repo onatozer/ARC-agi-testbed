@@ -194,6 +194,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_lr1e-3 | TreeRM | ~790k | 1e-3 | 2000 | 0 | 0.004 | 0.062 | **0.707** | 0.94 | 49 min† | **K=4 flags at uniform lr 1e-3 = TRM level** (TRM-192 band 0.66–0.74). @1750 = 0.273 |
 | treerm128_v2_flags_lr5e-4 | TreeRM | ~790k | 5e-4 | (1750) | 0 | 0 | 0.086 | – | – | – | @1750 = 0.279; stalled mid-eval under 6-way contention, cancelled (superseded) |
 | **treerm128_v2_flags_lr1e-3_heads0.1** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.357 | **0.811** | 0.86 | 78 min† | **above TRM** (0.725 / 0.66–0.74). @1250 = 0.062, @1750 = 0.695. Seeds pending |
+| **treerm128_v2_flags_lr1e-3_heads0.3** | TreeRM | ~790k | 1e-3 / heads 3e-4 | 2000 | 0 | 0.006 | 0.244 | **0.793** | 0.72 | 78 min† | second config above TRM. @1750 = 0.527 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -373,6 +374,18 @@ the ELBO's tension (GRAM's too). The way a search model can actually *beat* TRM 
 explored with a value head that ranks them, i.e. test-time compute. That needs (1) K>1 not to hurt (this
 section), (2) a value head that ranks candidates (value bootstrapping, `vb0.5` queued), (3) then more eval
 simulations. Working through those in order.
+
+### 8. First configuration above TRM (fast tier)
+`candidate_mode=flags` + search only on the grad cycle + forced root visits + backbone lr 1e-3 with the
+candidate heads at 0.1× (or 0.3×): **81.1% / 79.3%** vs TRM 72.5% (h=128) and 66–74% (h=192, parity), at
+~790k params. The no-KL ablation (`flags_kl0`, 0% at 1500) shows the KL is load-bearing: without it the prior
+never learns to follow the search and the eval-time pick is noise. Two seed replicates of heads0.1 are running;
+the config is also on the 8x8 N-Queens confirmation tier at lr 3e-4 and 1e-3 (TRM there: 21.0%).
+
+What the recipe amounts to: the K candidates are u_t plus K fixed orthogonal "flags" with learned per-token
+gates; on the grad cycle a label-valued search picks a flag and the scorer is trained (via the KL) to predict
+that pick from the state; elsewhere the scorer's pick is used. The downstream network learns what each flag
+means. It is a discrete latent-variable model whose posterior is a search rather than a network.
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
