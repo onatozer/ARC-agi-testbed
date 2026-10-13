@@ -215,6 +215,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | **treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims16** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.018 | 0.668 | **0.953** | 0.91 | 70 min† | + eval_mcts_simulations=16: best run. Ahead at every step (@1250 = 0.203, @1750 = 0.889); eval search overrides the prior in 64% of searches |
 | treerm128_v2_flags_lr1e-3_heads0.1_K8 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.049 | 0.678 | 0.89 | 50 min† | K=8, 12 sims: below K=4 (0.813). More flags don't help at this budget |
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims32 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.006 | 0.379 | 0.875 | 0.70 | 60 min† | 32 eval sims: not better than 8 (0.87–0.93), below 16 (0.953). Posterior sharper (entropy 0.90), overrides prior 56% |
+| treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims16_s1 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.008 | 0.529 | 0.875 | 0.94 | 45 min† | 16-sim seed 1: the 0.953 was the top of the band. **All vb configs: 0.87–0.95** |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -436,6 +437,13 @@ value head barely gets to steer (argmax_agree 1.0); with 16, 12 are guided and t
 in 64% of searches. Mechanism for §10 resolved: vb's benefit is realised through eval-time search, and the
 amount of eval search is the knob. Resolves (i)–(iii): sampling is not it (argmax neutral), not seed noise,
 more simulations help.
+
+**Correction after replicates.** 16-sim seed 1 = 87.5%, 32 sims = 87.5%, 8 sims = 87.3 / 93.0. So every vb
+configuration lands in 87–95% and the 95.3 was the top of the seed band, not a clean simulation effect. What
+survives: value bootstrapping is worth ~+8 on Sudoku (87–95 vs the recipe's 80–83, 5 vs 3 seeds) and the eval
+search does override the prior once the head is trained (64% at 16 sims vs 0% at 8); whether more eval
+simulations convert that into accuracy is unresolved at this noise level. On N-Queens the picture is cleaner
+(§11): vb 48–52% vs 33.5% without, and the override rate (69%) is visible at 8 sims already.
 
 ### 11. N-Queens with value bootstrapping: 51.7% — and here the search visibly works
 Same recipe + `value_bootstrap_weight=0.5`, lr 3e-4: **51.7%** `NQueens/accuracy` vs 33.5% without vb and
