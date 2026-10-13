@@ -417,6 +417,11 @@ visit distribution, not its argmax) — testable with `argmax_pick`; (ii) seed n
 is tracking lower (63% at 1750), so the band may be wide; testable with a vb seed replicate; (iii) more eval
 simulations should help if the value head is now informative — `eval_mcts_simulations=16`. All three queued.
 
+Update: vb replicate 87.3% (mean 90.2 over 2 seeds — real, not noise); vb + argmax 87.1%. Since with vb the
+search's mode always equals the prior's argmax, "vb + argmax" follows the same trajectory as "no vb + argmax"
+— so the remaining question is whether deterministic picking alone explains ~87% and vb's extra (93%) came
+from sampling a better posterior. Control running: recipe + argmax_pick without vb.
+
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
      the issue is that full-vector candidates are all *bad*, this should jump.
