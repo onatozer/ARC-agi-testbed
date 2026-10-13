@@ -126,7 +126,9 @@ These are changes to the model code that were needed to run the experiments at a
    `_guidance` uses the posterior whenever `self.training`, with the `is_grad_enabled()` gate commented out),
    and the likely source of the 94% train / 6% test gap. Now: no-grad cycles sample the prior (as at eval), the
    grad cycle searches and pays the KL. Also 3× fewer searches per forward. Every run from `v2_*` on has this;
-   earlier TreeRM rows are the leaky version.
+   earlier TreeRM rows are the leaky version. The three leaky-version runs relaunched after the reboot were
+   cancelled at step ~500 (per the user) and replaced by v2 runs: `v2_lr3e-4`, `v2_lr1e-3`, `v2_lr1e-4`,
+   `v2_lr5e-4`, `v2_lr1e-3_heads0.3`, `v2_lr1e-3_heads0.1`, then `v2_vb0.5_lr3e-4`.
 
 ## 3. Results
 
