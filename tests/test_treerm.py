@@ -15,7 +15,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -188,3 +188,19 @@ def test_treerm_searches_only_on_grad_cycles():
     inner._search = lambda *args, **kwargs: calls.append(torch.is_grad_enabled()) or original(*args, **kwargs)
     model.model(carry=model.initial_carry(batch), batch=batch)
     assert calls == [True]  # one search, on the grad cycle
+
+
+@needs_cuda
+def test_treerm_prior_rollouts_pick_candidates_inside_rollouts():
+    model, batch = _treerm_head(rollout_policy="prior")
+    model.train()
+    inner = model.model.inner
+    calls = []
+    original = inner.candidate_scorer.forward
+    inner.candidate_scorer.forward = lambda *args, **kwargs: calls.append(1) or original(*args, **kwargs)
+    with torch.no_grad():
+        shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+        z_H, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
+        states = [(b, z_H[b], z_L[b]) for b in range(shape[0])]
+        values = inner._rollout_values(states, [2] * shape[0], x, batch["labels"])
+    assert len(values) == shape[0] and len(calls) == 2  # one scorer call per rollout update

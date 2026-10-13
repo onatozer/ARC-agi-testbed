@@ -61,6 +61,8 @@ class TreeRMInner(GRAM_Inner):
 
         if self.config.mcts_horizon not in ("step", "full"):
             raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
+        if self.config.rollout_policy not in ("trm", "prior"):
+            raise ValueError(f"rollout_policy must be 'trm' or 'prior', got {self.config.rollout_policy!r}.")
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
@@ -148,7 +150,14 @@ class TreeRMInner(GRAM_Inner):
                 break
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+            u_t = self.L_level(z_H, z_L, **seq_dict)
+            if self.config.rollout_policy == "prior":
+                # Follow the policy being trained: the scorer's argmax candidate, as the no-grad cycles and eval do
+                cand = self._candidates(z_L, u_t)
+                best = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).argmax(dim=-1)
+                z_H = cand[torch.arange(cand.shape[0], device=cand.device), best]
+            else:
+                z_H = u_t
 
         if self.training and self.config.value_bootstrap_weight > 0:
             self._bootstrap.append((leaf_token, targets))
