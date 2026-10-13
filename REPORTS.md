@@ -212,6 +212,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_argmax | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.486 | 0.871 | 0.97 | 59 min† | + argmax_pick: within the vb band → the eval sample isn't the mechanism |
 | treerm128_v2_flags_lr1e-3_heads0.1_argmax | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.230 | 0.857 | 0.88 | 58 min† | argmax_pick without vb: +4 over the sampled recipe (81.3). vb (+9) and argmax (+4) don't add |
 | **treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims16** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.018 | 0.668 | **0.953** | 0.91 | 70 min† | + eval_mcts_simulations=16: best run. Ahead at every step (@1250 = 0.203, @1750 = 0.889); eval search overrides the prior in 64% of searches |
+| treerm128_v2_flags_lr1e-3_heads0.1_K8 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.049 | 0.678 | 0.89 | 50 min† | K=8, 12 sims: below K=4 (0.813). More flags don't help at this budget |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
