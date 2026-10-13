@@ -190,6 +190,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | 0 | 0 | 0 | 0.000 | 0.00 | 43 min† | full-vector candidates never learn at 1e-3 |
 | treerm128_v2_lr1e-3_heads0.3 | TreeRM | 888k | 1e-3 / heads 3e-4 | 2000 | 0 | 0.002 | 0.064 | **0.564** | 0.83 | 47 min† | param_lr_scales candidate_=0.3: @1750 = 0.279 |
 | treerm128_v2_lr1e-3_heads0.1 | TreeRM | 888k | 1e-3 / heads 1e-4 | 2000 | 0 | 0 | 0.025 | **0.557** | 0.95 | 48 min† | candidate_=0.1: @1750 = 0.209 |
+| treerm128_v2_flags_K1_lr5e-4 | TreeRM | ~530k | 5e-4 | 2000 | 0 | 0 | 0.182 | **0.736** | 0.91 | 24 min† | **K=1 control** (no choice): = TRM-128 (0.668 at 5e-4). @1750 = 0.488 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -352,6 +353,23 @@ Reading: the backbone wants 1e-3 (TRM's optimum); the candidate heads diverge at
 control, h=192 → 2%, pointed the same way) and at a uniform lower lr the backbone under-trains. Decoupling the
 two lrs fixes most of the gap: TreeRM is now ~12 points behind TRM-128 at parity width, rather than 50.
 Next: flags + scaled heads (running), argmax pick, a seed replicate, value bootstrap on top.
+
+### 7. The K=1 control: the scaffold is free, the choice is what costs
+`flags_K1_lr5e-4` (one candidate, so no choice, KL ≡ 0, but the same code path, LPRM head and losses) reaches
+**73.6%** — equal to TRM-128 (66.8% at 5e-4, 72.5% at 1e-3). So nothing in the scaffold hurts. The same model
+with K=4 at the same lr: 22.9% (full) / ~? (flags, running). Everything the K>1 machinery adds is what loses
+the points: (a) a *random* candidate (Gumbel sample from the prior) at every no-grad cycle and at eval, which
+before the flags mean anything is pure noise injected into the recursion 3× per forward; (b) the KL and the
+straight-through gradient through the selection; (c) the heads' lr (now handled). Runs in flight separate
+these: `kl0` (no KL), `heads0.3_argmax` (deterministic pick), flags+heads.
+
+The deeper point. On the grad cycle the search picks by label CE, and the diagnostics show the prior learns to
+predict that pick (argmax_agree 0.97, KL 0.014 nats). If the pick is predictable from the state, it carries no
+information the network couldn't compute itself; if it isn't, the prior can't reproduce it at eval. That is
+the ELBO's tension (GRAM's too). The way a search model can actually *beat* TRM is test-time: K branches
+explored with a value head that ranks them, i.e. test-time compute. That needs (1) K>1 not to hurt (this
+section), (2) a value head that ranks candidates (value bootstrapping, `vb0.5` queued), (3) then more eval
+simulations. Working through those in order.
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
