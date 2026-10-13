@@ -162,7 +162,11 @@ class TreeRMInner(GRAM_Inner):
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
         )
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
-        return torch.log((visits / visits.sum(dim=-1, keepdim=True)).clamp_min(1e-8))
+        posterior = visits / visits.sum(dim=-1, keepdim=True)
+        # Mix in the uniform so a one-hot visit distribution can't drive the prior's logits to infinity through the KL
+        eps = self.config.posterior_smoothing
+        posterior = (1 - eps) * posterior + eps / posterior.shape[-1]
+        return torch.log(posterior.clamp_min(1e-8))
 
     def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> Tuple[torch.Tensor, torch.Tensor | int]:
         """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
