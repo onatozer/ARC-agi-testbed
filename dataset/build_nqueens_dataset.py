@@ -265,7 +265,8 @@ def convert_subset(set_name: str, config: DictConfig):
             puzzle_id += 1
             
             results["puzzle_indices"].append(example_id)
-            results["puzzle_identifiers"].append(0)
+            # 0 is the blank identifier that marks batch padding, so real puzzles must not use it
+            results["puzzle_identifiers"].append(1)
         
         # Push group (all augmentations of same puzzle belong to one group)
         results["group_indices"].append(puzzle_id)
@@ -293,7 +294,7 @@ def convert_subset(set_name: str, config: DictConfig):
         pad_id=0,
         ignore_label_id=0,  # We want to predict all cells
         blank_identifier_id=0,
-        num_puzzle_identifiers=1,
+        num_puzzle_identifiers=2,  # 0 = <blank> (padding), 1 = nqueens
         total_groups=len(results["group_indices"]) - 1,
         mean_puzzle_examples=1,
         total_puzzles=len(results["group_indices"]) - 1,
@@ -314,7 +315,7 @@ def convert_subset(set_name: str, config: DictConfig):
     
     # Save identifiers mapping (for visualization)
     with open(os.path.join(config.output_dir, "identifiers.json"), "w") as f:
-        json.dump(["<blank>"], f)
+        json.dump(["<blank>", "nqueens"], f)
     
     print(f"Saved {set_name} dataset to {save_dir}")
     print(f"  - Total examples: {len(results['inputs'])}")

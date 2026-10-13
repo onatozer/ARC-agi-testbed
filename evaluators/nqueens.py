@@ -5,6 +5,8 @@ This evaluator computes accuracy metrics for N-Queens puzzle solving.
 It checks if predicted solutions are valid (no conflicts) and match the ground truth.
 
 Metrics computed:
+- Accuracy: Percentage of predictions that are valid N-Queens solutions and keep every queen given in the input
+  (the GRAM paper's N-Queens accuracy; any valid completion counts, not just the stored label)
 - Exact match accuracy: Percentage of puzzles where prediction exactly matches label
 - Valid solution rate: Percentage of predictions that are valid N-Queens solutions
 - Constraint satisfaction: Average percentage of satisfied constraints per puzzle
@@ -29,7 +31,7 @@ class NQueens:
     """
     
     # Specify which outputs from the model we need
-    required_outputs = {"preds", "labels"}
+    required_outputs = {"inputs", "preds", "labels"}
     
     def __init__(self, 
                  data_path: str, 
@@ -52,6 +54,7 @@ class NQueens:
             'total': 0,
             'exact_match': 0,
             'valid_solutions': 0,
+            'valid_consistent': 0,
             'total_constraints': 0,
             'satisfied_constraints': 0
         }
@@ -65,6 +68,7 @@ class NQueens:
             'total': 0,
             'exact_match': 0,
             'valid_solutions': 0,
+            'valid_consistent': 0,
             'total_constraints': 0,
             'satisfied_constraints': 0
         }
@@ -80,7 +84,8 @@ class NQueens:
         # Move tensors to CPU for processing
         predictions = preds["preds"].cpu().numpy()  # Shape: (batch_size, seq_len)
         labels = batch["labels"].cpu().numpy()      # Shape: (batch_size, seq_len)
-        
+        inputs = batch["inputs"].cpu().numpy()      # Shape: (batch_size, seq_len)
+
         # Get puzzle identifiers to filter out padding
         if "puzzle_identifiers" in batch:
             puzzle_ids = batch["puzzle_identifiers"].cpu().numpy()
@@ -88,9 +93,10 @@ class NQueens:
             mask = puzzle_ids != self.blank_identifier_id
             predictions = predictions[mask]
             labels = labels[mask]
-        
+            inputs = inputs[mask]
+
         # Process each puzzle in the batch
-        for pred_flat, label_flat in zip(predictions, labels):
+        for pred_flat, label_flat, input_flat in zip(predictions, labels, inputs):
             # Decode: vocabulary is 0 (PAD), 1 (empty), 2 (queen)
             # Subtract 1 to get: -1 (PAD), 0 (empty), 1 (queen)
             # Then clip to get: 0 (empty), 1 (queen)
@@ -108,6 +114,10 @@ class NQueens:
             is_valid, num_satisfied, num_total = self._check_solution_validity(pred_board)
             if is_valid:
                 self._local_stats['valid_solutions'] += 1
+                # The paper's accuracy: a valid board that also keeps every queen given in the input
+                given_queens = input_flat.reshape(self.board_size, self.board_size) == 2
+                if np.all(pred_board[given_queens] == 1):
+                    self._local_stats['valid_consistent'] += 1
             
             # 3. Track constraint satisfaction
             self._local_stats['satisfied_constraints'] += num_satisfied
@@ -189,7 +199,8 @@ class NQueens:
             self._local_stats['exact_match'],
             self._local_stats['valid_solutions'],
             self._local_stats['satisfied_constraints'],
-            self._local_stats['total_constraints']
+            self._local_stats['total_constraints'],
+            self._local_stats['valid_consistent']
         ], dtype=torch.float32, device='cuda')
         
         # Gather statistics from all processes to rank 0
@@ -204,17 +215,20 @@ class NQueens:
         total = int(stats_tensor[0].item())
         exact_match = int(stats_tensor[1].item())
         valid_solutions = int(stats_tensor[2].item())
+        valid_consistent = int(stats_tensor[5].item())
         satisfied_constraints = int(stats_tensor[3].item())
         total_constraints = int(stats_tensor[4].item())
         
         # Compute metrics
         if total == 0:
             return {
+                'NQueens/accuracy': 0.0,
                 'NQueens/exact_match_accuracy': 0.0,
                 'NQueens/valid_solution_rate': 0.0,
                 'NQueens/constraint_satisfaction': 0.0
             }
         
+        accuracy = valid_consistent / total
         exact_match_accuracy = exact_match / total
         valid_solution_rate = valid_solutions / total
         constraint_satisfaction = satisfied_constraints / total_constraints if total_constraints > 0 else 0.0
@@ -226,10 +240,12 @@ class NQueens:
         print(f"Total puzzles evaluated: {total}")
         print(f"Exact matches: {exact_match} ({exact_match_accuracy*100:.2f}%)")
         print(f"Valid solutions: {valid_solutions} ({valid_solution_rate*100:.2f}%)")
+        print(f"Valid and consistent with the given queens (accuracy): {valid_consistent} ({accuracy*100:.2f}%)")
         print(f"Constraint satisfaction: {satisfied_constraints}/{total_constraints} ({constraint_satisfaction*100:.2f}%)")
         print("="*80 + "\n")
         
         return {
+            'NQueens/accuracy': accuracy,
             'NQueens/exact_match_accuracy': exact_match_accuracy,
             'NQueens/valid_solution_rate': valid_solution_rate,
             'NQueens/constraint_satisfaction': constraint_satisfaction
