@@ -255,7 +255,10 @@ class TreeRMInner(GRAM_Inner):
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
         logits = prior_logits + (post_logits - prior_logits).detach()
-        weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
+        if self.config.argmax_pick and not torch.is_grad_enabled():
+            weights = F.one_hot(logits.argmax(dim=-1), logits.shape[-1]).float()
+        else:
+            weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         diag = self._search_diagnostics(cand, prior_logits, post_logits)

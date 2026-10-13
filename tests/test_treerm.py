@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -222,3 +222,16 @@ def test_flag_candidates_are_u_t_plus_orthonormal_directions():
     # At init the gate is 1, so each slot's offset is sqrt(H) * e_k at every token
     expected = (math.sqrt(inner.config.hidden_size) * directions)[None, :, None, :].expand_as(delta)
     torch.testing.assert_close(delta, expected, atol=0.1, rtol=0.02)
+
+
+@needs_cuda
+def test_treerm_argmax_pick_is_deterministic_at_eval():
+    model, batch = _treerm_head(argmax_pick=True)
+    model.eval()
+    inner = model.model.inner
+    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+    u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
+    with torch.inference_mode():
+        a, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
+        b, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
+    torch.testing.assert_close(a, b)
