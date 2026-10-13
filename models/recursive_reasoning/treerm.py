@@ -198,7 +198,10 @@ class TreeRMInner(GRAM_Inner):
         weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
-        return z_H, kl_loss, self._search_diagnostics(cand, prior_logits, post_logits)
+        diag = self._search_diagnostics(cand, prior_logits, post_logits)
+        with torch.no_grad():  # candidate norm relative to the TRM update it replaces
+            diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
+        return z_H, kl_loss, diag
 
     @staticmethod
     def _pairwise_cosine(cand: torch.Tensor) -> torch.Tensor:

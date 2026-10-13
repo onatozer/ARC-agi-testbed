@@ -141,6 +141,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | 0 | 0.002 | 0.029 | **0.316** | 0.95 (label-informed) | 46 min† | unfixed search. 3x the lr-1e-3 run; TRM @3e-4 = 0.383 |
 | treerm128_K2_s8 | TreeRM | ~820k | 1e-3 | 2000 | 0 | 0 | 0.014 | 0.117 | 0.66 (label-informed) | 53 min† | K=2: same as K=4 |
 | treerm128_noevalsearch | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.010 | 0.078 | 0.63 (label-informed) | 43 min† | eval_search=false: eval search worth ≤2 pts |
+| treerm192_lr1e-3 | TreeRM | ~1.5M | 1e-3 | 2000 | 0 | 0.002 | 0.006 | 0.020 | 0.16 | 63 min† | width control (not parity): wider is *worse* at 1e-3 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
