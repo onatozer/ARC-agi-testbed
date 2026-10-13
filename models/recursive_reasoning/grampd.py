@@ -10,7 +10,9 @@ from models.losses.base import kl_balanced_logits
 from ..layers import (
     CastedEmbedding,
     CastedLinear,
+    CosSin,
     SwiGLU,
+    apply_rotary_pos_emb,
     rms_norm,
 )
 from .merged_arch import ModelCarry, _add_puzzle_emb_positions
@@ -36,39 +38,71 @@ class CandidateHead(nn.Module):
 
 
 class CandidateScorer(nn.Module):
-    """Logits over the candidates: a per-token query from the context, dotted with each candidate and averaged
-    over the sequence, so each logit sees the whole latent and the whole candidate. [B, S, H] x [B, K, S, H] -> [B, K]."""
+    """Logits over the candidates by cross-attention: for each candidate, the context tokens (queries) attend over that
+    candidate's tokens (keys / values), the attended tokens are averaged and a linear layer gives the logit.
+    [B, S, H] x [B, K, S, H] -> [B, K]."""
 
-    def __init__(self, hidden_size: int, expansion: float, norm_eps: float = 1e-5):
+    def __init__(self, hidden_size: int, num_heads: int, norm_eps: float = 1e-5):
         super().__init__()
 
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
         self.norm_eps = norm_eps
-        self.mlp = SwiGLU(hidden_size, expansion)
-        self.to_query = CastedLinear(hidden_size, hidden_size, bias=False)
+        self.q_proj = CastedLinear(hidden_size, hidden_size, bias=False)
+        self.kv_proj = CastedLinear(hidden_size, 2 * hidden_size, bias=False)
+        self.o_proj = CastedLinear(hidden_size, hidden_size, bias=False)
+        self.to_logit = CastedLinear(hidden_size, 1, bias=True)
 
-    def forward(self, ctx: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
-        query = self.to_query(self.mlp(rms_norm(ctx, variance_epsilon=self.norm_eps)))
-        seq_len, hidden_size = ctx.shape[-2:]
-        return torch.einsum("bsh,bksh->bk", query.float(), cand.float()) / (seq_len * math.sqrt(hidden_size))
+    def forward(self, ctx: torch.Tensor, cand: torch.Tensor, cos_sin: CosSin) -> torch.Tensor:
+        batch_size, num_candidates, seq_len, hidden_size = cand.shape
+
+        # One attention problem per (puzzle, candidate): the same context queries against each candidate's tokens
+        query = self.q_proj(rms_norm(ctx, variance_epsilon=self.norm_eps)).view(batch_size, 1, seq_len, self.num_heads, self.head_dim)
+        query = query.expand(-1, num_candidates, -1, -1, -1).reshape(batch_size * num_candidates, seq_len, self.num_heads, self.head_dim)
+        kv = self.kv_proj(rms_norm(cand, variance_epsilon=self.norm_eps)).view(batch_size * num_candidates, seq_len, 2, self.num_heads, self.head_dim)
+        key, value = kv.unbind(2)
+
+        # Context token s and candidate token s are the same cell, so both get that cell's RoPE position
+        if cos_sin is not None:
+            cos, sin = cos_sin
+            query, key = apply_rotary_pos_emb(query, key, cos, sin)
+
+        # [B*K, S, heads, head_dim] -> [B*K, heads, S, head_dim] for SDPA, then back
+        attended = F.scaled_dot_product_attention(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
+        attended = self.o_proj(attended.transpose(1, 2).reshape(batch_size * num_candidates, seq_len, hidden_size))
+
+        return self.to_logit(attended.mean(dim=1)).view(batch_size, num_candidates).float()
 
 
-class PosteriorCandidateScorer(CandidateScorer):
-    """CandidateScorer whose context also sees the labels y, embedded as in gram.PosteriorHead."""
+class LabelEncoder(nn.Module):
+    """Mixes the labels y into u_t for the posterior, embedded as in gram.PosteriorHead.
+    [B, S, H] x [B, S - puzzle_emb_len] -> [B, S, H]."""
 
-    def __init__(self, hidden_size: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype, expansion: float, norm_eps: float = 1e-5):
-        super().__init__(hidden_size, expansion, norm_eps)
+    def __init__(self, hidden_size: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype):
+        super().__init__()
         self.puzzle_emb_len = puzzle_emb_len
         self.embedding = CastedEmbedding(vocab_size, hidden_size, 1.0 / math.sqrt(hidden_size), dtype)
         self.combine = CastedLinear(2 * hidden_size, hidden_size, bias=False)
 
-    def forward(self, u_t: torch.Tensor, y: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
+    def forward(self, u_t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # Ignored label positions have no target token, so they get the pad token (0)
         y = torch.where(y == IGNORE_LABEL_ID, 0, y)
         y = self.embedding(y.to(torch.int32)) * math.sqrt(u_t.shape[-1])
         # The puzzle embedding prefix has no target, so its slots are zeros
         y = F.pad(y, (0, 0, self.puzzle_emb_len, 0))
+        return self.combine(torch.cat([u_t, y], dim=-1))
 
-        return super().forward(self.combine(torch.cat([u_t, y], dim=-1)), cand)
+
+class PosteriorCandidateScorer(nn.Module):
+    """Posterior logits over the candidates: its own CandidateScorer, with the labels mixed into the context first."""
+
+    def __init__(self, hidden_size: int, num_heads: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype, norm_eps: float = 1e-5):
+        super().__init__()
+        self.label_encoder = LabelEncoder(hidden_size, vocab_size, puzzle_emb_len, dtype)
+        self.scorer = CandidateScorer(hidden_size, num_heads, norm_eps)
+
+    def forward(self, u_t: torch.Tensor, y: torch.Tensor, cand: torch.Tensor, cos_sin: CosSin) -> torch.Tensor:
+        return self.scorer(self.label_encoder(u_t, y), cand, cos_sin)
 
 
 class GRAMDP_Inner(GRAM_Inner):
@@ -87,15 +121,15 @@ class GRAMDP_Inner(GRAM_Inner):
         # Replace GRAM's Gaussian prior / posterior heads
         self.prior_head = CandidateScorer(
             hidden_size=self.config.hidden_size,
-            expansion=self.config.expansion,
+            num_heads=self.config.num_heads,
             norm_eps=self.config.rms_norm_eps,
         )
         self.posterior_head = PosteriorCandidateScorer(
             hidden_size=self.config.hidden_size,
+            num_heads=self.config.num_heads,
             vocab_size=self.config.vocab_size,
             puzzle_emb_len=self.config.puzzle_emb_len,
             dtype=self.forward_dtype,
-            expansion=self.config.expansion,
             norm_eps=self.config.rms_norm_eps,
         )
         # Straight-through gradient temperature; a buffer so GRAMDP can anneal it each step without recompiling
@@ -105,12 +139,13 @@ class GRAMDP_Inner(GRAM_Inner):
         """Samples the guidance eps for u_t as one of the candidates, with its beta-weighted balanced KL: drawn from the
         posterior q(k | u_t, y) in training, otherwise from the prior p(k | u_t) with no KL."""
         cand = self.candidate_head(u_t)
-        prior_logits = self.prior_head(u_t, cand)
+        cos_sin = self._cos_sin()
+        prior_logits = self.prior_head(u_t, cand, cos_sin)
 
         kl_loss = 0
         logits = prior_logits
         if self.training:
-            post_logits = self.posterior_head(u_t, y, cand)
+            post_logits = self.posterior_head(u_t, y, cand, cos_sin)
 
             # Only the grad cycles pay the KL
             if torch.is_grad_enabled():

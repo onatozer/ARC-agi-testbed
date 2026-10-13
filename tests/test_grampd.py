@@ -91,6 +91,29 @@ def test_grampd_eps_is_exactly_one_candidate(training):
     assert (dist.amin(-1) < 1e-2).all()
 
 
+def test_candidate_scorer_ranking_depends_on_context_and_cell_positions():
+    model, batch = _grampd_head()
+    inner = model.model.inner
+    torch.manual_seed(1)
+    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+    u_a, u_b = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(2))
+    with torch.no_grad():
+        inner.prior_head.to_logit.weight.normal_()  # the zero-mean init makes the logits tiny; spread them out
+        cand = inner.candidate_head(u_a)
+        cos_sin = inner._cos_sin()
+        logits_a = inner.prior_head(u_a, cand, cos_sin)
+        logits_b = inner.prior_head(u_b, cand, cos_sin)
+        logits_rolled = inner.prior_head(u_a, cand.roll(1, dims=2), cos_sin)
+
+    def centred(x):  # softmax ignores a shift shared by every candidate, so compare the logits relative to their mean
+        return x - x.mean(-1, keepdim=True)
+
+    # Same candidates, different context -> a different preference among them (not only a shared shift)
+    assert (centred(logits_a) - centred(logits_b)).abs().max() > 1e-3
+    # Same context, candidate content moved to different cells -> different preference (RoPE aligns cells)
+    assert (centred(logits_a) - centred(logits_rolled)).abs().max() > 1e-3
+
+
 def test_grampd_anneals_gumbel_temperature_with_global_step():
     model, batch = _grampd_head(gumbel_temp=1.0, gumbel_temp_min=0.5, gumbel_anneal_steps=100)
     model.train()
