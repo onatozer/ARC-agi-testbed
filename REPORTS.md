@@ -207,6 +207,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_lr1e-3_heads0.1_s2 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.271 | 0.799 | 0.95 | 53 min† | seed 2. **Recipe over 3 seeds: 81.1 / 82.8 / 79.9 (mean 81.3)** vs TRM 66–74 |
 | treerm128_v2_flags_lr2e-3_heads0.1 | TreeRM | ~790k | 2e-3 / heads 2e-4 | (1750) | 0 | 0.004 | 0.117 | – | – | – | @1750 = 0.283 (1e-3: 0.63–0.74): backbone lr too high. Killed at 1874 when the GPU saturated |
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_s1 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.008 | 0.562 | **0.873** | 0.92 | 54 min† | vb seed 1. **vb over 2 seeds: 93.0 / 87.3 (mean 90.2)** vs recipe 81.3 |
+| treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_argmax | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.486 | 0.871 | 0.97 | 59 min† | + argmax_pick: within the vb band → the eval sample isn't the mechanism |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
