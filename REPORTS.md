@@ -114,6 +114,12 @@ These are changes to the model code that were needed to run the experiments at a
    lr 1e-3 on this tier but TreeRM's candidate generator / scorer blow up there (§5), so the backbone and the
    heads may want different lrs. Unit-tested and smoke-run; queued as `heads0.3` / `heads0.1` at lr 1e-3.
 
+6. **`value_bootstrap_weight`** (backlog item a). Every leaf the training search visits gets a rollout; the
+   rollout's token accuracy is recorded as a target for the LPRM value head evaluated at that leaf's own state
+   (first token, rms-normed, as the head sees in `forward`). On grad cycles the head pays
+   weight × MSE summed over puzzles / averaged over the search's leaves. The head otherwise sees one bit per
+   puzzle per 8 forwards (final exact-match), which is why the eval search has been inert. Queued as `vb0.5`.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
