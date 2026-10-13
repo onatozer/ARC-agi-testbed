@@ -187,6 +187,9 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_lr5e-4 | TreeRM | 888k | 5e-4 | 2000 | 0 | 0 | 0.031 | **0.229** | 0.80 | 29 min† | @1250 = 0.008, @1750 = 0.111; still steep |
 | treerm128_v2_lr1e-4 | TreeRM | 888k | 1e-4 | 2000 | 0 | 0 | 0.002 | 0.016 | 0.25 | 30 min† | too low |
 | treerm128_v2_flags_lr3e-4 | TreeRM | ~790k | 3e-4 | 2000 | 0 | 0 | 0.031 | **0.361** | 0.86 | 34 min† | candidate_mode=flags: @1750 = 0.133. Best TreeRM so far; cand_div grows 0.03 → 0.11 |
+| treerm128_v2_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | 0 | 0 | 0 | 0.000 | 0.00 | 43 min† | full-vector candidates never learn at 1e-3 |
+| treerm128_v2_lr1e-3_heads0.3 | TreeRM | 888k | 1e-3 / heads 3e-4 | 2000 | 0 | 0.002 | 0.064 | **0.564** | 0.83 | 47 min† | param_lr_scales candidate_=0.3: @1750 = 0.279 |
+| treerm128_v2_lr1e-3_heads0.1 | TreeRM | 888k | 1e-3 / heads 1e-4 | 2000 | 0 | 0 | 0.025 | **0.557** | 0.95 | 48 min† | candidate_=0.1: @1750 = 0.209 |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -339,6 +342,16 @@ to `~/ARC-agi-testbed/autoresearch_runs/`, both outside `/tmp`. Relaunched at 10
 `cand_div` 0.73 → 0.04 by step 400, posterior entropy ~1.28 (near-uniform over K=4), `kl_nats` ~0.08,
 `argmax_agree` ~0.8, `cand_norm_ratio` 1.35 (3e-4) / 2.5 (5e-4) — the generator makes candidates larger than
 u_t. The leak fix doesn't touch the collapse. → backlog (c), implemented as `candidate_mode: flags`.
+
+### 6. The heads' learning rate was the dominant problem
+References at equal width: TRM h=128 gets 72.5% (lr 1e-3), 66.8% (5e-4), 69.3% (no ACT). So neither width,
+nor lr per se, nor the always-8-steps regime explains TreeRM's 16–36%.
+With `param_lr_scales`: backbone at 1e-3, candidate generator + scorer at 0.3× or 0.1× → **56.4% / 55.7%**
+(full-vector candidates, grad-cycle-only search). Same model at a uniform lr 1e-3 → 0.0%; at 5e-4 → 22.9%.
+Reading: the backbone wants 1e-3 (TRM's optimum); the candidate heads diverge at 1e-3 (the earlier width
+control, h=192 → 2%, pointed the same way) and at a uniform lower lr the backbone under-trains. Decoupling the
+two lrs fixes most of the gap: TreeRM is now ~12 points behind TRM-128 at parity width, rather than 50.
+Next: flags + scaled heads (running), argmax pick, a seed replicate, value bootstrap on top.
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
