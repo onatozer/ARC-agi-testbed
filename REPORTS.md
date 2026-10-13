@@ -130,6 +130,11 @@ These are changes to the model code that were needed to run the experiments at a
    cancelled at step ~500 (per the user) and replaced by v2 runs: `v2_lr3e-4`, `v2_lr1e-3`, `v2_lr1e-4`,
    `v2_lr5e-4`, `v2_lr1e-3_heads0.3`, `v2_lr1e-3_heads0.1`, then `v2_vb0.5_lr3e-4`.
 
+8. **`rollout_policy: prior`** (backlog item d). Rollouts take the scorer's argmax candidate at each update
+   instead of the plain TRM update, so a candidate's value means "take it, then keep following the policy" —
+   consistent with what the no-grad cycles and eval actually do. Roughly doubles rollout cost. Queued as
+   `rollprior`.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
