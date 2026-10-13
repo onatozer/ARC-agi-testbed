@@ -33,7 +33,7 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
@@ -126,3 +126,14 @@ def test_gram_lprm_head_trains_and_outputs_value():
         _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
     value = outputs["lprm_value"]
     assert value.shape == (batch["inputs"].shape[0],) and ((value > 0) & (value < 1)).all()
+
+
+def test_gram_prior_traj_is_drawn_per_puzzle_and_kept_until_reset():
+    model, batch = _gram_head(prior_sample_frac=0.5, prior_sample_per_puzzle=True)
+    model.train()
+    carry = model.initial_carry(batch)
+    carry, *_ = model(return_keys=[], carry=carry, batch=batch)
+    flags = carry.current_data["prior_traj"].clone()
+    for _ in range(model.model.config.halt_max_steps - 1):
+        carry, *_ = model(return_keys=[], carry=carry, batch=batch)
+        assert torch.equal(carry.current_data["prior_traj"], flags)

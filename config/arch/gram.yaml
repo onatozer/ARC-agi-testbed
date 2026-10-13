@@ -15,3 +15,6 @@ kl_grad_prior: 0.8 # KL balancing alpha: share of the KL gradient that trains th
 kl_strength: 0.05 # KL weight beta; the paper uses 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2, 0.07 N-Queens 8x8
 # No halt head: every puzzle runs halt_max_steps supervision steps, so halt_exploration_prob / act_inference / halt_* don't apply
 grad_cycles: 1 # how many of the H_cycles carry the gradient (and the posterior + its KL); 1 is the paper's truncation
+posterior_nograd_cycles: False # also sample the posterior in the no-grad cycles while training (they pay no KL, so y leaks into z_H for free)
+prior_sample_frac: 0.0 # fraction of puzzles whose grad cycle takes the prior's guidance instead of the posterior's (lm loss on the inference trajectory)
+prior_sample_per_puzzle: False # draw the prior_sample_frac choice once per puzzle (its whole trajectory) instead of at every supervision step

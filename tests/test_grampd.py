@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUD
 
 def _grampd_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "noise_options": 4, "gumbel_temp": 1.0, "gumbel_temp_min": 0.5, "gumbel_anneal_steps": 100, **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "noise_options": 4, "gumbel_temp": 1.0, "gumbel_temp_min": 0.5, "gumbel_anneal_steps": 100, "usage_entropy_weight": 0.0, **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAMDP(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
@@ -85,7 +85,7 @@ def test_grampd_eps_is_exactly_one_candidate(training):
     u_t = torch.randn(batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
     with torch.no_grad():
         cand = inner.candidate_head(u_t)
-        eps, _ = inner._guidance(u_t, batch["labels"])
+        eps, _ = inner._guidance(u_t, batch["labels"], use_posterior=training)
     # Gumbel-max forward pass: eps is one of the candidates, not a blend of several
     dist = (eps.float().unsqueeze(1) - cand.float()).flatten(2).abs().amax(-1)
     assert (dist.amin(-1) < 1e-2).all()
