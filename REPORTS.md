@@ -84,7 +84,7 @@ steps. `exact` = exact match with the stored label at 3k. Wall-clock is the full
 
 | run | arch | params | lr | acc @1k | acc @2k | acc @3k | exact @3k | wall | notes |
 |---|---|---|---|---|---|---|---|---|---|
-| trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | | | | baseline |
+| trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | 0.210 | 0.210 | 12.3 min | baseline |
 | trm192_lr1e-3 | TRM | 886k | 1e-3 | | | | | | baseline |
 | gram112_lr3e-4 | GRAM | 865k | 3e-4 | | | | | | baseline |
 | gram112_lr1e-3 | GRAM | 865k | 1e-3 | | | | | | baseline |
@@ -108,9 +108,12 @@ steps. `exact` = exact match with the stored label at 3k. Wall-clock is the full
 TRM and GRAM at parity, lr in {3e-4, 1e-3}. The lr sweep is there because TRM's default 1e-4 is for 50k-step
 runs; at 3k steps a higher lr is probably needed, and I don't want to handicap the baselines.
 
-Interim: TRM 3e-4 gets 0.8% at 1k, 13.2% at 2k; train exact-match 20% at step ~2300. So the budget is in the
+TRM 3e-4: 0.8% / 13.2% / 21.0% at 1k / 2k / 3k, 12.3 min. Still climbing steeply at 3k, so the budget is in the
 regime where the model is just starting to solve boards — differences between archs should show up here rather
-than being saturated away.
+than being saturated away. Observation: `NQueens/accuracy` == `exact_match` == `valid_solution_rate` on every eval,
+i.e. every valid board the model produces is exactly the stored label. With 95% of test givens seen in train, the
+model is recalling the train solution for those givens rather than searching for any valid completion. Nothing
+wrong with that for the comparison, but "accuracy" here is close to "recall of a memorised label".
 
 ### 2. First TreeRM sweep (queue q2, queued behind q1)
 Four single-change variants off a base of K=4, 8 simulations, horizon=step, c_puct=1.25, gumbel_temp=1.0,
