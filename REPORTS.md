@@ -459,7 +459,7 @@ which fits vb's smaller, opaque gain there.
 8 training simulations, `kl_strength=0.05`, plus `+param_lr_scales.candidate_=0.1` and the backbone at TRM's
 best lr for the task (1e-3 on 6x6 Sudoku, 3e-4 on 8x8 N-Queens). These are now the defaults in
 `config/arch/treerm.yaml` (the lr scale is a train-config override, documented there).
-Scorecard at parity params and budget: Sudoku 95.3% (TRM 66–74%), N-Queens 48–52% (TRM 20–21%).
+Scorecard at parity params and budget: Sudoku 87–95% over 5 vb runs (TRM 66–74%), N-Queens 48–52% (TRM 20–21%).
 Still open: K=8 was worse (67.8%); 32 eval sims and vb weight 1.0 running; vb's Sudoku gain at 8 sims is
 real but the search barely overrides the prior there — more sims is what converts the value head into accuracy.
 
