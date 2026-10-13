@@ -202,6 +202,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_kl0_lr5e-4 | TreeRM | ~790k | 5e-4 | 2000 | 0 | 0 | 0 | 0.000 | 0.00 | 73 min† | kl_strength=0: never learns, even on train. The KL is load-bearing |
 | **treerm128_v2_flags_lr1e-3_heads0.1_s1** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.463 | **0.828** | 0.94 | 35 min† | seed 1 replicate. @1750 = 0.736 |
 | treerm128_v2_flags_lr1e-3_heads0.03 | TreeRM | ~790k | 1e-3 / heads 3e-5 | 2000 | 0 | 0.002 | 0.207 | 0.734 | 0.88 | 37 min† | heads too slow: 0.1–0.3× is the range. @1750 = 0.562 |
+| **treerm128_v2_flags_lr1e-3_heads0.1_vb0.5** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.516 | **0.930** | 0.94 | 51 min† | + value_bootstrap_weight=0.5: @1750 = 0.824. +11 over the recipe, +20 over TRM |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -401,6 +402,15 @@ at 500-step intervals; TRM was 0.8 / 13.2 / 21.0 at 1k / 2k / 3k. Eval diagnosti
 overrides the prior's argmax in 28% of searches (10% on Sudoku), and `NQueens/accuracy` (33.5%) exceeds exact
 match (32.9%) — the first model here that solves some boards with a valid completion other than the memorised
 label. A TRM seed replicate is running so the baseline isn't a single seed; the lr 1e-3 TreeRM run follows.
+
+### 10. Value bootstrapping: 93.0% — mechanism not yet clear
+`vb0.5` on top of the recipe: **93.0%** (1500 / 1750: 51.6 / 82.4%) vs 81–83%. But the eval diagnostics say the
+search's mode agrees with the prior's argmax 100% of the time (91% without vb), and the bootstrap loss only
+trains the value head (leaf states are detached in the search). So the gain can't be "the search overrides
+the prior". Candidates: (i) a sharper posterior changes the *sampled* pick at eval (Gumbel sample from the
+visit distribution, not its argmax) — testable with `argmax_pick`; (ii) seed noise — seed 2 of the base recipe
+is tracking lower (63% at 1750), so the band may be wide; testable with a vb seed replicate; (iii) more eval
+simulations should help if the value head is now informative — `eval_mcts_simulations=16`. All three queued.
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
