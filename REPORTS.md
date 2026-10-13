@@ -211,6 +211,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_s1 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.008 | 0.562 | **0.873** | 0.92 | 54 min† | vb seed 1. **vb over 2 seeds: 93.0 / 87.3 (mean 90.2)** vs recipe 81.3 |
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_argmax | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.486 | 0.871 | 0.97 | 59 min† | + argmax_pick: within the vb band → the eval sample isn't the mechanism |
 | treerm128_v2_flags_lr1e-3_heads0.1_argmax | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.002 | 0.230 | 0.857 | 0.88 | 58 min† | argmax_pick without vb: +4 over the sampled recipe (81.3). vb (+9) and argmax (+4) don't add |
+| **treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims16** | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.018 | 0.668 | **0.953** | 0.91 | 70 min† | + eval_mcts_simulations=16: best run. Ahead at every step (@1250 = 0.203, @1750 = 0.889); eval search overrides the prior in 64% of searches |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -424,6 +425,14 @@ Update: vb replicate 87.3% (mean 90.2 over 2 seeds — real, not noise); vb + ar
 search's mode always equals the prior's argmax, "vb + argmax" follows the same trajectory as "no vb + argmax"
 — so the remaining question is whether deterministic picking alone explains ~87% and vb's extra (93%) came
 from sampling a better posterior. Control running: recipe + argmax_pick without vb.
+
+### 10b. Test-time compute works once the value head is trained
+`vb0.5 + eval_mcts_simulations=16`: **95.3%** (vb with 8 sims: 87.3–93.0; recipe 81.3; TRM 66–74), ahead at
+every eval step. With 8 eval simulations and K=4, 4 are forced root visits and only 4 are PUCT-guided, so the
+value head barely gets to steer (argmax_agree 1.0); with 16, 12 are guided and the search overrides the prior
+in 64% of searches. Mechanism for §10 resolved: vb's benefit is realised through eval-time search, and the
+amount of eval search is the knob. Resolves (i)–(iii): sampling is not it (argmax neutral), not seed noise,
+more simulations help.
 
 ### 11. N-Queens with value bootstrapping: 51.7% — and here the search visibly works
 Same recipe + `value_bootstrap_weight=0.5`, lr 3e-4: **51.7%** `NQueens/accuracy` vs 33.5% without vb and
