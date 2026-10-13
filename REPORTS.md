@@ -159,6 +159,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 |---|---|---|---|---|---|---|---|---|---|
 | trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | 0.210 | 0.210 | 12.3 min | baseline |
 | trm192_lr1e-3 | TRM | 886k | 1e-3 | 0.000 | 0.019 | 0.050 | 0.050 | 14.5 min* | baseline; lr too high |
+| trm192_lr3e-4_s1 | TRM | 886k | 3e-4 | 0 | 0.123 | 0.204 | – | 49 min† | seed 1: baseline is stable at ~0.21 |
 | gram112_lr3e-4 | GRAM | 865k | 3e-4 | 0.001 | 0.016 | 0.031 | 0.031 | 17.0 min* | baseline; eval zH_rel_residual 0.94 (prior noise dominates at eval) |
 | gram112_lr1e-3 | GRAM | 865k | 1e-3 | 0.004 | 0.026 | 0.023 | 0.023 | 12.4 min | baseline; eval zH_rel_residual 0.95 |
 | **treerm128_flags_heads0.1_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0 | 0.234 | **0.335** | 0.329 | 75 min† | **confirmation: above TRM (0.210)**. @1500 = 0.136, @2500 = 0.304. First model whose valid boards aren't all the stored label |
