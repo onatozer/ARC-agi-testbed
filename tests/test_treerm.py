@@ -29,11 +29,11 @@ def _toy_search(values, depth, num_simulations):
     root.expand([(k,) for k in range(len(values))], [1 / len(values)] * len(values))
     expanded_depths = []
 
-    def expand_fn(state):
-        expanded_depths.append(len(state))
-        return [state + (k,) for k in range(len(values))], [1 / len(values)] * len(values)
+    def expand_fn(states):
+        expanded_depths.extend(len(state) for state in states)
+        return [[state + (k,) for k in range(len(values))] for state in states], [[1 / len(values)] * len(values) for _ in states]
 
-    counts = MCTS(num_simulations, c_puct=1.0).run(root, expand_fn, lambda state, _: values[state[0]])
+    [counts] = MCTS(num_simulations, c_puct=1.0).run([root], expand_fn, lambda states, _: [values[state[0]] for state in states])
     return root, counts, expanded_depths
 
 

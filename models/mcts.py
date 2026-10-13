@@ -58,8 +58,10 @@ class MinMaxStats:
 
 
 class MCTS:
-    """PUCT search over an already expanded root. The domain comes in as callbacks:
-    expand_fn(state) -> (child states, child priors) and evaluate_fn(state, allowed_depth) -> value (higher is better)."""
+    """PUCT search over already expanded roots, one tree per root, run in lockstep so the domain can batch its work over
+    the trees. The domain comes in as callbacks over the trees' current leaves:
+    expand_fn(states) -> (child states per leaf, child priors per leaf) and
+    evaluate_fn(states, allowed_depths) -> one value per leaf (higher is better)."""
 
     def __init__(self, num_simulations: int, c_puct: float):
         self.num_simulations = num_simulations
@@ -77,23 +79,30 @@ class MCTS:
 
     def run(
         self,
-        root: Node,
-        expand_fn: Callable[[Any], Tuple[Sequence[Any], Sequence[float]]],
-        evaluate_fn: Callable[[Any, int], float],
-    ) -> List[int]:
-        """Runs num_simulations select -> evaluate -> expand -> backpropagate passes; returns the root children's visit counts."""
-        stats = MinMaxStats()
+        roots: Sequence[Node],
+        expand_fn: Callable[[List[Any]], Tuple[Sequence[Sequence[Any]], Sequence[Sequence[float]]]],
+        evaluate_fn: Callable[[List[Any], List[int]], Sequence[float]],
+    ) -> List[List[int]]:
+        """Runs num_simulations select -> evaluate -> expand -> backpropagate passes on every tree; returns each root's
+        children's visit counts."""
+        stats = [MinMaxStats() for _ in roots]
         for _ in range(self.num_simulations):
-            node = root
-            while node.is_expanded:
-                node = self.select(node, stats)
+            leaves = []
+            for root, tree_stats in zip(roots, stats):
+                node = root
+                while node.is_expanded:
+                    node = self.select(node, tree_stats)
+                leaves.append(node)
 
-            # The leaf is scored by simulating the rest of the horizon from its state, then grows the tree by one level
-            value = evaluate_fn(node.state, node.allowed_depth)
-            if node.allowed_depth > 0:
-                node.expand(*expand_fn(node.state))
+            # Each leaf is scored by simulating the rest of the horizon from its state, then grows its tree by one level
+            values = evaluate_fn([leaf.state for leaf in leaves], [leaf.allowed_depth for leaf in leaves])
+            growing = [leaf for leaf in leaves if leaf.allowed_depth > 0]
+            if growing:
+                for leaf, child_states, priors in zip(growing, *expand_fn([leaf.state for leaf in growing])):
+                    leaf.expand(child_states, priors)
 
-            stats.update(value)
-            node.backpropagate(value)
+            for leaf, value, tree_stats in zip(leaves, values, stats):
+                tree_stats.update(value)
+                leaf.backpropagate(value)
 
-        return [child.num_visits for child in root.children]
+        return [[child.num_visits for child in root.children] for root in roots]

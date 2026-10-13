@@ -84,55 +84,77 @@ class TreeRMInner(GRAM_Inner):
             return [left] * batch_size
         return [left + self.config.H_cycles * (self.config.halt_max_steps - int(s) - 1) for s in self.steps_done.tolist()]
 
-    def _expand(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], List[float]]:
-        """The transition: one L-cycle pass from (z_H, z_L), then the candidates for the new z_H and their prior."""
+    # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
+
+    def _expand(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], x: torch.Tensor) -> Tuple[List[List[Tuple[int, torch.Tensor, torch.Tensor]]], List[List[float]]]:
+        """The transition: one L-cycle pass from each (z_H, z_L), then the candidates for the new z_H and their prior."""
+        rows = [row for row, _, _ in states]
+        z_H = torch.stack([s[1] for s in states])
+        z_L = torch.stack([s[2] for s in states])
+        x = x[rows]
+
         seq_dict = self._seq_dict()
         for _ in range(self.config.L_cycles):
             z_L = self.L_level(z_L, z_H + x, **seq_dict)
         u_t = self.L_level(z_H, z_L, **seq_dict)
 
         cand = self.candidate_generator(z_L, u_t)
-        priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1)[0]
-        return [(cand[:, k], z_L) for k in range(cand.shape[1])], priors.tolist()
+        priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1).tolist()
+        children = [[(row, cand[i, k], z_L[i]) for k in range(cand.shape[1])] for i, row in enumerate(rows)]
+        return children, priors
 
-    def _rollout_value(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, n_updates: int) -> float:
-        """The simulation: n_updates plain TRM updates (no candidates), then the label's -mean token CE in training or the
-        LPRM value at eval."""
-        seq_dict = self._seq_dict()
-        for _ in range(n_updates):
-            for _ in range(self.config.L_cycles):
-                z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+    def _leaf_values(self, z_H: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Per-row value of a final z_H: the label's -mean token CE in training, the LPRM value at eval."""
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
-
         if not self.training:
-            return self._lprm_value(z_H).item()
+            return self._lprm_value(z_H)
 
         if self.rollout_loss_fn is None:
             raise RuntimeError("TreeRM's training search needs rollout_loss_fn; wrap the model in LossHeadTreeRM.")
         mask = y != IGNORE_LABEL_ID
-        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum() / mask.sum().clamp_min(1)
-        return -ce.item()
+        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        return -ce
+
+    def _rollout_values(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor) -> List[float]:
+        """The simulation: from each leaf, its allowed depth's worth of plain TRM updates (no candidates), then its value."""
+        rows = [row for row, _, _ in states]
+        z_H = torch.stack([s[1] for s in states])
+        z_L = torch.stack([s[2] for s in states])
+        x, y = x[rows], y[rows]
+        depths_t = torch.tensor(depths, device=z_H.device)
+        values = torch.zeros(len(states), device=z_H.device)
+
+        seq_dict = self._seq_dict()
+        for n_updates in range(max(depths) + 1):
+            done = depths_t == n_updates
+            if done.any():
+                values[done] = self._leaf_values(z_H[done], y[done]).float()
+            if n_updates == max(depths):
+                break
+            for _ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            z_H = self.L_level(z_H, z_L, **seq_dict)
+
+        return values.tolist()
 
     @torch.compiler.disable
     @torch.no_grad()
     def _search(self, cand: torch.Tensor, prior_logits: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> torch.Tensor:
-        """One MCTS per puzzle from the root candidates; returns the posterior logits log(visit distribution) [B, K]."""
-        priors = prior_logits.float().softmax(dim=-1)
-        visits = torch.zeros_like(priors)
-
+        """One MCTS per puzzle from the root candidates, run in lockstep; returns the posterior logits log(visit
+        distribution) [B, K]."""
+        priors = prior_logits.float().softmax(dim=-1).tolist()
+        roots = []
         for b in range(cand.shape[0]):
-            x_b, y_b = x[b : b + 1], y[b : b + 1]
             root = Node(latent=None, allowed_depth=remaining[b])
-            root.expand([(cand[b : b + 1, k], z_L[b : b + 1]) for k in range(cand.shape[1])], priors[b].tolist())
+            root.expand([(b, cand[b, k], z_L[b]) for k in range(cand.shape[1])], priors[b])
+            roots.append(root)
 
-            counts = self.mcts.run(
-                root,
-                expand_fn=lambda state: self._expand(*state, x_b),
-                evaluate_fn=lambda state, depth: self._rollout_value(*state, x_b, y_b, depth),
-            )
-            visits[b] = torch.tensor(counts, dtype=visits.dtype)
-
+        counts = self.mcts.run(
+            roots,
+            expand_fn=lambda states: self._expand(states, x),
+            evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
+        )
+        visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         return torch.log((visits / visits.sum(dim=-1, keepdim=True)).clamp_min(1e-8))
 
     def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> Tuple[torch.Tensor, torch.Tensor | int]:
