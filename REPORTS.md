@@ -146,6 +146,9 @@ These are changes to the model code that were needed to run the experiments at a
     instead of a Gumbel sample. TRM's recursion is deterministic; TreeRM injects a random pick at every z_H
     update at eval, which can only hurt exact match if the prior is already right. Queued with flags.
 
+11. **`eval_mcts_simulations`**: simulations per search at eval, independent of training's. Test-time compute
+    knob for once the value head ranks candidates (needs `value_bootstrap_weight` > 0 to be meaningful).
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
