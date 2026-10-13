@@ -394,6 +394,14 @@ gates; on the grad cycle a label-valued search picks a flag and the scorer is tr
 that pick from the state; elsewhere the scorer's pick is used. The downstream network learns what each flag
 means. It is a discrete latent-variable model whose posterior is a search rather than a network.
 
+### 9. Confirmation tier: TreeRM beats TRM on 8x8 N-Queens
+Same recipe (flags, heads 0.1×, grad-cycle search), lr 3e-4 (TRM's best lr there), 3000 steps × batch 128:
+**33.5%** vs TRM-192 **21.0%** (GRAM 2–3%), at ~790k vs 886k params. Curve: 0 / 0 / 13.6 / 23.4 / 30.4 / 33.5
+at 500-step intervals; TRM was 0.8 / 13.2 / 21.0 at 1k / 2k / 3k. Eval diagnostics: the LPRM-valued search
+overrides the prior's argmax in 28% of searches (10% on Sudoku), and `NQueens/accuracy` (33.5%) exceeds exact
+match (32.9%) — the first model here that solves some boards with a valid completion other than the memorised
+label. A TRM seed replicate is running so the baseline isn't a single seed; the lr 1e-3 TreeRM run follows.
+
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
      the issue is that full-vector candidates are all *bad*, this should jump.
