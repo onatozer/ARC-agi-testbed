@@ -8,7 +8,7 @@ RUNS=${AUTORESEARCH_RUNS:-$HOME/ARC-agi-testbed/autoresearch_runs/nqueens8}
 RUNDIR=$RUNS/$NAME; rm -rf "$RUNDIR"; mkdir -p "$RUNDIR"
 cd "$RUNDIR"
 START=$(date +%s)
-OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" /home/onat_ozer/ARC-agi-testbed/venv/bin/python "$WT/pretrain.py" --config-path "$WT/config" --config-name cfg_pretrain_nqueens \
+OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" /home/onat_ozer/ARC-agi-testbed/venv/bin/python "$WT/pretrain.py" --config-path "$WT/config" --config-name cfg_pretrain_nqueens \
   dataset.data_path=/home/onat_ozer/ARC-agi-testbed/data/nqueens-8 dataset.board_size=8 \
   checkpoint_interval_steps=null heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000 \
   +wandb_mode=offline "$@" > "$RUNDIR/train.log" 2>&1
