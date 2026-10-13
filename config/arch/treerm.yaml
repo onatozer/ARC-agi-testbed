@@ -13,3 +13,4 @@ mcts_simulations: 16 # MCTS simulations per puzzle per z_H update
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
 mcts_horizon: step # how far a search looks ahead: 'step' = to the end of this supervision step, 'full' = to the end of the last one
 gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
+candidate_residual: false # candidates are u_t + generator output (the plain TRM update plus a learned offset) instead of full z_H vectors

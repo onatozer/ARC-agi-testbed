@@ -15,7 +15,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -91,7 +91,7 @@ def test_treerm_eval_search_ignores_labels():
     shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
     u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
     with torch.inference_mode():
-        cand = inner.candidate_generator(z_L, u_t)
+        cand = inner._candidates(z_L, u_t)
         prior = inner.candidate_scorer(u_t, cand, inner._cos_sin())
         post_a = inner._search(cand, prior, z_L, x, batch["labels"], [2] * shape[0])
         post_b = inner._search(cand, prior, z_L, x, torch.zeros_like(batch["labels"]), [2] * shape[0])
@@ -109,7 +109,7 @@ def test_treerm_next_z_H_is_exactly_one_candidate(training):
     shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
     u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
     with torch.no_grad():
-        cand = inner.candidate_generator(z_L, u_t)
+        cand = inner._candidates(z_L, u_t)
         z_H, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [2] * shape[0])
     dist = (z_H.float().unsqueeze(1) - cand.float()).flatten(2).abs().amax(-1)
     assert (dist.amin(-1) < 1e-2).all()

@@ -76,6 +76,13 @@ class TreeRMInner(GRAM_Inner):
     def _lprm_value(self, z_H: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
 
+    def _candidates(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
+        """The K proposals for the new z_H: the generator's output, or with candidate_residual u_t plus it."""
+        cand = self.candidate_generator(z_L, u_t)
+        if self.config.candidate_residual:
+            cand = cand + u_t.unsqueeze(1)
+        return cand
+
     def _remaining_updates(self, cycle: int, batch_size: int) -> List[int]:
         """z_H updates left from this cycle's on (inclusive), per puzzle: to the end of this supervision step, or with
         mcts_horizon = 'full' to the end of the last one."""
@@ -98,7 +105,7 @@ class TreeRMInner(GRAM_Inner):
             z_L = self.L_level(z_L, z_H + x, **seq_dict)
         u_t = self.L_level(z_H, z_L, **seq_dict)
 
-        cand = self.candidate_generator(z_L, u_t)
+        cand = self._candidates(z_L, u_t)
         priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1).tolist()
         children = [[(row, cand[i, k], z_L[i]) for k in range(cand.shape[1])] for i, row in enumerate(rows)]
         return children, priors
@@ -160,7 +167,7 @@ class TreeRMInner(GRAM_Inner):
     def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> Tuple[torch.Tensor, torch.Tensor | int]:
         """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
         scorer's prior (only when gradients are on)."""
-        cand = self.candidate_generator(z_L, u_t)
+        cand = self._candidates(z_L, u_t)
         prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
         post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining)
 
