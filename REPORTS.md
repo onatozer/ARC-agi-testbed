@@ -304,6 +304,26 @@ to `~/ARC-agi-testbed/autoresearch_runs/`, both outside `/tmp`. Relaunched at 10
      repulsion term — if `cand_div` is near 0.
   4. More simulations (16, running) — only matters if candidates differ.
 
+(Per the user, 2026-10-13: no GRAMDP baseline — the loop is about iterating on TreeRM itself. TRM at parity
+is the reference.)
+
+**Architecture backlog** (beyond hyper-params), roughly in the order I intend to try them:
+- a. **Value bootstrapping for the LPRM head.** The eval search is useless because the LPRM head is trained
+  only on the final exact-match of the whole step (one bit per puzzle, every 8th forward). The training search
+  computes a rollout value (label CE) for every leaf it visits — those are free regression targets for the
+  value head at intermediate states, as in AlphaZero. A value head that ranks candidates at eval is the
+  precondition for the search to do anything at test time.
+- b. **Train-time search valued by the LPRM head** (`train_search_value: lprm`), once (a) makes the head
+  useful: closes the train/eval mismatch (the GRAM failure mode) at the cost of label information entering only
+  through the value head.
+- c. **Candidate construction that can't collapse**: candidates as u_t plus K learned, mutually orthogonal
+  directions scaled per token (so diversity is structural), or K candidates computed from K different
+  stochastic views (dropout / noise on z_L) of the same update.
+- d. **Rollouts that follow the policy**: rollouts currently use plain TRM updates, so a candidate's value is
+  "what if I take this candidate and then act like TRM". Using prior-argmax candidates in rollouts makes the
+  value consistent with the policy being trained.
+- e. Deterministic argmax at eval instead of a Gumbel sample.
+
 Open questions I'm tracking, to be answered by the runs:
 - (a) Does the search help at all vs. GRAMDP-style learned posterior? If `base` ≈ GRAM, the search isn't adding
   information the posterior scorer couldn't learn.
