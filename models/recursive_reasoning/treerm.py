@@ -184,11 +184,13 @@ class TreeRMInner(GRAM_Inner):
         scorer's prior (only when gradients are on)."""
         cand = self._candidates(z_L, u_t)
         prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
-        if self.training or self.config.eval_search:
-            post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining)
+        if self.training:
+            # The label-informed search only where its KL is paid (the grad cycles); elsewhere it would steer the
+            # trajectory with label information for free. The prior picks the candidate on the no-grad cycles
+            search = torch.is_grad_enabled()
         else:
-            # Diagnostic: no search at eval, the prior alone picks the candidate (as GRAMDP does at eval)
-            post_logits = prior_logits.detach()
+            search = self.config.eval_search  # eval_search=false: the prior alone picks at eval (diagnostic)
+        post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining) if search else prior_logits.detach()
 
         kl_loss = 0
         # Only the grad cycles pay the KL; the posterior has no parameters, so only the prior-update term trains anything

@@ -120,6 +120,14 @@ These are changes to the model code that were needed to run the experiments at a
    weight × MSE summed over puzzles / averaged over the search's leaves. The head otherwise sees one bit per
    puzzle per 8 forwards (final exact-match), which is why the eval search has been inert. Queued as `vb0.5`.
 
+7. **Search only on the grad cycles** (hard-coded, per the user). Until now the label-informed search picked z_H
+   on all H_cycles, but the KL is only computed where gradients are on — so on the two no-grad cycles label
+   information steered the trajectory unpaid. That is the same leak GRAM's own code comment warns about (its
+   `_guidance` uses the posterior whenever `self.training`, with the `is_grad_enabled()` gate commented out),
+   and the likely source of the 94% train / 6% test gap. Now: no-grad cycles sample the prior (as at eval), the
+   grad cycle searches and pays the KL. Also 3× fewer searches per forward. Every run from `v2_*` on has this;
+   earlier TreeRM rows are the leaky version.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k

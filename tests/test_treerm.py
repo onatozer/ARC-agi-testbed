@@ -176,3 +176,15 @@ def test_treerm_value_bootstrap_trains_the_value_head_from_the_search():
     info["kl_loss"].backward()  # the bootstrap term rides in the guidance loss
     assert inner.v_head.weight.grad is not None and inner.v_head.weight.grad.abs().sum() > 0
     assert len(inner._bootstrap) == inner.config.mcts_simulations
+
+
+@needs_cuda
+def test_treerm_searches_only_on_grad_cycles():
+    model, batch = _treerm_head()  # H_cycles=2, grad_cycles=1
+    model.train()
+    inner = model.model.inner
+    calls = []
+    original = inner._search
+    inner._search = lambda *args, **kwargs: calls.append(torch.is_grad_enabled()) or original(*args, **kwargs)
+    model.model(carry=model.initial_carry(batch), batch=batch)
+    assert calls == [True]  # one search, on the grad cycle
