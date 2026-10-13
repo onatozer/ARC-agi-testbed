@@ -281,6 +281,15 @@ are probably what's unstable, since TRM itself prefers 1e-3. At 3e-4 TreeRM (31.
 sweep 1e-4 / 5e-4 is due). The lr-1e-3 fix-only control was killed at step 1000 (0.2%; its diagnostics had
 already served their purpose).
 
+**Reboot (2026-10-13 ~03:20).** The machine restarted minutes after the last commit. All queues died and `/tmp`
+was wiped, taking the run logs / offline W&B files with it; the four in-flight runs (`resid` @1e-3,
+`fix_lr3e-4`, `resid_lr3e-4`, `fix_lr1e-4`) never reached an endpoint. Interim readouts before the reboot:
+`resid` @1e-3 was training faster than any earlier TreeRM (lm_loss 0.26 at step 860 vs 0.36–0.46; test 0% at
+500, nothing later); `fix_lr3e-4` showed the usual candidate collapse (cand_div → 0.03). Everything in this
+file was recorded before the reboot and is intact. The harness now lives in `scripts/autoresearch/` and runs go
+to `~/ARC-agi-testbed/autoresearch_runs/`, both outside `/tmp`. Relaunched at 10:50: `fix_lr3e-4`,
+`resid_lr3e-4`, `fix_div0.1_lr3e-4` (three concurrent).
+
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
      the issue is that full-vector candidates are all *bad*, this should jump.
