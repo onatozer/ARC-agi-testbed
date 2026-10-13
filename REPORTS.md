@@ -138,7 +138,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | 0.98 | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
 | gram112_evalmean | GRAM | 867k | 1e-3 | 2000 | 0 | 0 | 0.018 | 0.059 | 0.94 | 10 min† | eval_prior_mean=true: eval noise is not the cause |
 | treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.016 | **0.100** | 0.61 (label-informed) | 52 min† | K=4, 8 sims, horizon=step. token acc 82%; per-puzzle KL ≈ 0.004 nats |
-| treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | | | | | | | |
+| treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | 0 | 0.002 | 0.029 | **0.316** | 0.95 (label-informed) | 46 min† | unfixed search. 3x the lr-1e-3 run; TRM @3e-4 = 0.383 |
 | treerm128_K2_s8 | TreeRM | ~820k | 1e-3 | 2000 | 0 | 0 | 0.014 | 0.117 | 0.66 (label-informed) | 53 min† | K=2: same as K=4 |
 | treerm128_noevalsearch | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.010 | 0.078 | 0.63 (label-informed) | 43 min† | eval_search=false: eval search worth ≤2 pts |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
@@ -271,6 +271,14 @@ slot gets selected sometimes, the straight-through LM gradient pulls each of the
 Old run: one trained slot + K−1 orthogonal junk slots. Fixed run: K copies. In neither case does the search
 have a real choice. Test exact at 750 (0.2%) tracks the old run. Nothing in the objective rewards candidate
 diversity, so the next option is an explicit penalty on pairwise candidate cosine (`candidate_diversity_weight`).
+
+**lr matters more than anything so far.** `treerm128_lr3e-4` (unfixed search) reaches **31.6%** vs 10.0% at
+lr 1e-3; its KL series is the same flat ~0.015 (same one-slot collapse), but lm_loss ends at 0.13 vs 0.46. So
+the collapsed model ("TRM h=128 + one MLP on z_H") just optimises badly at 1e-3 — the scorer/generator heads
+are probably what's unstable, since TRM itself prefers 1e-3. At 3e-4 TreeRM (31.6%) is close to TRM at 3e-4
+(38.3%); TRM's edge is that it tolerates 1e-3 (66–74%). All further TreeRM variants run at 3e-4 (and an lr
+sweep 1e-4 / 5e-4 is due). The lr-1e-3 fix-only control was killed at step 1000 (0.2%; its diagnostics had
+already served their purpose).
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
