@@ -109,6 +109,11 @@ These are changes to the model code that were needed to run the experiments at a
    simulations x 3 cycles per step). Rather than optimise further, I run two or three queues concurrently; they
    barely slow each other. Wall-clock in the tables is therefore only comparable within a queue.
 
+5. **`param_lr_scales`** (pretrain.py, generic): parameter-name substring → lr multiplier, applied as a per-group
+   `lr_scale` inside the lr schedule. Override as `+param_lr_scales.candidate_=0.3`. Motivation: TRM wants
+   lr 1e-3 on this tier but TreeRM's candidate generator / scorer blow up there (§5), so the backbone and the
+   heads may want different lrs. Unit-tested and smoke-run; queued as `heads0.3` / `heads0.1` at lr 1e-3.
+
 ## 3. Results
 
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
