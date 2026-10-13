@@ -173,6 +173,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | 0 | 0 | 0.076 | 0.383 | 0.81 | 4.5 min | parity baseline |
 | trm192_lr1e-3_s1 | TRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.059 | 0.660 | 0.73 | 9 min† | seed 2; @1750 = 0.244. Seed band 66–74% |
 | trm128_lr1e-3 | TRM | 525k | 1e-3 | 2000 | 0 | 0 | 0.146 | **0.725** | 0.76 | 12 min† | **equal width to TreeRM**: @1250 = 0.018, @1750 = 0.453. Width isn't the gap |
+| trm128_lr5e-4 | TRM | 525k | 5e-4 | 2000 | 0 | 0 | 0.098 | 0.668 | 0.94 | 15 min† | equal width *and* lr to v2_lr5e-4 (0.229): lr isn't the gap either |
 | gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | 0.98 | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
 | gram112_evalmean | GRAM | 867k | 1e-3 | 2000 | 0 | 0 | 0.018 | 0.059 | 0.94 | 10 min† | eval_prior_mean=true: eval noise is not the cause |
 | treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.016 | **0.100** | 0.61 (label-informed) | 52 min† | K=4, 8 sims, horizon=step. token acc 82%; per-puzzle KL ≈ 0.004 nats |
