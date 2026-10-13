@@ -86,9 +86,15 @@ class MCTS:
         """Runs num_simulations select -> evaluate -> expand -> backpropagate passes on every tree; returns each root's
         children's visit counts."""
         stats = [MinMaxStats() for _ in roots]
-        for _ in range(self.num_simulations):
+        num_children = max(len(root.children) for root in roots)
+        for simulation in range(self.num_simulations):
             leaves = []
             for root, tree_stats in zip(roots, stats):
+                # The first len(children) simulations evaluate every root child once: PUCT alone would keep picking the
+                # first-visited child (unvisited ones score Q = 0, and Q isn't normalised until two values are seen)
+                if simulation < num_children:
+                    leaves.append(root.children[simulation % len(root.children)])
+                    continue
                 node = root
                 while node.is_expanded:
                     node = self.select(node, tree_stats)

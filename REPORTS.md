@@ -134,10 +134,13 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | cal_u_trm128_lr3e-4 | TRM | 525k | 3e-4 | 1500 | 0 | 0 | 0.020 | – | 0.47 | 5.5 min* | calibration |
 | trm192_lr1e-3 | TRM | 888k | 1e-3 | 2000 | 0 | 0 | 0.119 | **0.738** | 0.93 | 4.4 min | parity baseline |
 | trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | 0 | 0 | 0.076 | 0.383 | 0.81 | 4.5 min | parity baseline |
+| trm192_lr1e-3_s1 | TRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.059 | 0.660 | 0.73 | 9 min† | seed 2; @1750 = 0.244. Seed band 66–74% |
 | gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | 0.98 | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
 | gram112_evalmean | GRAM | 867k | 1e-3 | 2000 | 0 | 0 | 0.018 | 0.059 | 0.94 | 10 min† | eval_prior_mean=true: eval noise is not the cause |
-| treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | | | | | | | K=4, 8 sims, horizon=step |
+| treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.016 | **0.100** | 0.61 (label-informed) | 52 min† | K=4, 8 sims, horizon=step. token acc 82%; per-puzzle KL ≈ 0.004 nats |
 | treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | | | | | | | |
+| treerm128_K2_s8 | TreeRM | ~820k | 1e-3 | 2000 | 0 | 0 | 0.014 | 0.117 | 0.66 (label-informed) | 53 min† | K=2: same as K=4 |
+| treerm128_noevalsearch | TreeRM | 888k | 1e-3 | 2000 | 0 | 0.002 | 0.010 | 0.078 | 0.63 (label-informed) | 43 min† | eval_search=false: eval search worth ≤2 pts |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
@@ -218,6 +221,56 @@ search is valued by the label CE, so the MCTS posterior is label-informed exactl
 scorer (prior) can learn to predict the search's choice — or, failing that, whether the LPRM-valued eval search
 can recover it — is what decides the arch. Watch the train/test gap on every TreeRM run.
 († wall-clock while sharing the GPU with two other runs.)
+
+### 5. First TreeRM results: the search adds nothing (yet)
+- `treerm128_lr1e-3` (K=4, 8 sims): 0 / 0.2 / 1.6 / **10.0%**. `treerm128_K2_s8`: **11.7%**. TRM band: 66–74%.
+- Smoking gun: the logged KL is 0.012 summed over 64 puzzles at weight 0.05 → **~0.004 nats per puzzle**. The
+  scorer's prior and the MCTS visit distribution agree almost perfectly. If the search were extracting label
+  information the posterior would have to differ from the label-free prior. So the tree is picking among
+  candidates that the label CE can't tell apart — i.e. the K candidates are (nearly) interchangeable, and
+  TreeRM degrades to a narrower TRM (h=128 vs 192) plus a lot of search noise. K=2 vs K=4 making no difference
+  fits that.
+- Why would candidates be interchangeable? The generator `cat[z_L, u_t] -> ... -> K*H` starts random, so at
+  init the K outputs *are* different — but none of them is a good z_H, and the LM loss pushes every one toward
+  "a z_H that decodes well" through the straight-through path; the only force separating them is the search's
+  preference, which is noise when they're all equally bad. Nothing in the loss rewards diversity.
+- To stop guessing I added per-puzzle diagnostics (commit above) logged in train and eval:
+  `search/cand_div` (mean pairwise 1 − cosine between candidates), `search/post_entropy` (visit distribution
+  entropy; max ln K = 1.39 for K=4), `search/kl_nats` (unweighted KL(post‖prior)), `search/argmax_agree`
+  (fraction of searches where prior and posterior pick the same candidate). Runs started after this commit
+  (s16, lr3e-4, resid, full, kl0.5, kl2, noevalsearch is too early) carry them.
+**Diagnostics readout (s16 run, first 400 steps) — hypothesis revised.**
+- `cand_div ≈ 1.03`: the candidates are *orthogonal*, not interchangeable. Diversity is not the problem.
+- Eval: `post_entropy = 0`, `kl_nats = 0`, `argmax_agree = 1`. The eval search is one-hot on the prior's argmax
+  every time: the LPRM values don't separate the children, so PUCT follows the prior. Matches
+  `noevalsearch` ≈ base.
+- s16 train: `kl_loss` 0.04 → 47 over 400 steps while `lm_loss` rises 1.05 → 1.89 — **diverging**. With 16
+  simulations the visit distribution is near-one-hot (entropy 0.23 of max 1.39); the KL to a one-hot target
+  drives the scorer's unbounded logits apart (`kl_nats` ≈ 975/puzzle = logit gaps of ~1000). Killed.
+- Base (8 sims) train: `kl_loss` ≈ 0.015 flat for 2000 steps. Tracing PUCT by hand: unvisited children score
+  Q̂ = 0 and the first-visited child keeps its *raw* Q (MinMaxStats can't normalise until a second distinct value
+  arrives), so whichever child is picked first keeps winning; with ≤ 0 training values each child gets one visit
+  and the best gets the rest. For the KL to sit at ~0.004 nats the posterior's argmax must be the *same slot
+  every time*. That is a collapse: straight-through only trains the selected candidate, so it improves, so it's
+  selected again, and the other K−1 slots become untrained junk (hence orthogonal). **TreeRM had collapsed to
+  "TRM(h=128) + one fixed MLP on z_H"**, which explains 10% ≈ a narrower TRM. K=2 vs K=4 identical: same reason.
+
+Fixes, applied (commit below) and to be applied:
+1. **MCTS: evaluate every root child once before PUCT** (`mcts.py`). Removes the first-visit bias, and with
+   K ≤ sims each child keeps ≥ 1 visit, so the posterior is never one-hot and the KL is bounded (max ln 8 at
+   8 sims). This is a correctness fix to the search, not a hyper-parameter; all runs from here use it.
+2. `candidate_residual` (queued): candidates = u_t + delta_k, so no slot can be junk — every candidate is at
+   least the TRM update.
+3. If the KL still explodes once the posterior carries information: smooth the target, π ← (1−ε)π + ε/K.
+
+- Candidate hypotheses to test next, in order of how cheaply they're falsified:
+  1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
+     the issue is that full-vector candidates are all *bad*, this should jump.
+  2. Stronger KL (0.5, 2.0, queued): forces the prior toward the posterior — only helps if the posterior carries
+     information, which the diagnostics will say.
+  3. A diversity-forcing change: e.g. candidates as u_t + sigma * fixed random directions, or an explicit
+     repulsion term — if `cand_div` is near 0.
+  4. More simulations (16, running) — only matters if candidates differ.
 
 Open questions I'm tracking, to be answered by the runs:
 - (a) Does the search help at all vs. GRAMDP-style learned posterior? If `base` ≈ GRAM, the search isn't adding
