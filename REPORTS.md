@@ -263,6 +263,15 @@ Fixes, applied (commit below) and to be applied:
    least the TRM update.
 3. If the KL still explodes once the posterior carries information: smooth the target, π ← (1−ε)π + ε/K.
 
+**Fixed-search run (`treerm128_fix`, 8 sims, forced root visits) — diagnostics over the first 960 steps.**
+`post_entropy` ≈ 1.09 (≈ a [5,1,1,1]/8 split: the 4 free simulations all go to one child), `kl_nats` 0.2–0.3,
+`argmax_agree` rising 0.2 → 0.8 — the prior learns to predict the search's pick, as the ELBO intends. But
+`cand_div` goes **1.0 → 0.035** by step 200: the candidates become near-identical. Mechanism: now that every
+slot gets selected sometimes, the straight-through LM gradient pulls each of them toward the same best z_H.
+Old run: one trained slot + K−1 orthogonal junk slots. Fixed run: K copies. In neither case does the search
+have a real choice. Test exact at 750 (0.2%) tracks the old run. Nothing in the objective rewards candidate
+diversity, so the next option is an explicit penalty on pairwise candidate cosine (`candidate_diversity_weight`).
+
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
      the issue is that full-vector candidates are all *bad*, this should jump.

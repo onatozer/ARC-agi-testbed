@@ -17,3 +17,4 @@ gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the 
 candidate_residual: false # candidates are u_t + generator output (the plain TRM update plus a learned offset) instead of full z_H vectors
 eval_search: true # run the LPRM-valued search at eval; false = the prior scorer alone picks the candidate (diagnostic)
 posterior_smoothing: 0.0 # mix this much uniform into the visit distribution before the KL / sampling (bounds the KL target)
+candidate_diversity_weight: 0.0 # penalty on the mean pairwise cosine between a puzzle's candidates (added to the guidance loss on grad cycles)

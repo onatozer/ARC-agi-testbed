@@ -187,6 +187,10 @@ class TreeRMInner(GRAM_Inner):
                 post_logits=post_logits,
                 alpha=self.config.kl_grad_prior,
             ).sum() * self.config.kl_strength
+            # Diversity penalty (folded into the guidance loss): mean pairwise cosine between a puzzle's candidates,
+            # summed over the batch. Without it the candidates collapse onto one another (see REPORTS.md)
+            if self.config.candidate_diversity_weight > 0:
+                kl_loss = kl_loss + self.config.candidate_diversity_weight * self._pairwise_cosine(cand).sum()
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
@@ -196,6 +200,14 @@ class TreeRMInner(GRAM_Inner):
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         return z_H, kl_loss, self._search_diagnostics(cand, prior_logits, post_logits)
 
+    @staticmethod
+    def _pairwise_cosine(cand: torch.Tensor) -> torch.Tensor:
+        """Per-puzzle [B] mean cosine between each pair of distinct candidates, over their flattened tokens."""
+        unit = F.normalize(cand.float().flatten(2), dim=-1)
+        cos = unit @ unit.transpose(1, 2)
+        num_candidates = cand.shape[1]
+        return (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(-1)) / max(num_candidates * (num_candidates - 1), 1)
+
     @torch.no_grad()
     def _search_diagnostics(self, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Per-puzzle [B] diagnostics of one search: how different the candidates are (mean pairwise 1 - cosine over
@@ -203,12 +215,8 @@ class TreeRMInner(GRAM_Inner):
         posterior agree on the best candidate."""
         log_post, log_prior = post_logits.float().log_softmax(-1), prior_logits.float().log_softmax(-1)
         p_post = log_post.exp()
-        unit = F.normalize(cand.float().flatten(2), dim=-1)
-        cos = unit @ unit.transpose(1, 2)
-        num_candidates = cand.shape[1]
-        off_diagonal = (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(-1)) / max(num_candidates * (num_candidates - 1), 1)
         return {
-            "search/cand_div": 1 - off_diagonal,
+            "search/cand_div": 1 - self._pairwise_cosine(cand),
             "search/post_entropy": -(p_post * log_post).sum(-1),
             "search/kl_nats": (p_post * (log_post - log_prior)).sum(-1),
             "search/argmax_agree": (post_logits.argmax(-1) == prior_logits.argmax(-1)).float(),
