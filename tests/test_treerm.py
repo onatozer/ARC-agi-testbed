@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from models.losses.base import stablemax_cross_entropy
-from models.losses.loss_heads import LossHeadTreeRM, MaxStepsInferenceLossHead
+from models.losses.loss_heads import LossHeadTreeRM, MaxStepsInferenceLossHead, MaxStepsInferenceLossHeadTreeRM
 from models.mcts import MCTS, Node
 from models.recursive_reasoning.treerm import TreeRM
 
@@ -110,7 +110,7 @@ def test_treerm_next_z_H_is_exactly_one_candidate(training):
     u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
     with torch.no_grad():
         cand = inner._candidates(z_L, u_t)
-        z_H, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [2] * shape[0])
+        z_H, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [2] * shape[0])
     dist = (z_H.float().unsqueeze(1) - cand.float()).flatten(2).abs().amax(-1)
     assert (dist.amin(-1) < 1e-2).all()
 
@@ -147,3 +147,20 @@ def test_treerm_eval_without_search_never_searches():
     with torch.inference_mode():
         _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
     assert torch.isfinite(outputs["logits"]).all()
+
+
+@needs_cuda
+def test_treerm_logs_search_diagnostics_in_train_and_eval():
+    model, batch = _treerm_head()
+    model.train()
+    _, _, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    for key in ("search/cand_div", "search/post_entropy", "search/kl_nats", "search/argmax_agree"):
+        assert key in metrics and torch.isfinite(metrics[key])
+
+    head = MaxStepsInferenceLossHeadTreeRM(model.model, loss_type="stablemax_cross_entropy")
+    head.eval()
+    carry = head.initial_carry(batch)
+    with torch.inference_mode():
+        for _ in range(4):
+            carry, _, metrics, _, _ = head(return_keys=None, carry=carry, batch=batch)
+    assert "search/post_entropy" in metrics and 0 <= metrics["search/argmax_agree"] <= metrics["count"]

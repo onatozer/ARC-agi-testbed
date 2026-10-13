@@ -190,7 +190,25 @@ class TreeRMInner(GRAM_Inner):
         weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
-        return z_H, kl_loss
+        return z_H, kl_loss, self._search_diagnostics(cand, prior_logits, post_logits)
+
+    @torch.no_grad()
+    def _search_diagnostics(self, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Per-puzzle [B] diagnostics of one search: how different the candidates are (mean pairwise 1 - cosine over
+        their flattened tokens), the posterior's entropy, its unweighted KL from the prior, and whether the prior and
+        posterior agree on the best candidate."""
+        log_post, log_prior = post_logits.float().log_softmax(-1), prior_logits.float().log_softmax(-1)
+        p_post = log_post.exp()
+        unit = F.normalize(cand.float().flatten(2), dim=-1)
+        cos = unit @ unit.transpose(1, 2)
+        num_candidates = cand.shape[1]
+        off_diagonal = (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(-1)) / max(num_candidates * (num_candidates - 1), 1)
+        return {
+            "search/cand_div": 1 - off_diagonal,
+            "search/post_entropy": -(p_post * log_post).sum(-1),
+            "search/kl_nats": (p_post * (log_post - log_prior)).sum(-1),
+            "search/argmax_agree": (post_logits.argmax(-1) == prior_logits.argmax(-1)).float(),
+        }
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
@@ -198,6 +216,11 @@ class TreeRMInner(GRAM_Inner):
         y = batch["labels"]
         seq_dict = self._seq_dict()
         batch_size = z_H.shape[0]
+        diagnostics: Dict[str, torch.Tensor] = {}
+
+        def accumulate(diag: Dict[str, torch.Tensor]) -> None:
+            for key, value in diag.items():
+                diagnostics[key] = diagnostics.get(key, 0) + value / self.config.H_cycles
 
         # Run the recursion cycle for H_cycles - grad_cycles times without the gradient; every z_H update is searched
         with torch.no_grad():
@@ -206,7 +229,8 @@ class TreeRMInner(GRAM_Inner):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
                 u_t = self.L_level(z_H, z_L, **seq_dict)
-                z_H, _ = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
+                z_H, _, diag = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
+                accumulate(diag)
 
         # The last grad_cycles cycles carry the gradient; each pays the KL of its search's posterior from the prior
         kl_loss = 0
@@ -215,8 +239,9 @@ class TreeRMInner(GRAM_Inner):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            z_H, guidance_loss = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
+            z_H, guidance_loss, diag = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size))
             kl_loss += guidance_loss
+            accumulate(diag)
 
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
 
@@ -224,6 +249,7 @@ class TreeRMInner(GRAM_Inner):
             "lprm_value": self._lprm_value(z_H),
             "logits": self._decode(z_H),
             "kl_loss": kl_loss,
+            **diagnostics,  # per-puzzle, averaged over the H_cycles searches
         }
 
         return LatentCarry(z_H, z_L), info
