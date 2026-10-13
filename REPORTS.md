@@ -134,7 +134,8 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | cal_u_trm128_lr3e-4 | TRM | 525k | 3e-4 | 1500 | 0 | 0 | 0.020 | – | 0.47 | 5.5 min* | calibration |
 | trm192_lr1e-3 | TRM | 888k | 1e-3 | 2000 | 0 | 0 | 0.119 | **0.738** | 0.93 | 4.4 min | parity baseline |
 | trm192_lr3e-4 | TRM | 888k | 3e-4 | 2000 | 0 | 0 | 0.076 | 0.383 | 0.81 | 4.5 min | parity baseline |
-| gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | – | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
+| gram112_lr1e-3 | GRAM | 867k | 1e-3 | 2000 | 0 | 0.002 | 0.012 | 0.061 | 0.98 | 4.8 min | parity baseline; eval zH_rel_residual 0.87 |
+| gram112_evalmean | GRAM | 867k | 1e-3 | 2000 | 0 | 0 | 0.018 | 0.059 | 0.94 | 10 min† | eval_prior_mean=true: eval noise is not the cause |
 | treerm128_lr1e-3 | TreeRM | 888k | 1e-3 | 2000 | | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr3e-4 | TreeRM | 888k | 3e-4 | 2000 | | | | | | | |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
@@ -207,6 +208,16 @@ First result: TRM h=192 lr 1e-3 goes 0 / 0 / 11.9% / **73.8%** at 500 / 1000 / 1
 clicks 300 steps later will read ~10% vs 74% and look terrible while being nearly identical. Subsequent queues
 eval every 250 steps (`queue6b.sh`) to get the curve; comparisons should use the step at which exact match
 crosses e.g. 25% / 50% as well as the endpoint.
+
+**GRAM diagnosis.** GRAM reaches 6% test exact either way (sampled or mean prior at eval), but its *train* exact
+is 94–98%, versus TRM's 93% train / 74% test. The train forward in GRAM uses the posterior q(eps | u_t, y), which
+sees the label, so "train exact" for GRAM-family models is label-informed and not comparable to TRM's. The real
+finding is that the prior never learns to reproduce the posterior's choices (KL weight 0.05 is too weak here) —
+the posterior encodes the answer and the prior can't. **This is the central risk for TreeRM**: its training-time
+search is valued by the label CE, so the MCTS posterior is label-informed exactly like GRAM's. Whether the
+scorer (prior) can learn to predict the search's choice — or, failing that, whether the LPRM-valued eval search
+can recover it — is what decides the arch. Watch the train/test gap on every TreeRM run.
+(† wall-clock while sharing the GPU with two other runs.)
 
 Open questions I'm tracking, to be answered by the runs:
 - (a) Does the search help at all vs. GRAMDP-style learned posterior? If `base` ≈ GRAM, the search isn't adding
