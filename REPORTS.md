@@ -164,6 +164,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | gram112_lr1e-3 | GRAM | 865k | 1e-3 | 0.004 | 0.026 | 0.023 | 0.023 | 12.4 min | baseline; eval zH_rel_residual 0.95 |
 | **treerm128_flags_heads0.1_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0 | 0.234 | **0.335** | 0.329 | 75 min† | **confirmation: above TRM (0.210)**. @1500 = 0.136, @2500 = 0.304. First model whose valid boards aren't all the stored label |
 | treerm128_flags_heads0.1_lr1e-3 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 0.002 | 0.148 | 0.235 | – | 108 min† | lr 1e-3 is worse here (as for TRM); still ≥ TRM's 0.210 |
+| **treerm128_flags_heads0.1_vb0.5_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.003 | 0.256 | **0.517** | 0.441 | 96 min† | + value bootstrap: **2.5× TRM**. @2500 = 0.437. Eval search overrides the prior in 69% of searches; 7.6 pts are valid non-label boards |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
@@ -422,6 +423,15 @@ Update: vb replicate 87.3% (mean 90.2 over 2 seeds — real, not noise); vb + ar
 search's mode always equals the prior's argmax, "vb + argmax" follows the same trajectory as "no vb + argmax"
 — so the remaining question is whether deterministic picking alone explains ~87% and vb's extra (93%) came
 from sampling a better posterior. Control running: recipe + argmax_pick without vb.
+
+### 11. N-Queens with value bootstrapping: 51.7% — and here the search visibly works
+Same recipe + `value_bootstrap_weight=0.5`, lr 3e-4: **51.7%** `NQueens/accuracy` vs 33.5% without vb and
+TRM-192's 20.4 / 21.0% (two seeds). Unlike Sudoku, the mechanism is plain in the diagnostics: the eval search
+overrides the prior's argmax in **69%** of searches (28% without vb, 10% on Sudoku), posterior entropy 1.18, and
+exact match is only 44.1% — **7.6 points are valid boards that differ from the stored label**, which TRM never
+produces (its valid rate always equalled its exact-match rate). N-Queens is a task where most givens admit
+several completions, so a value-guided search over alternatives has something to buy; Sudoku-unique doesn't,
+which fits vb's smaller, opaque gain there.
 
 - Candidate hypotheses to test next, in order of how cheaply they're falsified:
   1. `candidate_residual` (queued): candidates = u_t + delta_k. If diversity is the issue this changes little; if
