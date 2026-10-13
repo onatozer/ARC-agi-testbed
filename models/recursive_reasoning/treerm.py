@@ -66,6 +66,7 @@ class TreeRMInner(GRAM_Inner):
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
         # Per-puzzle supervision steps already run, set by TreeRM.forward; the 'full' horizon needs it
         self.steps_done: Optional[torch.Tensor] = None
+        self._bootstrap: List[Tuple[torch.Tensor, torch.Tensor]] = []
 
     def _decode(self, z_H: torch.Tensor) -> torch.Tensor:
         # Clip out the puzzle embedding dims from the decoder
@@ -110,17 +111,21 @@ class TreeRMInner(GRAM_Inner):
         children = [[(row, cand[i, k], z_L[i]) for k in range(cand.shape[1])] for i, row in enumerate(rows)]
         return children, priors
 
-    def _leaf_values(self, z_H: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Per-row value of a final z_H: the label's -mean token CE in training, the LPRM value at eval."""
+    def _leaf_values(self, z_H: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Per-row value of a final z_H (the label's -mean token CE in training, the LPRM value at eval) and the
+        rollout's token accuracy (the value head's bootstrap target; meaningless at eval)."""
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         if not self.training:
-            return self._lprm_value(z_H)
+            value = self._lprm_value(z_H)
+            return value, value
 
         if self.rollout_loss_fn is None:
             raise RuntimeError("TreeRM's training search needs rollout_loss_fn; wrap the model in LossHeadTreeRM.")
         mask = y != IGNORE_LABEL_ID
-        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
-        return -ce
+        logits = self._decode(z_H)
+        ce = self.rollout_loss_fn(logits, y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        token_acc = (mask & (logits.argmax(-1) == y)).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        return -ce, token_acc.float()
 
     def _rollout_values(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor) -> List[float]:
         """The simulation: from each leaf, its allowed depth's worth of plain TRM updates (no candidates), then its value."""
@@ -130,18 +135,23 @@ class TreeRMInner(GRAM_Inner):
         x, y = x[rows], y[rows]
         depths_t = torch.tensor(depths, device=z_H.device)
         values = torch.zeros(len(states), device=z_H.device)
+        targets = torch.zeros(len(states), device=z_H.device)
+        # The value head reads the leaf's own state (first token, rms-normed as in forward); the rollout gives its target
+        leaf_token = rms_norm(z_H, self.config.rms_norm_eps)[:, 0]
 
         seq_dict = self._seq_dict()
         for n_updates in range(max(depths) + 1):
             done = depths_t == n_updates
             if done.any():
-                values[done] = self._leaf_values(z_H[done], y[done]).float()
+                values[done], targets[done] = (t.float() for t in self._leaf_values(z_H[done], y[done]))
             if n_updates == max(depths):
                 break
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
             z_H = self.L_level(z_H, z_L, **seq_dict)
 
+        if self.training and self.config.value_bootstrap_weight > 0:
+            self._bootstrap.append((leaf_token, targets))
         return values.tolist()
 
     @torch.compiler.disable
@@ -150,6 +160,7 @@ class TreeRMInner(GRAM_Inner):
         """One MCTS per puzzle from the root candidates, run in lockstep; returns the posterior logits log(visit
         distribution) [B, K]."""
         priors = prior_logits.float().softmax(dim=-1).tolist()
+        self._bootstrap = []  # (leaf first-token states, rollout targets) this search's rollouts record for the value head
         roots = []
         for b in range(cand.shape[0]):
             root = Node(latent=None, allowed_depth=remaining[b])
@@ -191,6 +202,14 @@ class TreeRMInner(GRAM_Inner):
             # summed over the batch. Without it the candidates collapse onto one another (see REPORTS.md)
             if self.config.candidate_diversity_weight > 0:
                 kl_loss = kl_loss + self.config.candidate_diversity_weight * self._pairwise_cosine(cand).sum()
+            # Value bootstrapping (AlphaZero-style): the value head predicts each visited leaf's rollout token accuracy.
+            # Summed over puzzles, averaged over this search's leaves, so it scales like the loss head's LPRM term
+            if self.config.value_bootstrap_weight > 0 and self._bootstrap:
+                leaf_tokens = torch.cat([t for t, _ in self._bootstrap])
+                targets = torch.cat([v for _, v in self._bootstrap])
+                predicted = torch.sigmoid(self.v_head(leaf_tokens).to(torch.float32)).squeeze(-1)
+                bootstrap = F.mse_loss(predicted, targets, reduction="sum") / len(self._bootstrap)
+                kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits

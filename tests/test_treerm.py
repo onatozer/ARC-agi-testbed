@@ -15,7 +15,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_residual": False, "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -164,3 +164,15 @@ def test_treerm_logs_search_diagnostics_in_train_and_eval():
         for _ in range(4):
             carry, _, metrics, _, _ = head(return_keys=None, carry=carry, batch=batch)
     assert "search/post_entropy" in metrics and 0 <= metrics["search/argmax_agree"] <= metrics["count"]
+
+
+@needs_cuda
+def test_treerm_value_bootstrap_trains_the_value_head_from_the_search():
+    model, batch = _treerm_head(value_bootstrap_weight=1.0, kl_strength=0.0)
+    model.train()
+    inner = model.model.inner
+    carry = model.initial_carry(batch)
+    _, info = model.model(carry=carry, batch=batch)
+    info["kl_loss"].backward()  # the bootstrap term rides in the guidance loss
+    assert inner.v_head.weight.grad is not None and inner.v_head.weight.grad.abs().sum() > 0
+    assert len(inner._bootstrap) == inner.config.mcts_simulations
