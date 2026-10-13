@@ -57,6 +57,7 @@ class PretrainConfig(BaseModel):
     weight_decay: float
     optimizer: str = "adam_atan2"  # "adam_atan2" or "muon" (Muon on the looped blocks' 2D weights, AdamAtan2 on the rest)
     muon_lr: Optional[float] = None  # Muon base lr; None uses lr
+    param_lr_scales: Dict[str, float] = {}  # parameter-name substring -> lr multiplier (AdamAtan2 params only); first match wins
     beta1: float
     beta2: float
 
