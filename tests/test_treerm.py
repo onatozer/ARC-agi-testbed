@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, **overrides,
+        "mcts_c_puct": 1.25, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -235,3 +235,18 @@ def test_treerm_argmax_pick_is_deterministic_at_eval():
         a, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
         b, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
     torch.testing.assert_close(a, b)
+
+
+@needs_cuda
+def test_treerm_eval_can_search_with_more_simulations():
+    model, batch = _treerm_head(eval_mcts_simulations=16)  # training: 6
+    inner = model.model.inner
+    seen = []
+    original = inner.mcts.run
+    inner.mcts.run = lambda *args, **kwargs: seen.append(inner.mcts.num_simulations) or original(*args, **kwargs)
+    model.train()
+    model.model(carry=model.initial_carry(batch), batch=batch)
+    model.eval()
+    with torch.inference_mode():
+        model.model(carry=model.initial_carry(batch), batch=batch)
+    assert seen[0] == 6 and seen[-1] == 16

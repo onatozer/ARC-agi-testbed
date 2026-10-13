@@ -206,6 +206,8 @@ class TreeRMInner(GRAM_Inner):
             root.expand([(b, cand[b, k], z_L[b]) for k in range(cand.shape[1])], priors[b])
             roots.append(root)
 
+        # Eval may search deeper than training (test-time compute); the value head is what it relies on
+        self.mcts.num_simulations = self.config.mcts_simulations if self.training else (self.config.eval_mcts_simulations or self.config.mcts_simulations)
         counts = self.mcts.run(
             roots,
             expand_fn=lambda states: self._expand(states, x),

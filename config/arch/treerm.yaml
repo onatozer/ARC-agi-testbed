@@ -21,3 +21,4 @@ candidate_diversity_weight: 0.0 # penalty on the mean pairwise cosine between a 
 value_bootstrap_weight: 0.0 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
 rollout_policy: trm # how a rollout updates z_H after the leaf: trm = the plain TRM update; prior = the scorer's argmax candidate (the policy being trained)
 argmax_pick: false # outside the grad cycle (no-grad cycles, eval) take the argmax candidate instead of a Gumbel sample
+eval_mcts_simulations: null # simulations per search at eval; null = mcts_simulations
