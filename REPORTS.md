@@ -71,6 +71,10 @@ for a hyper-param loop. So there are now two tiers:
 Runs are launched from a scratch directory with `+wandb_mode=offline`; eval rows are parsed back out of the offline
 `.wandb` file (`summary.py`). Nothing is uploaded. Each run's config and log are under
 `scratchpad/runs/<name>/` (N-Queens) and `scratchpad/runs6/<name>/` (Sudoku).
+GPU saturation stalls: whenever used memory on the 4 GB card reaches ~3.7 GB (three N-Queens-sized runs, or
+five Sudoku-sized ones) the TreeRM runs freeze mid-eval indefinitely and resume only once something is killed.
+Practical cap: two TreeRM runs on N-Queens, three on Sudoku. Happened three times; each time the victims were
+the search-heavy runs.
 Harness mishap worth recording: chaining queue B behind queue A with `until ! pgrep -f "queue A"` never fires,
 because the waiter's own command line matches the pattern. Cost ~25 min of idle GPU once. Queues are now
 launched as one sequential command instead.
