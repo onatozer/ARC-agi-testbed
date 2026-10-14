@@ -151,11 +151,18 @@ These are changes to the model code that were needed to run the experiments at a
 
 ## 3. Results
 
+How to read the tables: every accuracy column is a **test-set** value measured at the training step after `@`
+(the runs eval periodically, so a row is a learning curve; the last column is the endpoint at the fixed budget).
+N-Queens: `NQueens/accuracy` on the 1000-puzzle test set (valid board keeping the givens) and exact match with
+the stored label. Sudoku: exact match on 512 held-out puzzles (unique solutions, 0% overlap with train). The one
+train column (`train exact`) is label-informed for TreeRM/GRAM and not comparable to TRM's. `†` = GPU shared
+with other runs. Bold rows are the headline results.
+
 `acc` = `NQueens/accuracy` on the 1000-puzzle test set (valid 8-queens board keeping every given), at 1k / 2k / 3k
 steps. `exact` = exact match with the stored label at 3k. Wall-clock is the full run including evals; `*` = GPU
 was shared with a fast-tier run, so wall-clock is inflated.
 
-| run | arch | params | lr | acc @1k | acc @2k | acc @3k | exact @3k | wall | notes |
+| run | arch | params | lr | test acc @1k | test acc @2k | test acc @3k | test exact @3k | wall | notes |
 |---|---|---|---|---|---|---|---|---|---|
 | trm192_lr3e-4 | TRM | 886k | 3e-4 | 0.008 | 0.132 | 0.210 | 0.210 | 12.3 min | baseline |
 | trm192_lr1e-3 | TRM | 886k | 1e-3 | 0.000 | 0.019 | 0.050 | 0.050 | 14.5 min* | baseline; lr too high |
@@ -174,7 +181,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 
 ### Fast tier: 6x6 Sudoku (unique), exact match on 512 test puzzles
 
-| run | arch | params | lr | steps | exact @500 | @1000 | @1500 | @2000 | train exact (end) | wall | notes |
+| run | arch | params | lr | steps | test exact @500 | @1000 | @1500 | @2000 | train exact (end) | wall | notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | cal_u_trm128_lr1e-3 | TRM | 525k | 1e-3 | 1500 | 0 | 0 | 0.178 | – | 0.90 | 5.2 min* | calibration |
 | cal_u_trm128_lr3e-4 | TRM | 525k | 3e-4 | 1500 | 0 | 0 | 0.020 | – | 0.47 | 5.5 min* | calibration |
