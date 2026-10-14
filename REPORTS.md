@@ -18,7 +18,7 @@ there.
 | benchmark (budget) | TRM | GRAM | TreeRM, final recipe | TreeRM, without value bootstrap |
 |---|---|---|---|---|
 | 6x6 Sudoku, unique solutions, test exact match (2000 steps × 64) | 66–74% (3 runs) | 6% | **87–95%** (6 runs) | 80–86% (4 runs) |
-| 8x8 N-Queens, test valid-board accuracy (3000 steps × 128) | 20–21% (2 seeds) | 2–3% | **41–52%** (4 runs, mean 46%) | 33.5% / see §11 (2 seeds) |
+| 8x8 N-Queens, test valid-board accuracy (3000 steps × 128) | 20–21% (2 seeds) | 2–3% | **41–52%** (3 runs, mean 47%) | 29–34% (2 seeds, mean 31%) |
 
 Parameters: TRM h=192 886k, GRAM h=112 865k, TreeRM h=128 ~790k. Same optimizer steps and samples; a TreeRM
 run costs 1.5–10× TRM's wall-clock (the Python-side search), so this is equal-sample, not equal-compute.
@@ -223,6 +223,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | **treerm128_flags_heads0.1_vb0.5_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.003 | 0.256 | **0.517** | 0.441 | 96 min† | + value bootstrap: **2.5× TRM**. @2500 = 0.437. Eval search overrides the prior in 69% of searches; 7.6 pts are valid non-label boards |
 | treerm128_flags_heads0.1_vb0.5_evalsims16_lr3e-4 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.009 | 0.227 | 0.484 | – | 73 min† | + 16 eval sims: ≈ the 8-sim run (seed-level difference); more eval search doesn't add here |
 | treerm128_flags_heads0.1_vb0.5_lr3e-4_s1 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.002 | 0.099 | 0.414 | – | 66 min† | vb seed 1. **vb on N-Queens: 0.517 / 0.484 / 0.414 (mean 0.472)** vs recipe 0.335 (1 seed), TRM 0.204–0.210 |
+| treerm128_flags_heads0.1_lr3e-4_s1 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.001 | 0.164 | 0.290 | – | 120 min† | non-vb recipe seed 1. **Recipe without vb: 0.335 / 0.290 (mean 0.312)**; vb adds ~+15 here |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
