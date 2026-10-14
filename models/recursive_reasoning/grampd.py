@@ -135,16 +135,17 @@ class GRAMDP_Inner(GRAM_Inner):
         # Straight-through gradient temperature; a buffer so GRAMDP can anneal it each step without recompiling
         self.register_buffer("gumbel_tau", torch.tensor(float(self.config.gumbel_temp)), persistent=False)
 
-    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor | int]:
+    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor, use_posterior: bool,
+                  prior_rows: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor | int]:
         """Samples the guidance eps for u_t as one of the candidates, with its beta-weighted balanced KL: drawn from the
-        posterior q(k | u_t, y) in training, otherwise from the prior p(k | u_t) with no KL."""
+        posterior q(k | u_t, y) if use_posterior, otherwise from the prior p(k | u_t) with no KL."""
         cand = self.candidate_head(u_t)
         cos_sin = self._cos_sin()
         prior_logits = self.prior_head(u_t, cand, cos_sin)
 
         kl_loss = 0
         logits = prior_logits
-        if self.training:
+        if use_posterior:
             post_logits = self.posterior_head(u_t, y, cand, cos_sin)
 
             # Only the grad cycles pay the KL
@@ -154,7 +155,17 @@ class GRAMDP_Inner(GRAM_Inner):
                     post_logits=post_logits,
                     alpha=self.config.kl_grad_prior,
                 ).sum() * self.config.kl_strength
+                if self.config.usage_entropy_weight > 0:
+                    # Reward entropy of the posterior's batch-averaged choice, so different candidates are used for different
+                    # puzzles and can specialise (against codebook collapse). Rides in the guidance loss, so the logged
+                    # kl_loss includes it.
+                    usage = F.softmax(post_logits.float(), dim=-1).mean(0)
+                    entropy = -(usage * usage.clamp_min(1e-8).log()).sum()
+                    kl_loss = kl_loss - self.config.usage_entropy_weight * u_t.shape[0] * entropy
             logits = post_logits
+            if prior_rows is not None:
+                # As in GRAM_Inner._guidance: these puzzles sample their candidate from the prior instead
+                logits = torch.where(prior_rows.view(-1, 1), prior_logits, post_logits)
 
         # Straight-through Gumbel-softmax: the forward pass is the one-hot Gumbel-max sample argmax(logits + g), an exact
         # draw from Cat(softmax(logits)); the backward pass uses the gradient of softmax((logits + g) / tau)

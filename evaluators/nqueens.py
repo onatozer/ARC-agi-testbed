@@ -12,6 +12,7 @@ Metrics computed:
 - Constraint satisfaction: Average percentage of satisfied constraints per puzzle
 """
 
+import math
 from typing import Dict, Optional
 import numpy as np
 import torch
@@ -36,17 +37,17 @@ class NQueens:
     def __init__(self, 
                  data_path: str, 
                  eval_metadata: PuzzleDatasetMetadata,
-                 board_size: int = 8):
+                 board_size: Optional[int] = None):
         """
         Initialize N-Queens evaluator
         
         Args:
             data_path: Path to the dataset (not used but required by TRM interface)
             eval_metadata: Metadata about the dataset
-            board_size: Size of the N-Queens board (N in N-Queens)
+            board_size: Size of the N-Queens board (N in N-Queens); None derives it from the dataset's seq_len = N * N
         """
         super().__init__()
-        self.board_size = board_size
+        self.board_size = board_size if board_size is not None else math.isqrt(eval_metadata.seq_len)
         self.blank_identifier_id = eval_metadata.blank_identifier_id
         
         # Local statistics (accumulated during evaluation)

@@ -90,28 +90,31 @@ class GRAM_Inner(InnerNetwork):
         if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
             raise ValueError(f"grad_cycles must be in [1, H_cycles={self.config.H_cycles}], got {self.config.grad_cycles}.")
 
-    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor | int]:
+    def _guidance(self, u_t: torch.Tensor, y: torch.Tensor, use_posterior: bool,
+                  prior_rows: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor | int]:
         """Samples the stochastic guidance eps for u_t and returns it with its beta-weighted balanced KL: from the
-        posterior q(eps | u_t, y) when gradients are on, otherwise from the prior p(eps | u_t) with no KL."""
+        posterior q(eps | u_t, y) if use_posterior (KL only when gradients are on), otherwise from the prior p(eps | u_t).
+        prior_rows ([B] bool): puzzles that take the prior's guidance even when use_posterior (the KL is still paid)."""
         mu_prior, var_prior = self.prior_head(u_t)
 
-        # Basically, only time we should ever be using the posterior is when the gradient tracking is enabled
-        # Otherwise the posterior will 'leak' in the main trajectory without having to pay the KL div cost and crazy overfitting occurs
-        # if torch.is_grad_enabled():
-        if self.training:
+        if use_posterior:
             mu_post, var_post = self.posterior_head(u_t, y)
             eps = mu_post + torch.randn_like(u_t) * var_post.sqrt()
 
             kl_loss = 0
 
+            if prior_rows is not None:
+                eps = torch.where(prior_rows.view(-1, 1, 1), mu_prior + torch.randn_like(u_t) * var_prior.sqrt(), eps)
+
             if torch.is_grad_enabled():
+                # kl_balanced sums over the hidden dim -> [B, S]; average over tokens like the lm loss, then sum over the batch
                 kl_loss = kl_balanced(
                     mu_post = mu_post,
                     var_post = var_post,
                     mu_prior = mu_prior,
                     var_prior = var_prior,
                     alpha=self.config.kl_grad_prior,
-                ).sum() * self.config.kl_strength
+                ).mean(-1).sum() * self.config.kl_strength
 
             return eps, kl_loss
 
@@ -126,6 +129,15 @@ class GRAM_Inner(InnerNetwork):
         y = batch["labels"]
         seq_dict = self._seq_dict()
 
+        # Puzzles whose grad cycle takes the prior's guidance, so the lm loss also trains the trajectory inference runs
+        # (prior_sample_frac): drawn per puzzle (GRAM.forward, kept for the puzzle's whole trajectory) or per step
+        prior_rows = None
+        if self.training and torch.is_grad_enabled() and self.config.prior_sample_frac > 0:
+            if self.config.prior_sample_per_puzzle:
+                prior_rows = batch["prior_traj"]
+            else:
+                prior_rows = torch.rand(y.shape[0], device=y.device) < self.config.prior_sample_frac
+
         # Run the recursion cycle for H_cycles - grad_cycles times without the gadient
         with torch.no_grad():
             for _ in range(self.config.H_cycles - self.config.grad_cycles):
@@ -135,7 +147,8 @@ class GRAM_Inner(InnerNetwork):
                 u_t = self.L_level(z_H, z_L, **seq_dict)
 
                 # Change with the GRAM network is that now noise from added to the z_H at each iteration
-                eps, _ = self._guidance(u_t, y)
+                # The posterior here pays no KL, so by default these cycles use the prior: otherwise y leaks into the trajectory for free
+                eps, _ = self._guidance(u_t, y, use_posterior=self.training and self.config.posterior_nograd_cycles)
                 z_H = u_t + eps
 
 
@@ -146,7 +159,7 @@ class GRAM_Inner(InnerNetwork):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            eps, guidance_loss = self._guidance(u_t, y)
+            eps, guidance_loss = self._guidance(u_t, y, use_posterior=self.training, prior_rows=prior_rows)
             kl_loss += guidance_loss
 
             z_H = u_t + eps
@@ -176,10 +189,21 @@ class GRAM(TRMModel):
         print("GRAM architecture initialized")
         self.inner = GRAM_Inner(_add_puzzle_emb_positions(config))
 
+    def initial_carry(self, batch: Dict[str, torch.Tensor]) -> ModelCarry:
+        """TRMModel.initial_carry, with room in current_data for each puzzle's prior_traj flag (see forward)."""
+        return super().initial_carry(self._with_prior_traj(batch))
+
+    def _with_prior_traj(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Adds prior_traj ([B] bool): whether a puzzle starting now runs its whole training trajectory on the prior's
+        guidance (prior_sample_per_puzzle). It enters current_data on reset, so it stays fixed for the puzzle."""
+        n, device = batch["inputs"].shape[0], batch["inputs"].device
+        return {**batch, "prior_traj": torch.rand(n, device=device) < self.config.prior_sample_frac}
+
     def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
         """TRMModel.forward without ACT: there's no halt head, so a puzzle halts only after halt_max_steps
         supervision steps, in training and at eval."""
         del kwargs
+        batch = self._with_prior_traj(batch)
 
         if carry is None:
             carry = self.initial_carry(batch)

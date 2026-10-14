@@ -9,3 +9,4 @@ noise_options: 8 # number of candidate guidance vectors the prior / posterior ch
 gumbel_temp: 1.0 # starting Gumbel-softmax temperature; only shapes the straight-through gradient (eps is always one candidate)
 gumbel_temp_min: 0.5 # temperature reached after gumbel_anneal_steps
 gumbel_anneal_steps: 20000 # training steps to anneal gumbel_temp -> gumbel_temp_min linearly; 0 = start at gumbel_temp_min
+usage_entropy_weight: 0.0 # weight of a bonus on the entropy of the posterior's batch-averaged candidate choice (against codebook collapse)
