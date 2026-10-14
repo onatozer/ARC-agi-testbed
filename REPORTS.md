@@ -166,6 +166,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_flags_heads0.1_lr1e-3 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 0.002 | 0.148 | 0.235 | – | 108 min† | lr 1e-3 is worse here (as for TRM); still ≥ TRM's 0.210 |
 | **treerm128_flags_heads0.1_vb0.5_lr3e-4** | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.003 | 0.256 | **0.517** | 0.441 | 96 min† | + value bootstrap: **2.5× TRM**. @2500 = 0.437. Eval search overrides the prior in 69% of searches; 7.6 pts are valid non-label boards |
 | treerm128_flags_heads0.1_vb0.5_evalsims16_lr3e-4 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.009 | 0.227 | 0.484 | – | 73 min† | + 16 eval sims: ≈ the 8-sim run (seed-level difference); more eval search doesn't add here |
+| treerm128_flags_heads0.1_vb0.5_lr3e-4_s1 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.002 | 0.099 | 0.414 | – | 66 min† | vb seed 1. **vb on N-Queens: 0.517 / 0.484 / 0.414 (mean 0.472)** vs recipe 0.335 (1 seed), TRM 0.204–0.210 |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
