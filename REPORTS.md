@@ -30,7 +30,8 @@ run costs 1.5–10× TRM's wall-clock (the Python-side search), so this is equal
 2. **Search only on the grad cycle** (hard-coded). The label-informed search was steering z_H on the no-grad
    cycles without paying the KL — the same leak that makes GRAM memorise (94% train / 6% test).
 3. **Candidate heads at 0.1× the backbone lr** (`param_lr_scales`, generic). The backbone wants TRM's lr
-   (1e-3 on Sudoku); the candidate generator/scorer diverge there. This single change took Sudoku from 23% to 81%.
+   (1e-3 on Sudoku, 3e-4 on N-Queens); the candidate generator/scorer diverge there. This single change took
+   Sudoku from 23% to 81%. 0.3× is as good on Sudoku but clearly worse on N-Queens (30% vs 41–52%).
 4. **Value bootstrapping** (`value_bootstrap_weight=0.5`): the LPRM value head regresses on the training
    search's rollout accuracies. Worth ~+8 on Sudoku and ~+14 on N-Queens; on N-Queens the eval-time search then
    overrides the learned prior in ~70% of searches and produces valid boards that aren't the memorised label,
@@ -224,6 +225,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_flags_heads0.1_vb0.5_evalsims16_lr3e-4 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.009 | 0.227 | 0.484 | – | 73 min† | + 16 eval sims: ≈ the 8-sim run (seed-level difference); more eval search doesn't add here |
 | treerm128_flags_heads0.1_vb0.5_lr3e-4_s1 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.002 | 0.099 | 0.414 | – | 66 min† | vb seed 1. **vb on N-Queens: 0.517 / 0.484 / 0.414 (mean 0.472)** vs recipe 0.335 (1 seed), TRM 0.204–0.210 |
 | treerm128_flags_heads0.1_lr3e-4_s1 | TreeRM | ~790k | 3e-4 / heads 3e-5 | 0.001 | 0.164 | 0.290 | – | 120 min† | non-vb recipe seed 1. **Recipe without vb: 0.335 / 0.290 (mean 0.312)**; vb adds ~+15 here |
+| treerm128_flags_heads0.3_vb0.5_lr3e-4 | TreeRM | ~790k | 3e-4 / heads 9e-5 | 0.003 | 0.191 | 0.297 | – | 126 min† | heads 0.3× with vb: well below 0.1× (0.41–0.52). On N-Queens 0.1× is clearly better |
 | treerm128_base | TreeRM | 886k | 3e-4 | | | | | | K=4, 8 sims, horizon=step |
 | treerm128_lr1e-3 | TreeRM | 886k | 1e-3 | | | | | | |
 | treerm128_resid | TreeRM | 886k | 3e-4 | | | | | | candidate_residual |
