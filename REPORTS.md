@@ -9,6 +9,51 @@ entries are at the bottom of "Iteration log". The "Results" table is kept curren
 
 ---
 
+## 0. Summary (read this first)
+
+**Verdict.** TreeRM beats TRM and GRAM on both benchmarks at equal (or fewer) parameters and equal training
+steps, by margins well outside seed noise. The original design scored ~10%; four changes, each necessary, got it
+there.
+
+| benchmark (budget) | TRM | GRAM | TreeRM, final recipe | TreeRM, without value bootstrap |
+|---|---|---|---|---|
+| 6x6 Sudoku, unique solutions, test exact match (2000 steps × 64) | 66–74% (3 runs) | 6% | **87–95%** (6 runs) | 80–86% (4 runs) |
+| 8x8 N-Queens, test valid-board accuracy (3000 steps × 128) | 20–21% (2 seeds) | 2–3% | **41–52%** (4 runs, mean 46%) | 33.5% / see §11 (2 seeds) |
+
+Parameters: TRM h=192 886k, GRAM h=112 865k, TreeRM h=128 ~790k. Same optimizer steps and samples; a TreeRM
+run costs 1.5–10× TRM's wall-clock (the Python-side search), so this is equal-sample, not equal-compute.
+
+**The recipe** (now the defaults in `config/arch/treerm.yaml`; train with `+param_lr_scales.candidate_=0.1`):
+1. **Flag candidates** (`candidate_mode=flags`): cand_k = u_t + g_k·√H·e_k with K=4 frozen orthonormal
+   directions and a learned per-token gate. Learned full-vector candidates always collapsed (one trained slot +
+   junk, or K copies); flags can't, and their collapse point is plain TRM.
+2. **Search only on the grad cycle** (hard-coded). The label-informed search was steering z_H on the no-grad
+   cycles without paying the KL — the same leak that makes GRAM memorise (94% train / 6% test).
+3. **Candidate heads at 0.1× the backbone lr** (`param_lr_scales`, generic). The backbone wants TRM's lr
+   (1e-3 on Sudoku); the candidate generator/scorer diverge there. This single change took Sudoku from 23% to 81%.
+4. **Value bootstrapping** (`value_bootstrap_weight=0.5`): the LPRM value head regresses on the training
+   search's rollout accuracies. Worth ~+8 on Sudoku and ~+14 on N-Queens; on N-Queens the eval-time search then
+   overrides the learned prior in ~70% of searches and produces valid boards that aren't the memorised label,
+   which TRM never does.
+Also required: evaluate every root child once before PUCT (an MCTS correctness fix; before it the posterior was
+one-hot on a fixed slot) and the KL (turning it off gives 0%).
+
+**What did not matter or hurt:** K=8 (worse than K=4), more training simulations, more eval simulations (not
+resolvable within seed noise on Sudoku; no gain on N-Queens), argmax vs sampled picks (±4), vb weight 0.5 vs
+1.0, a wider backbone at the wrong lr (worse), ACT vs always-8-steps for TRM (not the gap).
+
+**Caveats.** 8x8 N-Queens test givens overlap train 95% (the puzzle space is small), so it measures solving
+ambiguous puzzles rather than unseen boards; Sudoku has 0% overlap. Sudoku is near ceiling for TreeRM, so its
+seed spread (±4) hides small effects. One GPU (4 GB), so nothing larger than these boards was tried.
+
+**Where the gain comes from, mechanistically.** TreeRM is a discrete latent-variable model whose posterior is a
+search instead of a network: on the grad cycle a label-valued search picks a flag, the KL trains the scorer to
+predict that pick from the state, and the downstream network learns what each flag means. With the value head
+bootstrapped, the eval search becomes a genuine test-time procedure (visible on N-Queens); on Sudoku the
+benefit shows up but the search rarely overrides the prior, so the mechanism there is less clear.
+
+---
+
 ## 1. Setup decisions
 
 ### Benchmark: 8x8 N-Queens, not 6x6
