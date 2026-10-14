@@ -146,13 +146,18 @@ def _load_from_hf(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], 
     return inputs, labels
 
 
-def _generate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+def _generate_subset(set_name: str, config: DictConfig, exclude: frozenset = frozenset()) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Generates puzzles whose inputs are not in exclude (the training inputs, when building the test set)."""
     n = config.num_train if set_name == "train" else config.num_test
     inputs, labels = [], []
-    for _ in tqdm(range(n), desc=f"Generating {config.grid_size}x{config.grid_size} {set_name}"):
+    progress = tqdm(total=n, desc=f"Generating {config.grid_size}x{config.grid_size} {set_name}")
+    while len(inputs) < n:
         puzzle, solution = generate_puzzle(config.grid_size, config.clue_ratio)
+        if puzzle.tobytes() in exclude:
+            continue
         inputs.append(puzzle)
         labels.append(solution)
+        progress.update()
     return inputs, labels
 
 
@@ -160,13 +165,14 @@ def _generate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray
 # Main conversion
 # ---------------------------------------------------------------------------
 
-def convert_subset(set_name: str, config: DictConfig):
+def convert_subset(set_name: str, config: DictConfig, exclude: frozenset = frozenset()) -> frozenset:
+    """Builds and saves one split; returns its (augmented) inputs, so the test split can be generated held out from them."""
     grid_size = config.grid_size
 
     if config.source_repo is not None:
         inputs, labels = _load_from_hf(set_name, config)
     else:
-        inputs, labels = _generate_subset(set_name, config)
+        inputs, labels = _generate_subset(set_name, config, exclude)
     
     num_aug = config.num_aug if set_name == "train" else 0
 
@@ -199,6 +205,7 @@ def convert_subset(set_name: str, config: DictConfig):
         # Shift: blank(0)->1, digit d->d+1; PAD token stays 0 (added during collation)
         return arr + 1
 
+    seen_inputs = frozenset(x.astype(np.int64).tobytes() for x in results["inputs"])
     results = {
         "inputs": _seq_to_numpy(results["inputs"]),
         "labels": _seq_to_numpy(results["labels"]),
@@ -233,6 +240,8 @@ def convert_subset(set_name: str, config: DictConfig):
     with open(os.path.join(config.output_dir, "identifiers.json"), "w") as f:
         json.dump(["<blank>"], f)
 
+    return seen_inputs
+
 
 @hydra.main(config_path="../config/dataset", config_name="sudoku", version_base=None)
 def launch(config: DictConfig):
@@ -260,8 +269,9 @@ def launch(config: DictConfig):
     print(f"  - Random seed: {config.seed}")
     print("=" * 80)
 
-    convert_subset("train", config)
-    convert_subset("test", config)
+    # Generated test puzzles are held out: none has the same input as a training puzzle (or augmentation)
+    train_inputs = convert_subset("train", config)
+    convert_subset("test", config, exclude=train_inputs)
 
     print("=" * 80)
     print("Dataset generation complete!")
