@@ -216,6 +216,7 @@ was shared with a fast-tier run, so wall-clock is inflated.
 | treerm128_v2_flags_lr1e-3_heads0.1_K8 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.004 | 0.049 | 0.678 | 0.89 | 50 min† | K=8, 12 sims: below K=4 (0.813). More flags don't help at this budget |
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims32 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.006 | 0.379 | 0.875 | 0.70 | 60 min† | 32 eval sims: not better than 8 (0.87–0.93), below 16 (0.953). Posterior sharper (entropy 0.90), overrides prior 56% |
 | treerm128_v2_flags_lr1e-3_heads0.1_vb0.5_evalsims16_s1 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.008 | 0.529 | 0.875 | 0.94 | 45 min† | 16-sim seed 1: the 0.953 was the top of the band. **All vb configs: 0.87–0.95** |
+| treerm128_v2_flags_lr1e-3_heads0.1_vb1_evalsims16 | TreeRM | ~790k | 1e-3 / heads 1e-4 | 2000 | 0 | 0.012 | 0.609 | 0.912 | 0.95 | 42 min† | vb weight 1.0: in band; weight not sensitive in [0.5, 1] |
 | treerm128_resid | TreeRM | 888k | 1e-3 | 2000 | | | | | | | candidate_residual |
 | treerm128_full | TreeRM | 888k | 1e-3 | 2000 | | | | | | | horizon=full |
 | grampd120_lr1e-3 | GRAMDP | 873k | 1e-3 | 2000 | | | | | | | parity baseline |
