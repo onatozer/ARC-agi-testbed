@@ -212,4 +212,36 @@ variable-size subsets and would recompile per size).
 within noise), full eval 50.6 s (53.7), accuracy 0.868, parity as before. The two syncs per stage it removes are
 paid back by the all-row leaf values and candidates, so on its own it is a wash; it exists to make the round
 compilable. The breakdown now attributes ~95% of a depth-3 search to the single step callback and 5-7% to the tree.
-**Measured, with compile:** pending.
+**First compiled run was wrong, and the harness caught it.** The micro parity field showed 0% posterior argmax
+agreement in eval mode and the eval section crashed with the training-only "needs rollout_loss_fn" error inside an
+eval-mode model. Cause: `__init__` stored `torch.compile(self._step_core)`, a compiled *bound* method; the EMA eval
+model is a `copy.deepcopy` of the training model, and deepcopy keeps function objects by reference, so the copy's
+attribute still called the original instance: its weights, and its train mode. Fix (commit `3b4adaa`): compile the
+unbound `TreeRMInner._step_core` once per process and pass the module as its first argument, so dynamo guards on the
+caller's mode and parameters; a regression test deep-copies a compiled model and checks the copy's round against
+its own eager round. Lesson for every future variant: the parity field and the eval section are the test, not the
+micro speed.
+**Measured, with compile (fixed):** pending (`arena_compile`, measured together with 4.3).
+
+### 4.3 Arena-indexed states (`fused` impls, commit `3b4adaa`)
+A fused search's state was (row, z_H view, z_L view): every round `torch.stack`ed 64-256 views and built K views
+per leaf (256 to 1,024 small tensor objects) for the children. Now `_search` allocates two arenas
+`[B*K*(sims+1), S, H]` per search (reused across searches: 40 MB each at the recipe's shapes and 16 sims) with the
+root children written in; a state is (row, arena index); a round gathers its leaves with one `index_select` and
+writes all its children with one copy, and child states are integers. With `search_compile` the compiled round's
+outputs are written straight into the arena instead of being cloned. Memory is the same as before (the per-round
+candidate tensors were kept alive by the node views anyway), just preallocated. Measured: pending (`arena`,
+`arena_compile`).
+
+### 4.4 WU-UCT batching (`mcts_impl=wu`, `mcts_leaves_per_round=W`)
+`models/mcts.py::WUMCTS`, from the user's third paper (Liu et al., ICLR 2020; arXiv 2006.08785 is its BU-UCT
+follow-up). Each round selects W leaves per tree one after another; every selection adds an *unobserved* visit
+along its path, and PUCT's exploration term uses N + O in both the parent's sqrt and the child's denominator, so the
+next selection is steered away from paths whose value is still pending. The W x B leaves are then evaluated in one
+domain call (one compiled replay at batch B x W) and the unobserved visits become real backups, in selection order.
+Design choices: a leaf selected twice in a round is evaluated twice rather than de-duplicated, so every round has
+the same batch size (the compiled round specialises on it) and the duplicate costs only idle GPU; the K forced
+root visits stay one batched round; W = 1 reproduces the baseline exactly (the unobserved count of a path is always
+released before the next selection reads it), which is what the contract tests' exact parity checks for `wu`; at
+W > 1 the semantics change and the reference checkpoint's eval accuracy is the judge. Arena capacity gains one
+round of slack (`B*K*(sims + W + 1)`). Measured: pending (W = 2, 4, with compile).

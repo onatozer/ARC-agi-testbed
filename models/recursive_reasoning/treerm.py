@@ -96,7 +96,11 @@ class TreeRMInner(GRAM_Inner):
         if self.config.rollout_policy not in ("trm", "prior"):
             raise ValueError(f"rollout_policy must be 'trm' or 'prior', got {self.config.rollout_policy!r}.")
         if self.config.search_compile and not getattr(self.mcts, "fused", False):
-            raise ValueError("search_compile needs a fused search (mcts_impl=fused): only its round has fixed shapes.")
+            raise ValueError("search_compile needs a fused search (mcts_impl=fused or wu): only its round has fixed shapes.")
+        if self.config.mcts_leaves_per_round != 1:
+            if not hasattr(self.mcts, "leaves_per_round"):
+                raise ValueError("mcts_leaves_per_round > 1 needs the WU-UCT search (mcts_impl=wu).")
+            self.mcts.leaves_per_round = self.config.mcts_leaves_per_round
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
@@ -235,9 +239,10 @@ class TreeRMInner(GRAM_Inner):
 
     def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int) -> None:
         """Sizes the arenas for this search (root children, then K children per leaf per round: B*K*(sims + 1) nodes,
-        reused across searches) and writes the root children in."""
+        plus a round's worth of slack for a WU-UCT search's wider rounds; reused across searches) and writes the root
+        children in."""
         B, K, S, H = cand.shape
-        capacity = B * K * (num_simulations + 1)
+        capacity = B * K * (num_simulations + getattr(self.mcts, "leaves_per_round", 1) + 1)
         arena = getattr(self, "_arena", None)
         if arena is None or arena[0].shape[0] < capacity or arena[0].shape[1:] != (S, H) or arena[0].device != cand.device or arena[0].dtype != cand.dtype:
             arena = tuple(torch.empty(capacity, S, H, dtype=cand.dtype, device=cand.device) for _ in range(2))

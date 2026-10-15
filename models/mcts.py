@@ -34,6 +34,7 @@ class Node:
         self.is_expanded = False
         self.num_visits = 0
         self.total_value = 0
+        self.unobserved = 0  # WU-UCT: simulations through this node whose value is still being computed
         self.allowed_depth = allowed_depth # Since there's no defined 'terminal state', instead we just cap the depth
 
     @property
@@ -196,5 +197,75 @@ def compose_step(expand_fn, evaluate_fn):
     return step_fn
 
 
+class WUMCTS(FusedMCTS):
+    """FusedMCTS with WU-UCT's batching (Liu et al., "Watch the Unobserved", ICLR 2020, arXiv 1810.11755): every
+    round selects leaves_per_round leaves per tree, one after another, each selection adding an *unobserved* visit
+    along its path so that PUCT's exploration term, sqrt(N + O) / (1 + N + O), steers the next selection away from
+    paths whose value is still pending; the round then evaluates all of them in one domain call and the unobserved
+    visits become real ones. leaves_per_round rounds of the baseline become one. With leaves_per_round = 1 (the
+    default, and the contract tests' setting) the unobserved counts never influence a selection and the search is the
+    baseline's; with more, a round's leaves are chosen without each other's values (semantics-changing, exact only in
+    that W = 1 sense). A leaf selected twice in a round is evaluated twice (same value: the batch keeps a fixed size,
+    which the compiled round needs) and backed up twice, as two simulations."""
+
+    exact = True  # at the default leaves_per_round = 1; TreeRM sets config.mcts_leaves_per_round
+    fused = True
+
+    def __init__(self, num_simulations: int, c_puct: float, leaves_per_round: int = 1):
+        super().__init__(num_simulations, c_puct)
+        self.leaves_per_round = leaves_per_round
+
+    def select(self, node: Node, stats: MinMaxStats) -> Node:
+        sqrt_visits = math.sqrt(max(node.num_visits + node.unobserved, 1))
+
+        def puct(child: Node) -> float:
+            q = stats.normalize(child.q) if child.num_visits else 0.0
+            return q + self.c_puct * child.prior * sqrt_visits / (1 + child.num_visits + child.unobserved)
+
+        return max(node.children, key=puct)
+
+    def run(self, roots, expand_fn, evaluate_fn, step_fn=None) -> List[List[int]]:
+        if step_fn is None:
+            step_fn = compose_step(expand_fn, evaluate_fn)
+        stats = [MinMaxStats() for _ in roots]
+        num_children = max(len(root.children) for root in roots)
+        forced = min(num_children, self.num_simulations)
+        self._round([(tree, root.children[k % len(root.children)]) for k in range(forced) for tree, root in enumerate(roots)], step_fn, stats, pending=False)
+        simulation = forced
+        while simulation < self.num_simulations:
+            width = min(self.leaves_per_round, self.num_simulations - simulation)
+            leaves = []
+            for tree, (root, tree_stats) in enumerate(zip(roots, stats)):
+                for _ in range(width):
+                    node = root
+                    while node.is_expanded:
+                        node = self.select(node, tree_stats)
+                    leaves.append((tree, node))
+                    for pending in _path(node):
+                        pending.unobserved += 1
+            self._round(leaves, step_fn, stats, pending=True)
+            simulation += width
+        return [[child.num_visits for child in root.children] for root in roots]
+
+    def _round(self, leaves, step_fn, stats, pending: bool) -> None:
+        values, children, priors = step_fn([leaf.state for _, leaf in leaves], [leaf.allowed_depth for _, leaf in leaves])
+        for (tree, leaf), value, child_states, child_priors in zip(leaves, values, children, priors):
+            if leaf.allowed_depth > 0:
+                leaf.expand(child_states, child_priors)  # a no-op after the first expansion of a repeated leaf
+            if pending:
+                for node in _path(leaf):
+                    node.unobserved -= 1
+            stats[tree].update(value)
+            leaf.backpropagate(value)
+
+
+def _path(node: Node) -> List[Node]:
+    path = []
+    while node is not None:
+        path.append(node)
+        node = node.parent
+    return path
+
+
 # The searches TreeRM can run, by config mcts_impl; every entry honours the contract in the module docstring
-MCTS_IMPLS: Dict[str, type] = {"python": MCTS, "fused": FusedMCTS}
+MCTS_IMPLS: Dict[str, type] = {"python": MCTS, "fused": FusedMCTS, "wu": WUMCTS}

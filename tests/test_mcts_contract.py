@@ -23,7 +23,7 @@ class Trace:
     """Runs one search over a batch of toy trees and records every callback: the states each round evaluated and
     expanded (as tuples per tree), so the tests can check the traffic, not just the final counts."""
 
-    def __init__(self, impl: str, values, depths, num_children, num_simulations, c_puct=1.25, priors=None):
+    def __init__(self, impl: str, values, depths, num_children, num_simulations, c_puct=1.25, priors=None, leaves_per_round=None):
         self.values = values  # callable(tree, state) -> float
         self.evaluated = []  # per round: list of (tree, state, allowed_depth)
         self.expanded = []  # per round: list of (tree, state)
@@ -35,6 +35,8 @@ class Trace:
             self.roots.append(root)
         self.num_children = num_children
         self.search = MCTS_IMPLS[impl](num_simulations=num_simulations, c_puct=c_puct)
+        if leaves_per_round is not None:
+            self.search.leaves_per_round = leaves_per_round
         self.counts = self.search.run(self.roots, self.expand_fn, self.evaluate_fn)
 
     def expand_fn(self, states):
@@ -187,6 +189,48 @@ def test_counts_match_the_baseline_on_random_trees(impl):
         assert other.counts == reference.counts, f"case {case}"
 
 
+# WU-UCT with W > 1 leaves per round: the invariants hold, the rounds shrink, and the unobserved counts are released
+
+@pytest.mark.parametrize("width", [2, 4])
+def test_wu_keeps_the_invariants_with_wider_rounds(width):
+    values = _by_first_child([0.1, 0.9, 0.4])
+    trace = Trace("wu", values, depths=[1, 3], num_children=3, num_simulations=11, leaves_per_round=width)
+    for counts in trace.counts:
+        assert sum(counts) == 11 and all(c >= 1 for c in counts) and counts.index(max(counts)) == 1
+    # One forced round, then ceil((11 - 3) / W) rounds of W leaves per tree (the last one narrower)
+    assert len(trace.evaluated) == 1 + -(-8 // width)
+    assert [len(r) for r in trace.evaluated][1:-1] == [2 * width] * (len(trace.evaluated) - 2)
+    for round_ in trace.evaluated:
+        for tree, state, depth in round_:
+            assert depth == [1, 3][tree] - len(state)
+    assert all(node.unobserved == 0 for root in trace.roots for node in _nodes(root))
+    assert Trace("wu", values, depths=[1, 3], num_children=3, num_simulations=11, leaves_per_round=width).counts == trace.counts
+
+
+def _nodes(root):
+    stack, out = [root], []
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        stack.extend(node.children)
+    return out
+
+
+def test_wu_wider_rounds_spread_a_rounds_selections():
+    # With a strongly preferred child, plain PUCT would pick it W times in a row; the unobserved visits make the
+    # second pick of a round look at the next child instead
+    values = {(0,): 0.9, (1,): 0.1, (2,): 0.1, (0, 0): 0.9, (0, 1): 0.9, (0, 2): 0.9, (1, 0): 0.1, (1, 1): 0.1, (1, 2): 0.1, (2, 0): 0.1, (2, 1): 0.1, (2, 2): 0.1}
+    trace = Trace("wu", lambda tree, path: values[path], depths=[2], num_children=3, num_simulations=7, leaves_per_round=4, priors=[[0.6, 0.2, 0.2]])
+    first_wide_round = [state for _, state, _ in trace.evaluated[1]]
+    assert len(first_wide_round) == 4 and len(set(first_wide_round)) > 1
+
+
+def test_wu_with_one_leaf_per_round_is_the_baseline():
+    values = _by_first_child([0.3, 0.8, 0.5, 0.1])
+    kwargs = dict(depths=[2, 3], num_children=4, num_simulations=12)
+    assert Trace("wu", values, leaves_per_round=1, **kwargs).counts == Trace("python", values, **kwargs).counts
+
+
 # Real-model parity: the posterior logits of TreeRMInner._search are what the model sees
 
 def _search_inputs(model, batch, seed=0):
@@ -265,7 +309,7 @@ def test_treerm_trains_and_evals_with_the_impl(impl, compile_):
 def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
-        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "search_compile": False,
+        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
         "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None,
     })
