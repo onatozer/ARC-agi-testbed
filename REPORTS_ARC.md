@@ -20,6 +20,11 @@ Standard protocol (149 tasks, 4000 steps x batch 128, vote over 32 augmented cop
 | TreeRM, `puzzle_emb_lr=3e-2`, **8000 steps** | 597k | 6.7% | 10.1% | 12.8% | 2308 s | 550 MB | treerm_emblr3_8k |
 | TRM, `puzzle_emb_lr=3e-2`, **8000 steps** | 531k | 6.7% | 9.4% | 15.4% | 1338 s | 343 MB | trm_emblr3_8k |
 | TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 4000 steps | 598k | 5.4% | 8.1% | 12.1% | 1218 s | 1150 MB | treerm_k8_emblr3 |
+| **TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 8000 steps** | 598k | **7.4%** | **13.4%** | **17.5%** | 2633 s | 1150 MB | treerm_k8_emblr3_8k |
+
+Best TreeRM configuration found: K=8 flag candidates, task-embedding lr 3e-2, 8000 steps: 20 of 149 tasks at
+pass@2 (TRM at the same budget and embedding lr: 14; the recipe TreeRM at 4000 steps: 7). One seed so far; the
+seed replicate of the 4000-step version is queued.
 
 Seed noise is 2-4 tasks (TreeRM seed 1: 1.3 / 2.0 / 2.7; TRM seed 1: 2.7 / 4.0 / 5.4), so the three architectures are
 level at this budget; the one change that moved TreeRM across seeds is a faster task-embedding lr (the recipe's
