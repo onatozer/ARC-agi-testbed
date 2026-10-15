@@ -3,7 +3,7 @@
 # (freezing untrained heads from scratch would leave the search with a random prior and value).
 source "$(dirname "$0")/recipes.sh"
 ckpt=$(ckpt_of treerm_std); echo "== continuation from $ckpt"
-CONT="load_checkpoint=$ckpt load_weights_only=true max_steps=1000 eval_interval_steps=1000 lr_warmup_steps=50"
+CONT="+load_checkpoint=$ckpt +load_weights_only=true max_steps=1000 eval_interval_steps=1000 lr_warmup_steps=50"
 run_treerm treerm_cont_ctrl      "$DATA_STD" $CONT
 run_treerm treerm_cont_heads     "$DATA_STD" $CONT "freeze_param_substrings=[candidate_,v_head]"
 run_treerm treerm_cont_alt       "$DATA_STD" $CONT freeze_alternation_epochs=25
