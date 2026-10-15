@@ -241,6 +241,8 @@ noise 2-4 tasks).
 
 | TRM, `puzzle_emb_lr=3e-2`, 8000 steps | the fair pair for the row above | 4.7 / 6.0 / 8.7 @4k, 5.4 / 7.4 / 13.4 @6k, **6.7 / 9.4 / 15.4 @8k** | 7.5 | level with TreeRM at 8k (pass@1 equal, TreeRM +1 task at pass@2, TRM +4 at pass@5) in 58% of the wall-clock (1338 s) and 62% of the GPU memory |
 
+| TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 8000 steps | the best configuration at the larger budget | 5.4 / 6.7 / 9.4 @4k, 5.4 / 10.7 / 12.1 @6k, **7.4 / 13.4 / 17.5 @8k** | 4.6 | **best run of the night**: 20 tasks at pass@2 vs TRM-8k's 14 and K=4 TreeRM-8k's 15; token acc 0.765, exact-row 2.8%; 2633 s, eval memory 1,150 MB; one seed (replicate queued) |
+
 Where that leaves question 3 after the loop: on MiniARC 5x5 at ~0.6M params and 4000 steps, TreeRM's search buys
 nothing measurable over TRM (both ~5-8% pass@2 with the fixed embedding lr), at 2x the wall-clock and 1.6x the
 memory; VARC is the cheapest and adapts best at test time. The one thing the loop found that moves every
