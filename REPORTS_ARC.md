@@ -195,11 +195,15 @@ random prior and value, so the question is asked on a trained model. "alt" = `fr
 | control: everything trains | 3.4% | 5.4% | 8.1% | 1.1% | 0.722 | 0.432 | 528 s |
 | heads frozen (`candidate_`, `v_head`: 66,822 values) | 1.3% | 4.7% | 9.4% | 1.4% | 0.738 | 0.415 | 431 s |
 | alt: embeddings / weights alternation | 2.7% | 4.0% | 6.7% | 1.2% | 0.723 | 0.570 | 442 s |
-| alt + heads frozen in the weight phase | pending | | | | | | |
+| alt + heads frozen in the weight phase | 2.7% | 4.0% | 6.7% | 1.2% | 0.736 | 0.501 | 421 s |
 
-Reading so far: all three numbers of the heads-frozen run sit within seed noise of the control (one task =
-0.67%); the heads can be frozen after pretraining without loss, which also says the candidate generator and value
-head had converged by 4000 steps (they train at 0.1x lr anyway).
+Reading: all three numbers of the heads-frozen run sit within seed noise of the control (one task = 0.67%); the
+heads can be frozen after pretraining without loss, which also says the candidate generator and value head had
+converged by 4000 steps (they train at 0.1x lr anyway). The alternation (the paper's freezing idea applied to
+training) does not help: both alternation runs end exactly where the checkpoint started (2.7 / 4.0-4.7 / 6.7) with
+a higher training loss, because the backbone trains in only half of the steps; freezing the heads on top changes
+nothing. **Question 2, training side: no effect either way.** The control that trains everything is the best
+continuation (3.4 / 5.4 / 8.1), i.e. the model simply wanted more steps.
 
 ## 5. Open loop: ideas tried
 
