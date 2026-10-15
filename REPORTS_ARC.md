@@ -162,11 +162,13 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 | model | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end |
 |---|---|---|---|---|---|---|
 | TRM | Embed-Full-TTT, flat lr | 1 | 3 | 3 | 0.747 | 0.56 |
-| TRM | Full-TTT, flat lr | pending | | | | |
+| TRM | Full-TTT, flat lr | 1 | 1 | 2 | 0.758 | 0.36 |
 | TRM | Embed-TTT, 40 epochs | pending | | | | |
 
-TRM: the flat lr fixes Embed-Full (1 -> 3 at pass@2) and puts the paper's ordering one task ahead of cosine
-Full-TTT (2); the flat-lr Full decides whether that is the ordering or the schedule.
+TRM: the flat lr fixes Embed-Full (1 -> 3 at pass@2), while flat-lr Full fits the demos hardest (train loss 0.36)
+and solves the fewest tasks (1): with the schedule held equal, the paper's embed-first ordering beats joint
+fine-tuning for TRM by two tasks, and the mechanism the paper gives (fitting the embedding first keeps the backbone
+from overfitting the few demos) is what the training losses show. Still one seed and 30 tasks.
 
 ## 4. Head freezing in regular training
 
