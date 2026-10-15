@@ -171,7 +171,7 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 | TRM | Embed-TTT, 40 epochs | 1 | 1 | 3 | 0.766 | 0.42 |
 
 | TreeRM | Embed-Full-TTT, flat lr | 0 | 1 | 2 | 0.736 | 0.55 |
-| TreeRM | Full-TTT, flat lr | pending | | | | |
+| TreeRM | Full-TTT, flat lr | 1 | 2 | 3 | 0.748 | 0.37 |
 | TreeRM | Embed-TTT, 40 epochs | pending | | | | |
 
 TreeRM: the flat lr changes nothing for Embed-Full (0 / 1 / 2 either way, Full-TTT 2 / 3 / 4), so for TreeRM the
