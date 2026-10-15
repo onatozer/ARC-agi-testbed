@@ -172,7 +172,7 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 
 | TreeRM | Embed-Full-TTT, flat lr | 0 | 1 | 2 | 0.736 | 0.55 |
 | TreeRM | Full-TTT, flat lr | 1 | 2 | 3 | 0.748 | 0.37 |
-| TreeRM | Embed-TTT, 40 epochs | pending | | | | |
+| TreeRM | Embed-TTT, 40 epochs | 0 | 0 | 1 | 0.744 | 0.50 |
 
 TreeRM: the flat lr changes nothing for Embed-Full (0 / 1 / 2 either way, Full-TTT 2 / 3 / 4), so for TreeRM the
 schedule was not the reason the embed-first ordering lags; the embedding alone cannot steer its search.
