@@ -61,6 +61,22 @@ def main(paths: List[str]) -> None:
         print(f"| {metric} | " + " | ".join(f"{v:.3f}" if v is not None else "–" for v in accs) + " | " + " | ".join(f"{v - accs[0]:+.3f}" if v is not None and accs[0] is not None else "–" for v in accs[1:]) + " |")
         print("| puzzles | " + " | ".join(f"{r['eval'].get('puzzles') or '–'}" if r.get("eval") else "–" for r in results) + " | " + " | ".join("" for _ in others) + " |")
         print("| peak mem MB | " + " | ".join(f"{r['eval']['peak_mem_mb']:.0f}" if r.get("eval") else "–" for r in results) + " | " + " | ".join("" for _ in others) + " |")
+        print()
+
+    print("| memory, peak MB | " + " | ".join(names) + " |")
+    print("|---|" + "---|" * len(names))
+    for section in ("micro", "train", "eval"):
+        for key, label in (("gpu_alloc", "GPU allocated"), ("gpu_reserved", "GPU reserved"), ("host_rss", "host RSS")):
+            cells = []
+            for r in results:
+                part = r.get(section)
+                if not part:
+                    cells.append("–")
+                elif section == "micro":
+                    cells.append(f"{max(row.get('memory_mb', {}).get(key, row['peak_mem_mb'] if key == 'gpu_alloc' else 0) for row in part):.0f}")
+                else:
+                    cells.append(f"{part.get('memory_mb', {}).get(key, part['peak_mem_mb'] if key == 'gpu_alloc' else 0):.0f}")
+            print(f"| {section} {label} | " + " | ".join(cells) + " |")
 
 
 if __name__ == "__main__":

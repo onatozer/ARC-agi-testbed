@@ -114,6 +114,15 @@ def load_weights(state, checkpoint: Optional[str], config: PretrainConfig):
     return load_ema(ckpt, state, config, 0) if config.ema and "ema" in ckpt else state
 
 
+def memory_mb() -> Dict[str, float]:
+    """Peak memory since the last reset_peak_memory_stats: GPU allocated (tensors) and reserved (the caching allocator's
+    footprint, what nvidia-smi sees), plus the process's peak host RSS (never resets: the high-water mark so far)."""
+    import resource
+
+    return {"gpu_alloc": torch.cuda.max_memory_allocated() / 2**20, "gpu_reserved": torch.cuda.max_memory_reserved() / 2**20,
+            "host_rss": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**10}
+
+
 class Timed:
     """Wraps a search callback: accumulates its synchronized wall-clock, calls and states."""
 
@@ -183,7 +192,7 @@ def bench_micro(model, labels: torch.Tensor, impl: str, sims_list: List[int], de
                 domain = rollout.seconds + expand.seconds + step.seconds
                 row = {
                     "mode": "train" if training else "eval", "sims": sims, "depth": depth, "batch": labels.shape[0],
-                    "ms_median": 1e3 * statistics.median(times), "ms_min": 1e3 * min(times), "peak_mem_mb": peak_mb,
+                    "ms_median": 1e3 * statistics.median(times), "ms_min": 1e3 * min(times), "peak_mem_mb": peak_mb, "memory_mb": memory_mb(),
                     "breakdown_ms": {"rollout": 1e3 * rollout.seconds, "expand": 1e3 * expand.seconds, "step": 1e3 * step.seconds, "tree": 1e3 * (total - domain)},
                     "calls": {"rollout": rollout.calls, "expand": expand.calls, "step": step.calls},
                     "states": {"rollout": rollout.states, "expand": expand.states, "step": step.states},
@@ -233,8 +242,9 @@ def bench_train(config: PretrainConfig, steps: int, warmup: int, compile_: bool)
     timed = times[warmup:]
     mean = statistics.mean(timed)
     result = {"steps": len(timed), "warmup": warmup, "compiled": compile_, "batch": batch_size, "step_ms_median": 1e3 * statistics.median(timed),
-              "step_ms_mean": 1e3 * mean, "it_s": 1 / mean, "samples_s": batch_size / mean, "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20}
-    print(f"train: {result['it_s']:.2f} it/s ({result['step_ms_median']:.0f} ms/step median, {result['steps']} steps, peak {result['peak_mem_mb']:.0f} MB)", flush=True)
+              "step_ms_mean": 1e3 * mean, "it_s": 1 / mean, "samples_s": batch_size / mean, "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20, "memory_mb": memory_mb()}
+    print(f"train: {result['it_s']:.2f} it/s ({result['step_ms_median']:.0f} ms/step median, {result['steps']} steps, peak {result['peak_mem_mb']:.0f} MB alloc / "
+          f"{result['memory_mb']['gpu_reserved']:.0f} MB reserved, host RSS {result['memory_mb']['host_rss']:.0f} MB)", flush=True)
     return result
 
 
@@ -247,6 +257,10 @@ def bench_eval(config: PretrainConfig, train_meta, eval_loader, eval_meta, check
     if compile_:
         state.model = torch.compile(state.model, dynamic=False)
     evaluators = create_evaluators(config, eval_meta)
+    if max_eval_steps is None:
+        # Full batches only: the eval harness compiles the whole model with static shapes, so the test set's partial last
+        # batch (1000 = 15 x 64 + 40) costs ~20 s of recompilation that has nothing to do with the search
+        max_eval_steps = eval_meta.total_groups // config.global_batch_size
     evaluate(config, state, eval_loader, eval_meta, evaluators, rank=0, world_size=1, cpu_group=None, max_eval_steps=1)  # warmup (compile)
     seed_all(config.seed)  # the eval samples from the posterior, so its draws are seeded for repeatability
     torch.cuda.synchronize()
@@ -256,8 +270,9 @@ def bench_eval(config: PretrainConfig, train_meta, eval_loader, eval_meta, check
     result = {"checkpoint": checkpoint, "trained": checkpoint is not None, "step": state.step, "max_eval_steps": max_eval_steps, "compiled": compile_,
               "seconds": elapsed, "puzzles": flat.get("all/count", flat.get("count")), "metric": metric, "accuracy": flat.get(metric),
               "metrics": {k: v for k, v in flat.items() if k.split("/")[-1] in ("exact_accuracy", "accuracy", "count", "lm_loss", "token_accuracy") or k.startswith("search/") or "search/" in k},
-              "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20}
-    print(f"eval: {elapsed:.1f} s, {metric} = {result['accuracy']}, peak {result['peak_mem_mb']:.0f} MB" + ("" if checkpoint else " (untrained weights)"), flush=True)
+              "peak_mem_mb": torch.cuda.max_memory_allocated() / 2**20, "memory_mb": memory_mb()}
+    print(f"eval: {elapsed:.1f} s, {metric} = {result['accuracy']}, peak {result['peak_mem_mb']:.0f} MB alloc / {result['memory_mb']['gpu_reserved']:.0f} MB reserved, "
+          f"host RSS {result['memory_mb']['host_rss']:.0f} MB" + ("" if checkpoint else " (untrained weights)"), flush=True)
     return result
 
 
@@ -282,7 +297,8 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--train-steps", type=int, default=50)
     parser.add_argument("--train-warmup", type=int, default=15)
-    parser.add_argument("--eval-steps", type=int, default=None, help="eval batches (default: the full test set)")
+    parser.add_argument("--eval-steps", type=lambda s: None if s == "all" else int(s), default=None,
+                        help="eval batches; default: every full batch of the test set (a partial last batch recompiles the outer model: ~20 s); 'all' includes it")
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("--override", action="append", default=[], help="extra hydra override (repeatable)")
     args = parser.parse_args()

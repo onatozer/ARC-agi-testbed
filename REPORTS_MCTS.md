@@ -313,8 +313,41 @@ expands, releases unobserved visits, updates the per-tree min-max stats and back
 arithmetic and tie rule. Python keeps the domain state of node i at index i (the arena index for TreeRM, a tuple in
 the toy tests) and still makes one batched domain call per round, so the latents never cross into C++, which is
 what keeps the implementation 150 lines and generic. Visit counts are the baseline's: it passes every exact
-contract test (hand-computed traces, random-tree parity, posterior parity on the tiny model). Measured: pending
-(`cpp_compile`, `cpp_wu2_compile`).
+contract test (hand-computed traces, random-tree parity, posterior parity on the tiny model).
+
+**Measured, C++ forest + WU-2 + compile** (`results/cpp_wu2_compile_sudoku6u.json`, padded build):
+
+| mode | sims | depth | python tree, WU-2 ms (tree ms) | C++ forest, WU-2 ms (tree ms) |
+|---|---|---|---|---|
+| train | 8 | 3 | 57.8 (5) | 47.4 (2) |
+| train | 16 | 3 | 84.6 (12) | 76.4 (3) |
+| eval | 8 | 3 | 45.2 (6) | 43.1 (2) |
+| eval | 16 | 3 | 85.7 (12) | 77.3 (3) |
+| eval | 16 | 1 | 10.0 (4) | 6.8 (1) |
+
+Full eval **37.7 s** (WU-2 with the Python tree: 45.5 s, part of that gap being the padded last batch), accuracy
+0.871 and `search/argmax_agree` 0.419, both identical to the Python WU-2 run: the forest reproduces that search's
+decisions on the real model. The tree's share of a search is now 1-3 ms. **Kept** (opt-in: `mcts_impl=cpp`).
+**C++ forest + compile at W = 1** (`results/cpp_compile_sudoku6u.json`, exact semantics): eval 16 sims depth 3
+93.9 ms (tree 3 ms), train 8 sims depth 3 50.1 ms (tree 2 ms); full eval 47.0 s, accuracy 0.868 and
+`search/argmax_agree` 0.464, i.e. the baseline's decisions exactly.
+
+### 4.5b The eval's partial last batch (harness finding, commit pending)
+Padding the compiled round did not move the full eval (53.9 s) although 15 full batches take 27 s: the ~20 s goes
+to the **outer** model, which `evaluate.py`/the bench compile with `dynamic=False`, recompiling the whole forward
+for the 40-row last batch (1000 = 15 x 64 + 40). It is the same for every variant (and for the baseline: its 96 s
+include it), so it hid the search speedups. The bench now evaluates full batches only by default (960 puzzles;
+`--eval-steps all` restores the partial batch) and the kept variants are re-measured that way below.
+
+### Memory (the user asked for it to be tracked)
+Every bench section records peak GPU memory allocated; from here on also GPU reserved (the allocator's footprint,
+what `nvidia-smi` shows) and the process's peak host RSS, and `compare.py` prints them. So far (eval section, peak
+GPU allocated, MB): baseline 354 | fused 564 (the batch-256 forced round's candidate tensor held next to its
+views) | arena 265 | arena + compile 266-270 | WU-2 274 | WU-4 283 | C++ 313 | C++ + WU-2 274. Training section:
+282 (baseline, fused, arena) | 279-326 (compiled variants: CUDA-graph pools) | 364 (C++ + WU-2). The arenas are
+`2 x B*K*(sims+W+1) x S x H` bf16 = 2 x 40 MB at the recipe's shapes with 16 sims, preallocated once and reused;
+nothing here approaches the 4 GB card, but the numbers are tracked so a wider search (W, K, sims) or a larger
+board (8x8 N-Queens: seq 64, batch 128 -> 2 x 142 MB arenas) stays visible.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
