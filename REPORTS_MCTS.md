@@ -70,7 +70,9 @@ the batch is a wash.
   (`results/evalfull_fused_compile_noiseless.json`), far more than the micro's 10 ms per search of Python tree
   work predicted (the real eval loop also pays Python's allocation and GC for the per-search node objects). When
   the C++ forest cannot be built (no g++/ninja) TreeRM falls back to `fused` with a warning rather than failing.
-  `python` remains the reference the tests compare against. `search_memo`, `mcts_leaves_per_round`,
+  `python` remains the reference the tests compare against. Checked end to end with a real `pretrain.py` run
+  under the new defaults (60 steps of the recipe on `data/sudoku-6u`, an in-training eval, a checkpoint): ~8 it/s,
+  no fallback, no error. `search_memo`, `mcts_leaves_per_round`,
   `eval_rollout_cap` stay off. The first forward with `search_compile` spends ~1 minute compiling the round's
   specialisations (2 batch shapes x 3 depths x train/eval); the bench's warmups absorb it.
 
@@ -482,6 +484,26 @@ steady ~2.9 s (C++) vs ~5.5 s (baseline) per batch where Sudoku's compiled run t
 that is not search. The N-Queens config adds the `NQueens` evaluator (a CPU board check per puzzle per batch),
 which neither variant touches; it is the same cost for both and outside this loop's scope, but it caps what the
 search speedup can show on this environment.
+
+### 4.13 CUDA-graph trees vs plain CUDA graphs (`TORCHINDUCTOR_CUDAGRAPH_TREES=0`)
+Full-batch eval with inductor's graph trees disabled (plain per-function graphs, inputs copied): 22.8 s vs 17.7 s
+with trees, same accuracy and decisions (`results/evalfull_cpp_compile_notrees.json`). Trees stay. The rollout
+cap's slowdown (4.11) is therefore not explained by path re-recording; it stays parked and unexplained, which is
+acceptable since the cap has nothing to gain.
+
+### 4.14 State of the loop
+Every exact lever found has been implemented and kept (fused round, compiled round, arena states, C++ forest,
+noiseless block), each measured on the reference checkpoint with its memory; every semantics-changing or
+speculative option has been built, measured and parked with its number (WU-UCT W=2/4, max-autotune, memo, rollout
+cap, graph modes, eval batch size as a protocol note). Final defaults: `mcts_impl=cpp` (fallback `fused`),
+`search_compile=true`. Headline, 6x6 Sudoku, 960 test puzzles, 16 eval simulations, identical search decisions:
+**88.0 s -> 17.7 s (5.0x)**; at eval batch 256, 13.4 ms per puzzle (6.9x per puzzle against the baseline's 92).
+Training throughput is unchanged (the search is 5-10% of a training step) and peak GPU memory is lower than the
+baseline's in every kept configuration. What a further round could try, in order: a bf16 shadow of the backbone
+weights refreshed once per search (the per-pass fp32->bf16 weight casts were ~15% of GPU time in the eager
+profile and are still kernels inside the compiled round); moving the N-Queens evaluator's per-puzzle Python loop
+to tensors (outside this loop's scope, but it is half of that environment's eval time); and, if semantics may
+change, fewer eval simulations at the depth-3 cycle only.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
