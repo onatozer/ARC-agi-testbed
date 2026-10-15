@@ -209,6 +209,7 @@ noise 2-4 tasks).
 | variant | what | pass@1 / pass@2 / pass@5 @4k | train it/s | verdict |
 |---|---|---|---|---|
 | `mcts_horizon=full` | rollouts to the end of the last supervision step (up to 24 updates) | stopped at step 1296 | 1.3 (vs 5.1) | **too slow for this GPU**: 4x the training cost and an eval with depth-24 searches; killed to keep the queue moving |
+| `halt_max_steps=16` | twice the supervision steps (and twice the eval searches) | 2.0 / 2.0 / 5.4 | 4.3 | no gain (within noise of the recipe's 2.7 / 4.7 / 6.7), 23% more wall-clock (1573 s) |
 
 ## 6. Run log
 
