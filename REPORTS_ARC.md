@@ -196,6 +196,13 @@ head had converged by 4000 steps (they train at 0.1x lr anyway).
 
 ## 5. Open loop: ideas tried
 
+TreeRM variants on the standard build, same recipe otherwise, judged on pass@2 against `treerm_std` (4.7%, seed
+noise 2-4 tasks).
+
+| variant | what | pass@1 / pass@2 / pass@5 @4k | train it/s | verdict |
+|---|---|---|---|---|
+| `mcts_horizon=full` | rollouts to the end of the last supervision step (up to 24 updates) | stopped at step 1296 | 1.3 (vs 5.1) | **too slow for this GPU**: 4x the training cost and an eval with depth-24 searches; killed to keep the queue moving |
+
 ## 6. Run log
 
 - **Phase 0 smoke** (200 steps + one full eval over the 4,768-row test split, W&B disabled): TRM 530,690 params,
