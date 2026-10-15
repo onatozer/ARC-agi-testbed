@@ -170,6 +170,23 @@ Full-TTT (2); the flat-lr Full decides whether that is the ordering or the sched
 
 ## 4. Head freezing in regular training
 
+1000-step continuations of the standard TreeRM checkpoint (`+load_checkpoint`, weights only, warmup 50), same
+recipe otherwise, one full eval at the end. Freezing untrained heads from scratch would leave the search with a
+random prior and value, so the question is asked on a trained model. "alt" = `freeze_alternation_epochs=25`
+(~100-step blocks: embeddings only, then weights only).
+
+| continuation | pass@1 | pass@2 | pass@5 | exact (row) | token acc | train lm loss end | wall |
+|---|---|---|---|---|---|---|---|
+| checkpoint at 4000 steps (start) | 2.7% | 4.7% | 6.7% | 1.3% | 0.719 | 0.456 | – |
+| control: everything trains | 3.4% | 5.4% | 8.1% | 1.1% | 0.722 | 0.432 | 528 s |
+| heads frozen (`candidate_`, `v_head`: 66,822 values) | 1.3% | 4.7% | 9.4% | 1.4% | 0.738 | 0.415 | 431 s |
+| alt: embeddings / weights alternation | pending | | | | | | |
+| alt + heads frozen in the weight phase | pending | | | | | | |
+
+Reading so far: all three numbers of the heads-frozen run sit within seed noise of the control (one task =
+0.67%); the heads can be frozen after pretraining without loss, which also says the candidate generator and value
+head had converged by 4000 steps (they train at 0.1x lr anyway).
+
 ## 5. Open loop: ideas tried
 
 ## 6. Run log
