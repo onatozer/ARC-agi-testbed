@@ -49,8 +49,11 @@ solved at pass@2 out of 30 (section 3):
 
 Verdicts so far: TTT works for all three (0 -> 2-4 of 30); the paper's embed-first ordering does not beat joint
 fine-tuning at this scale for any of them, and for TreeRM the task embedding alone is not enough (its search and
-prior need the backbone to move); freezing TreeRM's heads at test time changes nothing. Head freezing in regular
-training: section 4.
+prior need the backbone to move); freezing TreeRM's heads at test time changes nothing, and training them together
+with the embedding on a frozen backbone fits the demos but solves no more tasks (section 3c). Head freezing in
+regular training (sections 4 and 4b): the trained heads can be frozen at no cost, every iterative freezing
+schedule (heads/backbone or embeddings/weights alternation, from scratch or as a continuation) is worse than
+training everything, because the backbone loses half its updates.
 
 ## 1. Setup and decisions
 
@@ -275,8 +278,24 @@ control `treerm_emblr3` (5.4 / 7.4 / 10.7, seed 1: 3.4 / 4.7 / 6.0):
 | `treerm_emblr3` (control) | everything, every step | 5.4% | 7.4% | 10.7% | 0.738 | 0.40 | 1124 s |
 | `treerm_e3_althd` | 100-step blocks: backbone+embeddings / heads only | 2.0% | 4.7% | 7.4% | 0.721 | 0.80 | 1178 s |
 | `treerm_e3_altemb` | 100-step blocks: embeddings / weights (the paper's schedule) | 1.3% | 2.0% | 2.0% | 0.708 | 0.77 | 1262 s |
-| `treerm_e3_2k` -> `treerm_e3_2k_ctrl` | 2000 steps, then 2000 more with everything | queued | | | | | |
+| `treerm_e3_2k` -> `treerm_e3_2k_ctrl` | 2000 steps (1.3 / 2.7 / 5.4), then 2000 more with everything | 2.7% | 4.7% | 8.1% | 0.733 | 0.34 | 555 + 895 s |
 | `treerm_e3_2k` -> `treerm_e3_2k_heads` | 2000 steps (1.3 / 2.7 / 5.4), then 2000 more with the heads frozen | 5.4% | 6.7% | 10.1% | 0.732 | 0.33 | 555 + 853 s |
+
+Reading. Both alternations lose, and for the same reason the embeddings/weights alternation lost in section 4: the
+backbone trains in only half of the steps (final lm loss 0.77-0.80 against 0.40), and the heads-only blocks cannot
+lower the lm loss at all, so alternating is a 2000-step run with extra cost. Iterative head freezing throughout
+training is therefore the wrong shape for TreeRM: the heads are cheap (67k values at 0.1x lr) and their training
+does not compete with the backbone's. Freezing them for the **second half** is the one variant that is not worse:
+against its paired control (same checkpoint, same warmup restart) it is +4 / +3 / +3 tasks (5.4 / 6.7 / 10.1 vs
+2.7 / 4.7 / 8.1), token accuracy and lm loss equal; against the uninterrupted 4000-step control it is level (5.4 /
+7.4 / 10.7). With the seed spread at 2-7 tasks this is one seed's worth of evidence that the heads converge early
+and can be frozen at no cost, 13% faster per step (853 vs 895 s), and no evidence that freezing them *helps*. Note
+the paired control itself sits 3-4 tasks below the uninterrupted run: the warmup restart at 2000 steps costs
+something, which is why the paired comparison is the one to read.
+
+**Question 2, final:** in training, TreeRM's heads can be frozen once trained (section 4 and here) but every schedule
+that freezes them, or anything else, iteratively during training is worse than training everything every step; at
+test time, training the heads with the embedding fits the demos but does not transfer (section 3c).
 
 ## 5. Open loop: ideas tried
 
