@@ -170,6 +170,13 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 | TRM | Full-TTT, flat lr | 1 | 1 | 2 | 0.758 | 0.36 |
 | TRM | Embed-TTT, 40 epochs | 1 | 1 | 3 | 0.766 | 0.42 |
 
+| TreeRM | Embed-Full-TTT, flat lr | 0 | 1 | 2 | 0.736 | 0.55 |
+| TreeRM | Full-TTT, flat lr | pending | | | | |
+| TreeRM | Embed-TTT, 40 epochs | pending | | | | |
+
+TreeRM: the flat lr changes nothing for Embed-Full (0 / 1 / 2 either way, Full-TTT 2 / 3 / 4), so for TreeRM the
+schedule was not the reason the embed-first ordering lags; the embedding alone cannot steer its search.
+
 TRM: the flat lr fixes Embed-Full (1 -> 3 at pass@2), while flat-lr Full fits the demos hardest (train loss 0.36)
 and solves the fewest tasks (1): with the schedule held equal, the paper's embed-first ordering beats joint
 fine-tuning for TRM by two tasks, and the mechanism the paper gives (fitting the embedding first keeps the backbone
