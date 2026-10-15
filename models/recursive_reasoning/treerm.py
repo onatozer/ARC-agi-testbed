@@ -328,7 +328,8 @@ class TreeRMInner(GRAM_Inner):
         # search_memo (eval): the previous cycle's search of this step chose root child k*; its subtree (children
         # states in the arena, priors, rollout values at the depths this search needs) is exactly this search's
         # start, so the search continues from it instead of re-rolling what it already valued
-        reuse = self._memo if self.config.search_memo and not self.training else None
+        memo = self.config.search_memo and not self.training and getattr(self.mcts, "memo", False)  # the bench swaps impls
+        reuse = self._memo if memo else None
         self._memo = self._pending_memo = None
         if fused:
             self._arena_reset(cand, z_L, self.mcts.num_simulations, keep=reuse is not None)
@@ -344,9 +345,9 @@ class TreeRMInner(GRAM_Inner):
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
             **({"step_fn": lambda states, depths: self._step(states, depths, x, y)} if fused else {}),
             **({"reuse": reuse} if reuse is not None else {}),
-            **({"cache": True} if self.config.search_memo and not self.training else {}),
+            **({"cache": True} if memo else {}),
         )
-        if self.config.search_memo and not self.training:
+        if memo:
             self._pending_memo = self.mcts.last  # completed by _mcts_guidance once the candidate is picked
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         posterior = visits / visits.sum(dim=-1, keepdim=True)

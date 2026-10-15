@@ -393,6 +393,31 @@ sims depth 3 93.9 -> 81.6 ms (-13%), train 16 sims depth 3 89.2 -> 84.5, the dep
 Full-batch eval: pending (the first measurement, 26.7 s, ran while the whole test directory was on the GPU and is
 discarded).
 
+### 4.9 Eval-time search memo (`search_memo=true`, needs `mcts_impl=cpp`; commit pending)
+Two exact savings that only the eval sees (training searches on the grad cycle alone, and their value-bootstrap
+term counts repeated leaves):
+- **Value cache within a search.** The baseline re-rolls a depth-0 leaf every time PUCT revisits it; after the
+  forced round of a depth-1 search every one of the remaining 12 rounds does exactly that. The C++ forest keeps each
+  node's rollout value, and with the cache on a leaf valued once is never sent to the model again (same value, same
+  counts). Off by default so the contract tests still pin the baseline's callback traffic; a toy test pins the
+  cached traffic (each state once, in first-visit order, same counts).
+- **Subtree reuse across the cycles of a step.** The children of root child k* in cycle c's search are, up to the
+  bf16 batch-composition noise already accepted in 4.1, exactly cycle c+1's root children (the same TRM update of
+  the same state), at the same allowed depth, so their rollout values are the ones cycle c+1 needs. After the pick,
+  `_mcts_guidance` records (forest, states, k*); the next `_search` of the same forward re-roots the forest at k*
+  (`Forest::subtree`: structure, priors, values kept, counts zero, root priors from the model's prior at that
+  cycle) and the arena is not reset (capacity x H_cycles). Cycle c+1's forced round is then free whenever k*'s
+  children were visited in cycle c, and every already-valued descendant stays free.
+- Exactness: `test_search_memo_continues_from_the_chosen_subtree_and_matches_a_fresh_search` runs a two-cycle
+  eval forward with and without the memo (fp32, argmax picks): identical logits and search entropy, fewer leaves
+  sent to the model.
+- **Measured** (`results/evalfull_cpp_compile_memo.json`): full-batch eval 17.2 s vs 17.7 s without (-3%),
+  accuracy 0.871 either way, `search/argmax_agree` 0.467 vs 0.461 (bf16-level differences in which cached value
+  is used). Memory: eval peak GPU allocated 282 MB vs 120 MB, reserved 384 vs 222 (the arena is kept for the three
+  cycles of a step). Why so little: the depth-3 search of cycle 0 (the expensive one, ~60% of eval time) cannot
+  reuse anything, and the cycle-1 and cycle-2 searches it helps were already the cheap ones. **Verdict: works,
+  exact, but 3% for 2.3x the search's memory is not worth a default; stays opt-in** (`search_memo=true`).
+
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
 In an eval batch the searches themselves are roughly 8 steps x (93 + 50 + 16) ms ~ 1.3 s, but a batch takes ~2.8 s
