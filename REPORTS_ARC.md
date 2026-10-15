@@ -77,7 +77,10 @@ embedding.
 |---|---|---|---|---|
 | TRM | 0 / 0 (of 30) | 0.65 | 0.84 | 767 s |
 | VARC | 0 / 0 (of 30) | 0.60 | 0.78 | 277 s |
-| TreeRM | pending | | | |
+| TreeRM | 0 / 0 (of 30) | 0.64 | – | 817 s |
+
+So without adaptation none of the three generalises to an unseen MiniARC task from its demos alone (as expected:
+the demos are only ever seen through the task embedding, which is untrained for these tasks).
 
 ## 4. Head freezing in regular training
 
