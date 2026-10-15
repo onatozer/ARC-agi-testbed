@@ -182,7 +182,7 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 
 | VARC | Embed-Full-TTT, flat lr | 2 | 4 | 4 | 0.805 | 0.37 |
 | VARC | Full-TTT, flat lr | 4 | 4 | 7 | 0.813 | 0.34 |
-| VARC | Embed-TTT, 40 epochs | pending | | | | |
+| VARC | Embed-TTT, 40 epochs | 1 | 1 | 1 | 0.770 | 0.48 |
 
 VARC: the flat lr lifts Embed-Full from 1 / 3 / 4 to 2 / 4 / 4, but flat-lr Full-TTT is the best adaptation of the night
 (4 / 4 / 7: 23% of the held-out tasks at pass@5), so for VARC joint fine-tuning keeps the edge; the embed-first ordering wins only for TRM here.
