@@ -243,7 +243,15 @@ batch size means new specialisations (40 and 160 rows x 3 depths) compiled insid
 last 40-puzzle batch alone cost ~21 s of compilation. Fix: the round's batch dimension is marked dynamic
 (`torch._dynamo.maybe_mark_dynamic(t, 0)` on the round's inputs), so each (depth, mode) is compiled once with a
 symbolic batch and CUDA graphs are merely recorded per batch size (milliseconds), which also covers any other batch
-size a user evals with. Measured: `arena_compile_dyn`, pending.
+size a user evals with.
+**First attempt did nothing** (`results/arena_compile_dyn_sudoku6u.json`: micro unchanged, full eval 54.6 s): with
+`torch.compile(dynamic=False)` the soft marks (`maybe_mark_dynamic`) are overridden and every size still
+specialises. Second attempt, `dynamic=None` plus hard `mark_dynamic`: dynamo raises a constraint violation from
+`Blocks.forward` in the shared backbone, which specialises the batch dimension (so a symbolic batch would need
+changes to shared code). Third attempt, kept: the round's batch is **padded** to a multiple of 64
+(`SEARCH_BATCH_QUANTUM`) with copies of its first leaf and the outputs sliced back, so in practice only the two
+shapes 64 and 256 (the forced round) ever compile and a partial last batch costs a few wasted rows instead of
+~20 s. Measured: `arena_compile_pad`, below.
 
 ### 4.3 Arena-indexed states (`fused` impls, commit `3b4adaa`)
 A fused search's state was (row, z_H view, z_L view): every round `torch.stack`ed 64-256 views and built K views
@@ -269,4 +277,29 @@ the same batch size (the compiled round specialises on it) and the duplicate cos
 root visits stay one batched round; W = 1 reproduces the baseline exactly (the unobserved count of a path is always
 released before the next selection reads it), which is what the contract tests' exact parity checks for `wu`; at
 W > 1 the semantics change and the reference checkpoint's eval accuracy is the judge. Arena capacity gains one
-round of slack (`B*K*(sims + W + 1)`). Measured: pending (W = 2, 4, with compile).
+round of slack (`B*K*(sims + W + 1)`).
+
+**Measured, W = 2 with compile** (`results/wu2_compile_sudoku6u.json`, dynamic-batch build):
+
+| mode | sims | depth | arena + compile ms | WU-2 ms | rounds | argmax agreement vs baseline |
+|---|---|---|---|---|---|---|
+| train | 8 | 3 | 65.4 | 57.8 | 5 -> 3 | 0.828 |
+| train | 16 | 3 | 94.5 | 84.6 | 13 -> 7 | 0.953 |
+| eval | 8 | 3 | 63.4 | 45.2 | 5 -> 3 | 0.922 |
+| eval | 16 | 3 | 96.7 | 85.7 | 13 -> 7 | 0.984 |
+| eval | 16 | 1 | 16.7 | 10.0 | 13 -> 7 | 1.000 |
+
+Training 10.66 it/s. Full eval 45.5 s, exact accuracy **0.871** (baseline 0.865, fused 0.868): the batched
+selections cost nothing measurable in accuracy at W = 2; `search/argmax_agree` 0.419 (0.464), i.e. the search
+overrides the prior a little more often. The speedup is far below the halving of rounds, which is the important
+finding: **the compiled round is now close to GPU-bound.** A depth-3 round at batch 64 costs ~6.5 ms (15 passes:
+~0.4 ms per pass, i.e. ~2.4 GFLOP of small GEMMs at roughly 6 TFLOP/s, near what this laptop GPU sustains), and
+the same round at batch 128 costs ~10 ms, so doubling the batch only amortises the fixed ~3 ms. Further speedups
+therefore need fewer passes per search (algorithmic), not better batching: see 4.6.
+
+**Measured, W = 4 with compile** (`results/wu4_compile_sudoku6u.json`): eval 16 sims depth 3 89.3 ms (13 rounds
+-> 4, batch 256 each: ~18 ms a round, i.e. the GPU is saturated), train 8 sims depth 3 51.1 ms; full eval 42.0 s,
+accuracy 0.870, `search/argmax_agree` 0.364 (the search overrides the prior noticeably more often than the
+baseline's 0.464: with 4 leaves chosen blind per round the visit distribution is flatter). Verdict: **W = 2 is the
+useful setting** (same accuracy, 10-30% off the search); W = 4 buys little more speed and visibly changes the
+search's behaviour. Neither is the default; `mcts_leaves_per_round` stays 1 unless a user opts in.

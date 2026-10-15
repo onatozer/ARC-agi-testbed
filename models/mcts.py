@@ -259,6 +259,50 @@ class WUMCTS(FusedMCTS):
             leaf.backpropagate(value)
 
 
+class CppMCTS(WUMCTS):
+    """WUMCTS's search with the tree in C++ (models/mcts_cpp/forest.cpp, the user's "write the class in C++" idea):
+    nodes, PUCT selection with unobserved counts, min-max stats and backups live in a C++ forest; Python keeps the
+    domain state of node i at index i and still makes one batched domain call per round. Same arithmetic, same
+    visit counts (exact at leaves_per_round = 1, WU-UCT semantics above it). Built on first use; needs g++."""
+
+    exact = True
+    fused = True
+
+    def __init__(self, num_simulations: int, c_puct: float, leaves_per_round: int = 1):
+        super().__init__(num_simulations, c_puct, leaves_per_round)
+        from models.mcts_cpp import forest_module
+
+        self._forest_cls = forest_module().Forest
+
+    def run(self, roots, expand_fn, evaluate_fn, step_fn=None) -> List[List[int]]:
+        if step_fn is None:
+            step_fn = compose_step(expand_fn, evaluate_fn)
+        forest = self._forest_cls(len(roots), self.c_puct)
+        states: List[Any] = []  # node id -> domain state, in the forest's id order
+        num_children = max(len(root.children) for root in roots)
+        for tree, root in enumerate(roots):
+            forest.add_root(tree, root.allowed_depth, [child.prior for child in root.children])
+            states.append(None)
+            states.extend(child.state for child in root.children)
+
+        def round_(ids: List[int], release: bool) -> None:
+            depths = forest.depth_left(ids)
+            values, children, priors = step_fn([states[i] for i in ids], depths)
+            flat = [p for depth, child_priors in zip(depths, priors) if depth > 0 for p in child_priors]
+            for expanded, child_states in zip(forest.backup(ids, values, flat, num_children, release), children):
+                if expanded:
+                    states.extend(child_states)
+
+        forced = min(num_children, self.num_simulations)
+        round_(forest.forced(forced), release=False)
+        simulation = forced
+        while simulation < self.num_simulations:
+            width = min(self.leaves_per_round, self.num_simulations - simulation)
+            round_(forest.select(width), release=True)
+            simulation += width
+        return forest.root_counts()
+
+
 def _path(node: Node) -> List[Node]:
     path = []
     while node is not None:
@@ -268,4 +312,4 @@ def _path(node: Node) -> List[Node]:
 
 
 # The searches TreeRM can run, by config mcts_impl; every entry honours the contract in the module docstring
-MCTS_IMPLS: Dict[str, type] = {"python": MCTS, "fused": FusedMCTS, "wu": WUMCTS}
+MCTS_IMPLS: Dict[str, type] = {"python": MCTS, "fused": FusedMCTS, "wu": WUMCTS, "cpp": CppMCTS}

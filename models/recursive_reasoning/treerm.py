@@ -256,19 +256,19 @@ class TreeRMInner(GRAM_Inner):
         update is exactly the expand's u_t, so the candidates and priors of the leaves with depth left come from it
         instead of a second update; one host sync carries both the values and the priors."""
         arena_H, arena_L = self._arena
+        n = len(states)
         rows = [row for row, _ in states]
-        ids = torch.tensor([index for _, index in states], device=arena_H.device)
-        depths_t = torch.tensor(depths, device=arena_H.device)
-        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], depths_t)
-        if self.config.search_compile:
-            # The round's batch (B, K*B, and whatever a partial last eval batch gives) is the one shape that varies, so it
-            # is compiled symbolically: one compile per (depth, mode), and CUDA graphs record per batch size instead
-            for t in args:
-                torch._dynamo.maybe_mark_dynamic(t, 0)
-            outputs = _compiled_step_core()(self, *args, max(depths))
-        else:
-            outputs = self._step_core(*args, max(depths))
-        values, targets, leaf_token, cand, priors, z_L_next = outputs
+        indices = [index for _, index in states]
+        padded = depths
+        if self.config.search_compile and n % SEARCH_BATCH_QUANTUM:
+            # The compiled round specialises on its batch, so a partial batch (the test set's last 40 puzzles) is padded
+            # with copies of its first leaf up to the next multiple of the quantum instead of compiling a new shape
+            pad = SEARCH_BATCH_QUANTUM - n % SEARCH_BATCH_QUANTUM
+            rows, indices, padded = rows + rows[:1] * pad, indices + indices[:1] * pad, depths + depths[:1] * pad
+        ids = torch.tensor(indices, device=arena_H.device)
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(depths))
+        outputs = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
+        values, targets, leaf_token, cand, priors, z_L_next = (t[:n] if t is not None else None for t in outputs)
 
         if self.training and self.config.value_bootstrap_weight > 0:
             # Kept until the loss: the compiled core's outputs live in CUDA-graph memory that the next replay overwrites
@@ -437,6 +437,7 @@ class TreeRMInner(GRAM_Inner):
 
 
 _STEP_CORE_COMPILED: Optional[Callable[..., Any]] = None
+SEARCH_BATCH_QUANTUM = 64  # a compiled search round's batch is padded to a multiple of this (see _step)
 
 
 def _compiled_step_core() -> Callable[..., Any]:
@@ -450,6 +451,8 @@ def _compiled_step_core() -> Callable[..., Any]:
     if _STEP_CORE_COMPILED is None:
         # One cache entry per (batch, depth, mode) specialisation, so the default limit of 8 is too small
         torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
+        # Static shapes: the backbone specialises the batch dimension anyway (mark_dynamic fails inside Blocks.forward),
+        # so _step pads a round's batch to a multiple of SEARCH_BATCH_QUANTUM to keep the number of shapes small
         _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode="reduce-overhead", dynamic=False)
     return _STEP_CORE_COMPILED
 
