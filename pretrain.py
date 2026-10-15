@@ -1,6 +1,7 @@
 from typing import Optional, Any, List, Dict, Sequence, Tuple
 from dataclasses import replace
 import os
+import resource
 import math
 
 # Must be set before CUDA initialises. Lets the allocator grow segments instead of fragmenting across differently
@@ -209,6 +210,15 @@ def create_dataloader(
     return dataloader, dataset.metadata
 
 
+def _memory_metrics(prefix: str) -> Dict[str, float]:
+    """Peak memory so far: GPU allocated and reserved (what nvidia-smi shows) in MB, and the process's peak host RSS."""
+    metrics = {f"{prefix}/host_rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**10}
+    if torch.cuda.is_available():
+        metrics[f"{prefix}/gpu_alloc_mb"] = torch.cuda.max_memory_allocated() / 2**20
+        metrics[f"{prefix}/gpu_reserved_mb"] = torch.cuda.max_memory_reserved() / 2**20
+    return metrics
+
+
 def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float]) -> List[Dict[str, Any]]:
     """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins).
     Each group carries `lr_scale`, which the lr schedule multiplies in; unmatched parameters get 1.0."""
@@ -264,15 +274,28 @@ def create_model(
     # In general, AdamATan2 is used as the optimizer, the other optimizers are for the embedding trick thing that Sapient did in their paper,
     # where they created an embedding for each type of puzzle and trained on those. I think this process can be removed, even for the ARC puzzles, but keeping for now
 
+    # freeze_param_substrings: those parameters train nowhere (no gradient, in no optimizer); the puzzle-embedding table is
+    # a buffer with its own optimizer and is not affected (freeze_weights handles the embeddings-only case)
+    frozen = [(n, p) for n, p in model.named_parameters() if any(s in n for s in config.freeze_param_substrings)]
+    if config.freeze_param_substrings and not frozen:
+        raise ValueError(f"freeze_param_substrings {config.freeze_param_substrings} match no parameter of {config.arch.name}.")
+    for _, p in frozen:
+        p.requires_grad_(False)
+    trainable = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    if not trainable:
+        raise ValueError("freeze_param_substrings froze every parameter; use freeze_weights=True to train only the puzzle embeddings.")
+    if frozen:
+        rank_zero_print_info(f"Frozen {len(frozen)} parameter tensors ({sum(p.numel() for _, p in frozen)} values) matching {config.freeze_param_substrings}")
+
     # With optimizer=muon, the 2D weight matrices of the looped blocks go to Muon and everything else stays on AdamAtan2
     if config.optimizer == "muon":
-        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and ".L_level." in name]
+        muon_params = [p for name, p in trainable if p.ndim == 2 and ".L_level." in name]
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], config.param_lr_scales)
+        adam_params = _lr_scaled_groups([(n, p) for n, p in trainable if id(p) not in muon_ids], config.param_lr_scales)
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), config.param_lr_scales)
+        muon_params, adam_params = [], _lr_scaled_groups(trainable, config.param_lr_scales)
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
@@ -571,6 +594,7 @@ def train_batch(
                 processed_metrics[f"train/{sk}"] = global_value
 
             processed_metrics["train/lr"] = lr_this_step
+            processed_metrics.update(_memory_metrics("train"))
             processed_metrics["train/epoch"] = current_epoch
             if train_embeddings is not None:
                 processed_metrics["train/freeze_phase"] = 0 if train_embeddings else 1  # 0: embeddings, 1: weights
@@ -956,6 +980,7 @@ def launch(hydra_config: DictConfig):
 
                 if RANK == 0 and eval_metrics is not None:
                     eval_metrics["step"] = train_state.step
+                    eval_metrics.update(_memory_metrics("eval"))
                     wandb.log(eval_metrics)
 
                 train_state.model.train()

@@ -14,6 +14,7 @@ checkpoint: null
 suffix: ttt
 output_dir: null
 task_ids: null
+task_ids_file: null # a JSON list of task names, e.g. a held-out build's heldout_tasks.json
 max_tasks: null
 
 num_aux_tasks: 1
@@ -26,6 +27,8 @@ train_overrides:
   # arXiv 2609.21181's embeddings-then-weights. Declared here so it can be set without a +, and null so TTT never
   # inherits a pretraining value counted in pretraining epochs
   freeze_alternation_epochs: null
+  freeze_weights: false # true: only the puzzle embeddings train (Embed-TTT of arXiv 2609.21181)
+  freeze_param_substrings: [] # parameter-name substrings to freeze, e.g. [candidate_, v_head] for TreeRM's heads
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it

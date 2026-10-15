@@ -1,0 +1,24 @@
+# @package _global_
+# Test-time training recipe scaled to one laptop GPU and MiniARC's 5x5 tasks: 16 aux tasks (the task + 15 dihedral/color
+# augmentations), 20 epochs with 2 of warmup, batch 16, lr 3e-4 with a cosine decay, no weight decay, no EMA, one run and
+# one view per task. ttt_varc's 51 aux x 100 epochs x 2 runs is ~4,400 steps per task, hours for TreeRM over 30 tasks.
+# Variants (arXiv 2609.21181), all through train_overrides on the CLI:
+#   Embed-TTT        train_overrides.freeze_weights=true
+#   Embed-Full-TTT   train_overrides.freeze_alternation_epochs=10   (embeddings for 10 epochs, then weights only)
+#   heads frozen     train_overrides.freeze_param_substrings=[candidate_,v_head]
+suffix: ttt_mini
+
+num_aux_tasks: 16
+epochs: 20
+warmup_epochs: 2
+ttt_runs_per_task: 1
+num_views: 1
+
+train_overrides:
+  global_batch_size: 16
+  lr: 3e-4
+  lr_min_ratio: 0.0
+  weight_decay: 0.0
+  beta1: 0.9
+  beta2: 0.999
+  ema: false

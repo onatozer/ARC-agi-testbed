@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import os
 import json
@@ -177,13 +177,17 @@ def inverse_aug(name: str):
     return name.split(PuzzleIdSeparator)[0], _map_grid
 
 
-def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]], test_aug: bool = True):
+def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]], test_aug: bool = True, test_copies: Optional[int] = None):
+    """Example types missing from dest_mapping are dropped (a held-out task maps only its test pairs). test_copies caps
+    the augmented copies the test split keeps (the original plus that many); None keeps them all."""
     # Convert
     dests = set(dest_mapping.values())
     converted = {dest: ARCPuzzle(name, []) for dest in dests}
     for example_type, examples in puzzle.items():
         # Map to target split
-        dest = dest_mapping[example_type]
+        dest = dest_mapping.get(example_type)
+        if dest is None:
+            continue
         converted[dest].examples.extend([(arc_grid_to_np(example["input"]), arc_grid_to_np(example["output"])) for example in examples])
 
     group = [converted]
@@ -213,7 +217,9 @@ def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count:
         # Convert the examples
         dest_split, dest_set = dest
         # without test_aug the test split gets only the original puzzle (group[0]); its augmented copies stay in training
-        copies = group if test_aug or dest_split != "test" else group[:1]
+        copies = group
+        if dest_split == "test":
+            copies = group[:1] if not test_aug else (group[: test_copies + 1] if test_copies is not None else group)
 
         results.setdefault(dest_split, {})
         results[dest_split].setdefault(dest_set, [])
