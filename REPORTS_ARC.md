@@ -82,6 +82,24 @@ embedding.
 So without adaptation none of the three generalises to an unseen MiniARC task from its demos alone (as expected:
 the demos are only ever seen through the task embedding, which is untrained for these tasks).
 
+### TTT results (`ttt_mini`: 16 aux tasks, 20 epochs, batch 8, lr 3e-4 cosine; 160 steps per task)
+Counts out of 30 held-out tasks (one task = 3.3 points); token acc = `all/accuracy` over the 30 x 16 test copies;
+"train loss end" = mean over tasks of the last TTT step's lm loss (how well the demos were fit).
+
+| model | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end | s / task |
+|---|---|---|---|---|---|---|---|
+| TRM | no TTT (control) | 0 | 0 | 0 | 0.65 | – | – |
+| TRM | Full-TTT (embedding + backbone) | 1 | 2 | 3 | 0.766 | 0.51 | 12.4 |
+| TRM | Embed-TTT (embedding only) | 1 | 2 | 2 | 0.740 | 0.66 | 11.0 |
+| TRM | Embed-Full-TTT (10 epochs embedding, then 10 backbone) | 1 | 1 | 1 | 0.743 | 0.64 | 11.2 |
+
+TRM reading: Full and Embed solve the same two tasks (`find_the_most_frequent...`, `which_side_has_more...`);
+Embed-Full keeps only the first. Fitting only the task embedding (SignSGD at 1e-2 on one 128-vector per aux copy)
+recovers almost all of Full-TTT's gain at this scale, which is the paper's first claim (the embedding is what
+carries the task). The Embed-Full ordering did not add anything for TRM here; one confound is that the backbone
+phase runs on the decaying half of the cosine schedule (`lr_min_ratio 0`), so it trains at a much lower effective
+lr than Full-TTT's backbone. Re-tried below with a flat lr if time allows.
+
 ## 4. Head freezing in regular training
 
 ## 5. Open loop: ideas tried
