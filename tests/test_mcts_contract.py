@@ -338,10 +338,46 @@ def test_search_memo_continues_from_the_chosen_subtree_and_matches_a_fresh_searc
     assert leaves[True] < leaves[False]
 
 
+@needs_cuda
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_eval_rollout_cap_shortens_rollouts_only_at_eval(impl):
+    # Backbone passes inside the longest single rollout call of a depth-3 search (root children roll out 2 updates
+    # uncapped): one update = L_cycles + 1 = 3 passes with the test config
+    longest = {}
+    for cap in (None, 1):
+        model, batch = _treerm_head(mcts_impl=impl, eval_rollout_cap=cap, mcts_simulations=6, num_candidates=3, candidate_mode="flags")
+        inner = model.model.inner
+        count = []
+        original_block = inner.L_level.forward
+        inner.L_level.forward = lambda *args, **kwargs: count.append(1) or original_block(*args, **kwargs)
+        per_call = []
+        name = "_step" if impl == "cpp" else "_rollout_values"
+        original_call = getattr(inner, name)
+
+        def counted(*args, **kwargs):
+            before = len(count)
+            out = original_call(*args, **kwargs)
+            per_call.append(len(count) - before)
+            return out
+
+        setattr(inner, name, counted)
+        for training in (True, False):
+            model.train(training)
+            inner.steps_done = torch.zeros(batch["inputs"].shape[0], dtype=torch.long)
+            with torch.no_grad():
+                cand, prior, z_L, x = _search_inputs(model, batch)
+                del per_call[:]
+                inner._search(cand, prior, z_L, x, batch["labels"], [3] * cand.shape[0])
+            longest[cap, training] = max(per_call)
+    assert longest[None, True] == longest[None, False] == 6  # two updates for the root children
+    assert longest[1, True] == 6  # training rollouts are never capped
+    assert longest[1, False] == 3  # eval rollouts stop after one update
+
+
 def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
-        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False,
+        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
         "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None,
     })

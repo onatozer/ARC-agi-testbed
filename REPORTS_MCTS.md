@@ -435,6 +435,14 @@ batch-composition noise. Compiled C++ search, noiseless block, full batches of t
 Memory grows with the batch (arenas, the batch-1024 forced round) but stays well inside 4 GB at 256; the
 reference run's training used 64. Recommendation for eval-only runs of TreeRM on this card: batch 256.
 
+### 4.11 Eval rollout cap (`eval_rollout_cap`, semantics-changing, measured on the reference checkpoint)
+With exact changes at their floor (a depth-3 round is 15 GPU-bound passes), the one big lever left is the rollout
+length itself. At eval a rollout runs the leaf's full remaining depth of TRM updates and then asks the value head;
+`eval_rollout_cap=1` runs one update (the transition the expansion needs anyway) and asks the value head there, so
+a depth-3 round costs 5 passes instead of up to 15. The search's values change (the head scores an earlier state),
+so this is judged on the reference checkpoint's accuracy, like WU-UCT; training rollouts are never capped (the
+label CE needs the step's final state). Measured: pending (`evalfull_cpp_compile_cap1`).
+
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
 In an eval batch the searches themselves are roughly 8 steps x (93 + 50 + 16) ms ~ 1.3 s, but a batch takes ~2.8 s

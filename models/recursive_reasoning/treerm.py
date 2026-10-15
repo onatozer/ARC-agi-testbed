@@ -188,12 +188,22 @@ class TreeRMInner(GRAM_Inner):
         token_acc = (mask & (logits.argmax(-1) == y)).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
         return -ce, token_acc.float()
 
+    def _rollout_depths(self, depths: List[int]) -> List[int]:
+        """The number of TRM updates each leaf's rollout runs: its allowed depth, capped at eval by eval_rollout_cap
+        (at least 1, since the transition needs the first update). A cap changes the search's values (the value head
+        scores a state short of the step's end), so it is a measured option, off by default."""
+        cap = self.config.eval_rollout_cap
+        if self.training or cap is None:
+            return depths
+        return [min(depth, max(int(cap), 1)) for depth in depths]
+
     def _rollout_values(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor) -> List[float]:
         """The simulation: from each leaf, its allowed depth's worth of plain TRM updates (no candidates), then its value."""
         rows = [row for row, _, _ in states]
         z_H = torch.stack([s[1] for s in states])
         z_L = torch.stack([s[2] for s in states])
         x, y = x[rows], y[rows]
+        depths = self._rollout_depths(depths)
         depths_t = torch.tensor(depths, device=z_H.device)
         values = torch.zeros(len(states), device=z_H.device)
         targets = torch.zeros(len(states), device=z_H.device)
@@ -292,7 +302,8 @@ class TreeRMInner(GRAM_Inner):
             pad = SEARCH_BATCH_QUANTUM - n % SEARCH_BATCH_QUANTUM
             rows, indices, padded = rows + rows[:1] * pad, indices + indices[:1] * pad, depths + depths[:1] * pad
         ids = torch.tensor(indices, device=arena_H.device)
-        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(depths))
+        rollout = self._rollout_depths(padded)  # how far each leaf is rolled out (eval_rollout_cap); depths still say what gets expanded
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(rollout, device=arena_H.device), max(rollout))
         outputs = _compiled_step_core(self.config.search_compile_mode)(self, *args) if self.config.search_compile else self._step_core(*args)
         values, targets, leaf_token, cand, priors, z_L_next = (t[:n] if t is not None else None for t in outputs)
 
