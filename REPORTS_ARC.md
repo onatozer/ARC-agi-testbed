@@ -64,3 +64,8 @@ freezing, 5 the open loop, 6 run log.
   never fill a batch of 16. The recipe's 16 aux tasks x ~3.5 demos would have trained (2 batches per epoch, a third
   of the demos dropped every epoch), so `ttt_mini` moves to batch 8 (5-6 steps per epoch, as VARC's recipe), and
   `evaluate_ttt.py` now raises if a task trains for 0 steps instead of silently evaluating the untouched checkpoint.
+  A second trap compounded the first: `evaluate_ttt.py` resumes by suffix (a task whose `tasks/<name>.json` exists
+  is skipped), so re-running a suffix after the fix re-aggregated the stale zero-step results and looked like the
+  fix had not worked. Verified by a direct run with cleared result dirs: 30 epochs at lr 1e-2 take a task's eval
+  `lm_loss` from 2.106 (1 epoch) to 1.510, with the training loss 2.07 -> 1.30 printed per task (`TTT run 0: 30
+  steps, train lm_loss ...`, a new log line). Rule for this loop: never reuse a TTT suffix.

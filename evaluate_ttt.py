@@ -120,10 +120,12 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         config.lr_warmup_steps = cfg.warmup_epochs * train_state.steps_per_epoch
 
         train_state.model.train()
-        steps = 0
+        steps, losses = 0, []
         for _set_name, batch, global_batch_size in train_loader:
-            train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
+            step_metrics = train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
             steps += 1
+            if step_metrics and "train/lm_loss" in step_metrics:
+                losses.append(float(step_metrics["train/lm_loss"]))
             if train_state.ema_helper is not None:
                 train_state.ema_helper.update(train_state.model)
             if train_state.step >= train_state.total_steps:
@@ -132,6 +134,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             # The sampler fills a batch with whole aux tasks and drops under-filled tails: too few aux tasks (or demos) for
             # the batch size means no training at all, which would silently evaluate the untouched checkpoint
             raise ValueError(f"TTT trained for 0 steps: {train_metadata.total_groups} aux tasks x {train_metadata.mean_puzzle_examples:.1f} demos never fill global_batch_size={config.global_batch_size}.")
+        print_info(f"TTT run {run}: {steps} steps, train lm_loss {losses[0]:.3f} -> {losses[-1]:.3f}" if losses else f"TTT run {run}: {steps} steps")
 
         if train_state.ema_helper is not None:
             train_state.ema_helper.swap(train_state.model)
