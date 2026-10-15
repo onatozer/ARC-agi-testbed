@@ -8,7 +8,15 @@ at test time or in regular training. Sections: 0 scoreboard, 1 setup and decisio
 freezing, 5 the open loop, 6 run log.
 
 ## 0. Scoreboard
-(filled as runs finish)
+Standard protocol (149 tasks, 4000 steps x batch 128, vote over 32 augmented copies), test-set pass@k:
+
+| model | params | pass@1 | pass@2 | pass@5 | wall | peak GPU alloc | W&B run |
+|---|---|---|---|---|---|---|---|
+| TRM | 531k | 2.7% | 4.0% | 6.0% | 635 s | 343 MB | trm_std |
+| VARC | 607k | 2.7% | 6.0% | 6.0% | 367 s | 105 MB | varc_std |
+| TreeRM | 597k | 2.7% | 4.7% | 6.7% | 1453 s | 550 MB | treerm_std |
+
+Held-out protocol (30 tasks never seen in pretraining) and TTT: section 3. Head freezing: section 4.
 
 ## 1. Setup and decisions
 
@@ -49,13 +57,27 @@ freezing, 5 the open loop, 6 run log.
 |---|---|---|---|---|---|---|---|---|
 | TRM | 530,690 | 0.7% / 2.7% | 2.0% / 4.0% | 6.0% | 1.4% | 0.88 | 635 s | 343 MB / 1.88 GB |
 | VARC | 606,768 | 2.0% / 2.7% | 2.7% / 6.0% | 6.0% | 1.1% | 0.80 | 367 s | 105 MB / 2.05 GB |
-| TreeRM | 597,254 | pending (first attempt crashed at the step-2000 eval, see run log; rerun queued) | | | | | | |
+| TreeRM | 597,254 | 2.0% / 2.7% | 2.0% / 4.7% | 6.7% | 1.3% | – (GRAM head logs lm/kl/lprm losses) | 1453 s | 550 MB / 1.99 GB |
 
-Reading: at this budget every model solves only a handful of the 149 tasks (pass@2 4-6%); the user's 10x10 EqR
-run reached pass@2 6% after 20k steps, so 5x5 at 4k steps is in the same regime. Token accuracy is high (0.7-0.9)
-while exact-grid accuracy is ~1%: the models get most cells right and rarely a whole grid.
+Reading: at this budget every model solves only a handful of the 149 tasks (pass@2 4-7%, i.e. 6-10 tasks; one task
+is 0.67%), so the three are level within noise; the user's 10x10 EqR run reached pass@2 6% after 20k steps, so 5x5
+at 4k steps is in the same regime. Token accuracy is high (0.7-0.9) while exact-grid accuracy is ~1%: the models
+get most cells right and rarely a whole grid. TreeRM costs 2.3x TRM's wall-clock here (its eval searches on every
+cycle of all 8 supervision steps over 4,768 rows, twice) and 1.6x its GPU memory. Seeds (phase 5) decide whether
+any ordering among the three is real.
 
 ## 3. Test-time training (held-out protocol)
+
+Pretraining on 119 tasks (`miniarc5-aug-31-ho30`), the 30 held-out tasks' test pairs as the eval split. The
+in-training eval of these runs is the **no-TTT control**: the held-out tasks' puzzle identifiers were never
+trained (their embeddings are the zero init), so the model sees each test input with an uninformative task
+embedding.
+
+| model (held-out pretraining) | no-TTT control: pass@1 / pass@2 @4k | token acc | train token acc | wall |
+|---|---|---|---|---|
+| TRM | 0 / 0 (of 30) | 0.65 | 0.84 | 773 s |
+| VARC | pending | | | |
+| TreeRM | pending | | | |
 
 ## 4. Head freezing in regular training
 
