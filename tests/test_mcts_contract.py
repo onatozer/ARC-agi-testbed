@@ -244,13 +244,14 @@ def _search_inputs(model, batch, seed=0):
 
 
 # (impl, search_compile): every exact implementation, and the fused one with its compiled round
-EXACT_VARIANTS = [(impl, False) for impl in EXACT_IMPLS] + [("fused", True)]
-VARIANTS = [(impl, False) for impl in IMPLS] + [("fused", True)]
+# compile_: False, or the search_compile_mode to compile the round with
+EXACT_VARIANTS = [(impl, False) for impl in EXACT_IMPLS] + [("fused", "reduce-overhead"), ("cpp", "reduce-overhead")]
+VARIANTS = [(impl, False) for impl in IMPLS] + [("fused", "reduce-overhead"), ("cpp", "reduce-overhead")]
 
 
 def _posterior(impl, compile_, training, horizon):
     """The posterior logits of one search on the tiny model (same seed, so the same weights) under impl."""
-    model, batch = _treerm_head(mcts_impl=impl, search_compile=compile_, mcts_horizon=horizon, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
+    model, batch = _treerm_head(mcts_impl=impl, search_compile=bool(compile_), search_compile_mode=compile_ or "reduce-overhead", mcts_horizon=horizon, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
     model.train(training)
     inner = model.model.inner
     inner.steps_done = torch.zeros(batch["inputs"].shape[0], dtype=torch.long)
@@ -295,7 +296,7 @@ def test_compiled_search_runs_in_the_module_copy_that_calls_it():
 @needs_cuda
 @pytest.mark.parametrize("impl,compile_", VARIANTS)
 def test_treerm_trains_and_evals_with_the_impl(impl, compile_):
-    model, batch = _treerm_head(mcts_impl=impl, search_compile=compile_, candidate_mode="flags")
+    model, batch = _treerm_head(mcts_impl=impl, search_compile=bool(compile_), search_compile_mode=compile_ or "reduce-overhead", candidate_mode="flags")
     model.train()
     _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
     assert torch.isfinite(loss) and metrics["kl_loss"] > 0

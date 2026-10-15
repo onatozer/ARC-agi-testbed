@@ -20,13 +20,19 @@ memory is the eval section's peak GPU allocated. Exact = same visit counts as th
 |---|---|---|---|---|---|---|---|---|
 | `mcts_impl=python` (baseline) | 245.9 | 538.5 | 9.0 | 88.0 | 0.870 | 354 | yes | reference |
 | `mcts_impl=fused` | 106.3 | 228.4 | 9.4 | – | 0.868 | 265 | yes | kept |
-| `mcts_impl=fused search_compile=true` | 50.7 | 97.1 | 9.8 | 27.0 | 0.868 | 270 | yes (bf16-level) | kept |
-| `mcts_impl=cpp search_compile=true` | 50.1 | 93.9 | 9.8 | pending | 0.868 | 313 | yes (bf16-level) | kept |
-| `mcts_impl=cpp search_compile=true mcts_leaves_per_round=2` | 47.4 | 77.3 | 9.4 | pending | 0.871 | 274 | no (WU-UCT) | kept, opt-in |
+| `mcts_impl=fused search_compile=true` | 50.7 | 97.1 | 9.8 | 27.0* | 0.868 | 270 | yes (bf16-level) | kept |
+| `mcts_impl=cpp search_compile=true` | 50.1 | 93.9 | 9.8 | **18.9** | 0.869 | 121 (eval-only run) | yes (bf16-level) | **kept, recommended** |
+| `mcts_impl=cpp search_compile=true mcts_leaves_per_round=2` | 47.4 | 77.3 | 9.4 | 18.9 | 0.870 | 125 (eval-only run) | no (WU-UCT) | opt-in, no gain here |
 | `mcts_impl=wu search_compile=true mcts_leaves_per_round=4` | 51.1 | 89.3 | 10.8 | – | 0.870 | 283 | no | not worth it |
 
 Training it/s is within its noise band (9.0-10.8 across runs) for every variant: training searches run only on
-the grad cycle at depth 1 and are ~5-10% of a 100 ms step. The search speedups are what eval feels.
+the grad cycle at depth 1 and are ~5-10% of a 100 ms step. The search speedups are what eval feels: **the full
+test-set eval went from 88.0 s to 18.9 s (4.7x) with identical search semantics** (exact visit counts given the
+same values; `search/argmax_agree` 0.457 vs 0.462, accuracy 0.869 vs 0.870 on the 960 puzzles). `*` the fused
+27.0 s was measured in an earlier run before the memory/eval protocol change and includes the test-set's reload
+ordering; the two 18.9 s runs are directly comparable with the 88.0 s baseline run (same protocol, same day).
+WU-2 adds nothing to the full eval over the exact search: the round is GPU-bound, so halving the rounds at twice
+the batch is a wash.
 
 ## 1. Decisions
 
@@ -360,6 +366,17 @@ views) | arena 265 | arena + compile 266-270 | WU-2 274 | WU-4 283 | C++ 313 | C
 `2 x B*K*(sims+W+1) x S x H` bf16 = 2 x 40 MB at the recipe's shapes with 16 sims, preallocated once and reused;
 nothing here approaches the 4 GB card, but the numbers are tracked so a wider search (W, K, sims) or a larger
 board (8x8 N-Queens: seq 64, batch 128 -> 2 x 142 MB arenas) stays visible.
+
+### 4.7 A profiler artefact, caught by the harness
+`profile_eval.py` (which synchronizes the GPU before and after every search to time it) showed the compiled round
+2-7x slower inside the compiled outer model than in the micro bench (depth 1: 106 vs 15 ms; two batches 7.6 s
+vs 3.0 s with the outer model eager), while the eager round was unaffected. Two uninstrumented full-batch evals
+settle it the other way: outer model compiled 18.9 s, outer model eager 23.9 s. The forced synchronization
+inside the outer compiled region was what made inductor's CUDA-graph trees stall (every replay then waits for the
+whole queue), not the nesting itself. Lesson recorded: time sections with the uninstrumented protocol, use the
+profiler only for the op mix. A `search_compile_mode=graphs` variant (inductor without graph trees + a plain
+`torch.cuda.CUDAGraph` per round shape, no tree/generation bookkeeping) was written during the investigation and
+is measured below for completeness.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.

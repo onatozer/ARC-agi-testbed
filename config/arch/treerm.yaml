@@ -15,7 +15,7 @@ mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
 mcts_impl: python # which models.mcts.MCTS_IMPLS implementation runs the search: python (baseline) or fused (one domain call per round, batched root visits)
 mcts_leaves_per_round: 1 # WU-UCT (mcts_impl=wu): leaves selected per tree per round before they are all evaluated together; 1 = the baseline search
 search_compile: false # torch.compile the fixed-shape core of each fused search round (one CUDA graph per round shape); needs mcts_impl=fused/wu/cpp
-search_compile_mode: reduce-overhead # torch.compile mode for the search round: reduce-overhead (CUDA graphs) or max-autotune (also autotunes the GEMMs; slow first compile)
+search_compile_mode: reduce-overhead # torch.compile mode for the search round: reduce-overhead (CUDA graphs), default (no graphs) or max-autotune (also autotunes the GEMMs; slow first compile)
 mcts_horizon: step # how far a search looks ahead: 'step' = to the end of this supervision step, 'full' = to the end of the last one
 gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
 candidate_mode: flags # flags = u_t + gated fixed orthonormal direction per slot (cannot collapse; best); full = generator outputs K z_H vectors; residual = u_t + generator output
