@@ -16,6 +16,7 @@ Standard protocol (149 tasks, 4000 steps x batch 128, vote over 32 augmented cop
 | VARC | 607k | 2.7% | 6.0% | 6.0% | 361 s | 105 MB | varc_std |
 | TreeRM | 597k | 2.7% | 4.7% | 6.7% | 1277 s | 550 MB | treerm_std |
 | TreeRM, `puzzle_emb_lr=3e-2` (section 5; 2 seeds: 5.4 / 7.4 / 10.7 and 3.4 / 4.7 / 6.0) | 597k | 4.4% | 6.0% | 8.4% | ~1150 s | 550 MB | treerm_emblr3, treerm_emblr3_s1 |
+| TRM, `puzzle_emb_lr=3e-2` (1 seed) | 531k | 4.7% | 8.1% | 10.1% | 578 s | 343 MB | trm_emblr3 |
 
 Seed noise is 2-4 tasks (TreeRM seed 1: 1.3 / 2.0 / 2.7; TRM seed 1: 2.7 / 4.0 / 5.4), so the three architectures are
 level at this budget; the one change that moved TreeRM across seeds is a faster task-embedding lr (the recipe's
