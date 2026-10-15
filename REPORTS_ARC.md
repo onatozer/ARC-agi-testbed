@@ -230,6 +230,13 @@ noise 2-4 tasks).
 | `mcts_simulations=16, eval 32` | twice the search, train and eval | 1.3 / 2.7 / 6.0 | 4.5 | no gain, 14% more wall-clock (1459 s), eval memory 706 MB: the search depth is not what limits TreeRM here |
 | `puzzle_emb_lr=3e-2` | task embeddings at 3x the lr (SignSGD) | **5.4 / 7.4 / 10.7** | 5.1 | **best run of the night**: 11 tasks at pass@2 vs the recipe's 7 (seeds 0/1: 7 and 3), token acc 0.738 vs 0.719. Each augmented copy's embedding gets only ~30 updates in 4000 steps, so a larger step helps. Seed 1: 3.4 / 4.7 / 6.0, so over two seeds 3e-2 averages pass@1 4.4% / pass@2 6.0% / pass@5 8.4% against the recipe's 2.0 / 3.3 / 4.7: a modest gain that holds across seeds. TRM at 3e-2 (TreeRM gain or recipe fix?): phase 7 |
 | `puzzle_emb_lr=1e-1` | task embeddings at 10x the lr | 2.7 / 4.7 / 6.7 | 5.1 | back at the recipe's level (token acc 0.740): 3e-2 is the sweet spot, 1e-1 overshoots |
+| TRM, `puzzle_emb_lr=3e-2` | the same change on the baseline | 4.7 / 8.1 / 10.1 | 7.3 | TRM gains as much (its seeds at 1e-2: 4.0 / 4.0 at pass@2), so the faster embedding lr is a **recipe fix for both recurrent models**, not a TreeRM advantage; with it TRM (8.1) and TreeRM (7.4 / 4.7 over two seeds) are level again |
+
+Where that leaves question 3 after the loop: on MiniARC 5x5 at ~0.6M params and 4000 steps, TreeRM's search buys
+nothing measurable over TRM (both ~5-8% pass@2 with the fixed embedding lr), at 2x the wall-clock and 1.6x the
+memory; VARC is the cheapest and adapts best at test time. The one thing the loop found that moves every
+recurrent model is the task-embedding lr. Phase 8 (running) tests whether longer training or K=8 opens a gap, and
+whether the faster embedding lr changes TreeRM's TTT picture.
 
 ## 6. Run log
 
