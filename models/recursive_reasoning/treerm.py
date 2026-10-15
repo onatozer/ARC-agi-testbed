@@ -267,7 +267,7 @@ class TreeRMInner(GRAM_Inner):
             rows, indices, padded = rows + rows[:1] * pad, indices + indices[:1] * pad, depths + depths[:1] * pad
         ids = torch.tensor(indices, device=arena_H.device)
         args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(depths))
-        outputs = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
+        outputs = _compiled_step_core(self.config.search_compile_mode)(self, *args) if self.config.search_compile else self._step_core(*args)
         values, targets, leaf_token, cand, priors, z_L_next = (t[:n] if t is not None else None for t in outputs)
 
         if self.training and self.config.value_bootstrap_weight > 0:
@@ -440,8 +440,8 @@ _STEP_CORE_COMPILED: Optional[Callable[..., Any]] = None
 SEARCH_BATCH_QUANTUM = 64  # a compiled search round's batch is padded to a multiple of this (see _step)
 
 
-def _compiled_step_core() -> Callable[..., Any]:
-    """TreeRMInner._step_core under torch.compile(mode=reduce-overhead), built once for the process. The search is
+def _compiled_step_core(mode: str = "reduce-overhead") -> Callable[..., Any]:
+    """TreeRMInner._step_core under torch.compile(mode), built once for the process (the first caller's mode). The search is
     launch-bound and outside the model's compile (data-dependent control flow), but a compiled callee still runs
     compiled from inside it: the fixed-shape round becomes one CUDA graph replay per (batch, depth, mode). The
     unbound function is compiled, with the module as its first argument, so dynamo guards on the module that calls
@@ -453,7 +453,7 @@ def _compiled_step_core() -> Callable[..., Any]:
         torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
         # Static shapes: the backbone specialises the batch dimension anyway (mark_dynamic fails inside Blocks.forward),
         # so _step pads a round's batch to a multiple of SEARCH_BATCH_QUANTUM to keep the number of shapes small
-        _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode="reduce-overhead", dynamic=False)
+        _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode=mode, dynamic=False)
     return _STEP_CORE_COMPILED
 
 

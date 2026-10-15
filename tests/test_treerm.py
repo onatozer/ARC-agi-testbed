@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, **overrides,
+        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")

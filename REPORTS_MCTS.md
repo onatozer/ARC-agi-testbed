@@ -12,9 +12,21 @@ Measured on the reference setting (6x6 Sudoku, unique solutions; the recipe: hid
 8 training / 16 eval simulations, batch 64; one RTX 3050 Ti laptop GPU, 4 GB). `scripts/mcts_bench/compare.py`
 prints these tables from the JSON results under `scripts/mcts_bench/results/`.
 
-| impl | search ms, train 8 sims depth 3 | search ms, eval 16 sims depth 3 | train it/s | eval s (1000 puzzles) | exact acc | status |
-|---|---|---|---|---|---|---|
-| python (baseline) | pending | pending | pending | pending | pending | reference |
+Search times are medians of 5 at batch 64 (`bench.py` micro section); "eval s" is the test-set eval from the
+reference checkpoint over its 15 full batches (960 puzzles; see 4.5b for why the partial 16th batch is excluded);
+memory is the eval section's peak GPU allocated. Exact = same visit counts as the baseline given the same values.
+
+| config (`arch.` keys) | search ms, train 8 sims depth 3 | search ms, eval 16 sims depth 3 | train it/s | eval s | exact acc | eval peak MB | exact | status |
+|---|---|---|---|---|---|---|---|---|
+| `mcts_impl=python` (baseline) | 245.9 | 538.5 | 9.0 | 88.0 | 0.870 | 354 | yes | reference |
+| `mcts_impl=fused` | 106.3 | 228.4 | 9.4 | – | 0.868 | 265 | yes | kept |
+| `mcts_impl=fused search_compile=true` | 50.7 | 97.1 | 9.8 | 27.0 | 0.868 | 270 | yes (bf16-level) | kept |
+| `mcts_impl=cpp search_compile=true` | 50.1 | 93.9 | 9.8 | pending | 0.868 | 313 | yes (bf16-level) | kept |
+| `mcts_impl=cpp search_compile=true mcts_leaves_per_round=2` | 47.4 | 77.3 | 9.4 | pending | 0.871 | 274 | no (WU-UCT) | kept, opt-in |
+| `mcts_impl=wu search_compile=true mcts_leaves_per_round=4` | 51.1 | 89.3 | 10.8 | – | 0.870 | 283 | no | not worth it |
+
+Training it/s is within its noise band (9.0-10.8 across runs) for every variant: training searches run only on
+the grad cycle at depth 1 and are ~5-10% of a 100 ms step. The search speedups are what eval feels.
 
 ## 1. Decisions
 
@@ -360,6 +372,9 @@ Candidates after that, in order of expected value:
    expansions kept) makes cycle c+1's forced round free when k*'s children were visited and skips every repeated
    rollout. Applies only where consecutive searches happen, i.e. eval (training searches on the grad cycle alone).
    Estimate ~20% of eval search time.
-2. **Inductor max-autotune** for the round's small GEMMs (K = 128) and epilogue fusion; cheap to try.
+2. **Inductor max-autotune** for the round's small GEMMs (K = 128) and epilogue fusion. Tried
+   (`search_compile_mode=max-autotune`, `results/micro_autotune.json`): train 8 sims depth 3 58.5 ms vs 50.1,
+   eval 16 sims depth 3 86.7 vs 93.9: noise either way, with a much slower first compile. The option stays
+   (default `reduce-overhead`) but buys nothing here: cuBLAS already handles these GEMM shapes about as well.
 3. **Semantics-changing eval knobs**, each judged on the reference checkpoint: cap the rollout length and let the
    value head finish early; fewer eval simulations at depth 3 (the one that costs); W = 2 batching.
