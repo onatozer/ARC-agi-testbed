@@ -115,6 +115,30 @@ paper's Embed-Full > Full ordering (63.8% vs 59.7% at 18M params) is not reprodu
 applies. What does reproduce is the paper's mechanism claim: the task embedding carries most of the adaptation for
 TRM, less so for VARC.
 
+| model | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end | s / task |
+|---|---|---|---|---|---|---|---|
+| TreeRM | no TTT (control) | 0 | 0 | 0 | 0.64 | – | – |
+| TreeRM | Full-TTT | 2 | 3 | 4 | 0.754 | 0.52 | 17.0 |
+| TreeRM | Embed-TTT | 0 | 0 | 0 | 0.731 | 0.64 | 16.5 |
+| TreeRM | Embed-Full-TTT | 0 | 1 | 2 | 0.737 | 0.62 | 16.5 |
+| TreeRM | Full-TTT, heads frozen (`candidate_`, `v_head`) | 2 | 3 | 3 | 0.754 | 0.51 | 16.6 |
+| TreeRM | Embed-Full-TTT, heads frozen in the backbone phase | 0 | 0 | 1 | 0.736 | 0.62 | 16.4 |
+| TreeRM | Embed-TTT, then heads only (backbone frozen) | 0 | 0 | 0 | 0.720 | 0.74 | 16.0 |
+
+TreeRM reading, question 1 (does Embed-TTT carry over): **no.** With the backbone frozen the embedding alone solves
+nothing (token accuracy rises 0.64 -> 0.73 but no grid is completed), and the embed-first ordering is worse than
+joint fine-tuning (1 vs 3 at pass@2). Full-TTT puts TreeRM between TRM (2 at pass@2) and VARC (4), and it is the
+only model that solves `1_3_5...` (`find_the_most_frequent` and `which_side_has_more` are solved by all three).
+Why the embedding is not enough for TreeRM where it is for TRM: in TRM the task vector enters a single
+deterministic recursion; in TreeRM the forward also runs a per-puzzle search whose candidates (flags: the TRM
+update plus fixed directions, gated) and prior scorer were trained on the 119 pretraining tasks, so a new task
+also needs the scorer/value heads and the backbone to move. Question 2 (heads): freezing the candidate heads and
+the LPRM value head during Full-TTT changes nothing (2/3/3 vs 2/3/4, same token accuracy): those heads neither help
+nor hurt adaptation at this budget, and TTT's gains come from the backbone (and the embedding). Training the heads
+alone after the embedding (backbone frozen) gives nothing at all.
+Caveats: 30 tasks (3.3 points each), one seed, 20 TTT epochs, a 0.6M-param model pretrained for 4k steps; the
+cosine confound for the Embed-Full variants is addressed by the flat-lr reruns of 3b.
+
 ## 4. Head freezing in regular training
 
 ## 5. Open loop: ideas tried
