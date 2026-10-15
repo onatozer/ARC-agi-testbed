@@ -415,8 +415,25 @@ term counts repeated leaves):
   accuracy 0.871 either way, `search/argmax_agree` 0.467 vs 0.461 (bf16-level differences in which cached value
   is used). Memory: eval peak GPU allocated 282 MB vs 120 MB, reserved 384 vs 222 (the arena is kept for the three
   cycles of a step). Why so little: the depth-3 search of cycle 0 (the expensive one, ~60% of eval time) cannot
-  reuse anything, and the cycle-1 and cycle-2 searches it helps were already the cheap ones. **Verdict: works,
+  reuse anything, and the cycle-1 and cycle-2 searches it helps were already the cheap ones. The micro shows the
+  cache's own effect (`results/micro_compile_memo.json`, eval mode, standalone searches so no subtree reuse):
+  depth 1 at 8 sims 5.1 -> 2.4 ms, at 16 sims 15.5 -> 2.8 ms (every round after the forced one is a cache hit:
+  one model round per search), depth 3 unchanged (47.3 / 84.4 ms). **Verdict: works,
   exact, but 3% for 2.3x the search's memory is not worth a default; stays opt-in** (`search_memo=true`).
+
+### 4.10 Eval batch size (a protocol knob, exact per puzzle)
+Once the round is GPU-bound, the eval's batch size decides how well the small GEMMs fill the card: every search
+runs the same per-puzzle work whatever the batch, so this changes nothing per puzzle except the bf16
+batch-composition noise. Compiled C++ search, noiseless block, full batches of the test set:
+
+| eval batch | puzzles | seconds | ms / puzzle | accuracy | peak GPU alloc / reserved MB |
+|---|---|---|---|---|---|
+| 64 (the bench default) | 960 | 17.7 | 18.4 | 0.871 | 120 / 222 |
+| 128 | 896 | 15.5 | 17.3 | 0.867 (different subset) | 227 / 414 |
+| 256 | 768 | 10.3 | 13.4 | 0.861 (different subset) | 439 / 754 |
+
+Memory grows with the batch (arenas, the batch-1024 forced round) but stays well inside 4 GB at 256; the
+reference run's training used 64. Recommendation for eval-only runs of TreeRM on this card: batch 256.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
