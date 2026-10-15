@@ -267,29 +267,51 @@ class CppMCTS(WUMCTS):
 
     exact = True
     fused = True
+    memo = True  # run(reuse=(forest, states, picks)) continues from the previous search's chosen subtrees
 
     def __init__(self, num_simulations: int, c_puct: float, leaves_per_round: int = 1):
         super().__init__(num_simulations, c_puct, leaves_per_round)
         from models.mcts_cpp import forest_module
 
         self._forest_cls = forest_module().Forest
+        self.last: Optional[Tuple[Any, List[Any]]] = None  # (forest, states) of the latest run, for a memo
 
-    def run(self, roots, expand_fn, evaluate_fn, step_fn=None) -> List[List[int]]:
+    def run(self, roots, expand_fn, evaluate_fn, step_fn=None, reuse=None, cache=False) -> List[List[int]]:
+        """cache: a leaf valued once in this search is never sent to the domain again (the baseline re-evaluates a
+        revisited depth-0 leaf; exact when the domain's values are a function of the state and its depth, as
+        TreeRM's are, but the callback traffic differs, hence off by default). reuse = (forest, states, picks) from a
+        previous run: the search starts from root child picks[tree] of every tree with that subtree's expansions,
+        priors and rollout values kept (counts reset, root priors taken from roots), with the cache on."""
         if step_fn is None:
             step_fn = compose_step(expand_fn, evaluate_fn)
-        forest = self._forest_cls(len(roots), self.c_puct)
-        states: List[Any] = []  # node id -> domain state, in the forest's id order
         num_children = max(len(root.children) for root in roots)
-        for tree, root in enumerate(roots):
-            forest.add_root(tree, root.allowed_depth, [child.prior for child in root.children])
-            states.append(None)
-            states.extend(child.state for child in root.children)
+        cache = cache or reuse is not None
+        if reuse is None:
+            forest = self._forest_cls(len(roots), self.c_puct)
+            states: List[Any] = []  # node id -> domain state, in the forest's id order
+            for tree, root in enumerate(roots):
+                forest.add_root(tree, root.allowed_depth, [child.prior for child in root.children])
+                states.append(None)
+                states.extend(child.state for child in root.children)
+        else:
+            old_forest, old_states, picks = reuse
+            forest, old_ids = old_forest.subtree(picks)
+            states = [old_states[i] for i in old_ids]
+            forest.set_root_priors([child.prior for root in roots for child in root.children])
 
         def round_(ids: List[int], release: bool) -> None:
             depths = forest.depth_left(ids)
-            values, children, priors = step_fn([states[i] for i in ids], depths)
-            flat = [p for depth, child_priors in zip(depths, priors) if depth > 0 for p in child_priors]
-            for expanded, child_states in zip(forest.backup(ids, values, flat, num_children, release), children):
+            known, values = forest.cached(ids) if cache else ([False] * len(ids), [0.0] * len(ids))
+            fresh = [i for i, k in enumerate(known) if not k]
+            flat: List[float] = []
+            children: List[Any] = [None] * len(ids)
+            if fresh:
+                fresh_values, fresh_children, fresh_priors = step_fn([states[ids[i]] for i in fresh], [depths[i] for i in fresh])
+                for i, value, child_states, child_priors in zip(fresh, fresh_values, fresh_children, fresh_priors):
+                    values[i], children[i] = value, child_states
+                    if depths[i] > 0:
+                        flat.extend(child_priors)
+            for expanded, child_states in zip(forest.backup(ids, values, flat, num_children, release, [not k for k in known]), children):
                 if expanded:
                     states.extend(child_states)
 
@@ -300,6 +322,7 @@ class CppMCTS(WUMCTS):
             width = min(self.leaves_per_round, self.num_simulations - simulation)
             round_(forest.select(width), release=True)
             simulation += width
+        self.last = (forest, states)
         return forest.root_counts()
 
 

@@ -382,12 +382,16 @@ fusion, no CUDA graphs) costs 20-30% over `reduce-overhead` (train 8 sims depth 
 depth 3 113 vs 94 ms; `results/micro_compile_default.json`), i.e. the graph replay is worth that much on top of
 the kernel fusion.
 
-### 4.8 Skip the zero-scale noise draw in the backbone block (shared code, 4 lines)
-`Blocks.forward` (merged_arch.py) added `randn_like(x) * noise_scale` on every pass although every config here
+### 4.8 Skip the zero-scale noise draw in the block the search replays (`NoiselessBlocks`, commit `4440642`)
+`Blocks.forward` (merged_arch.py) adds `randn_like(x) * noise_scale` on every pass although every config here
 sets `noise_scale = 0`; inside the compiled round that is a philox kernel plus a wider fused epilogue per pass,
-15 times a round. The block now returns the mix directly when `noise_scale` is 0: bitwise the same value (x + 0
-is x), one fewer kernel per pass, and the RNG stream is no longer advanced by the search (training runs differ in
-their random draws, not in semantics). Measured: `results/micro_noise_guard.json`, pending.
+15 times a round. First version: a 4-line guard in the shared block. It broke `test_trm_root_memory_exact`
+(TRMRoot's memory savers align their RNG streams on that draw), so the shared block is untouched and TreeRM
+wraps the same layers in a `Blocks` subclass whose forward returns the mix directly at zero noise (same state-dict
+keys; bitwise the same value, x + 0 is x). Search micro (`results/micro_noise_guard.json`, same code path): eval 16
+sims depth 3 93.9 -> 81.6 ms (-13%), train 16 sims depth 3 89.2 -> 84.5, the depth-1 rows unchanged (no passes).
+Full-batch eval: pending (the first measurement, 26.7 s, ran while the whole test directory was on the GPU and is
+discarded).
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.

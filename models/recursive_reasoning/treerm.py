@@ -117,6 +117,11 @@ class TreeRMInner(GRAM_Inner):
             if not hasattr(self.mcts, "leaves_per_round"):
                 raise ValueError("mcts_leaves_per_round > 1 needs the WU-UCT search (mcts_impl=wu).")
             self.mcts.leaves_per_round = self.config.mcts_leaves_per_round
+        if self.config.search_memo and not getattr(self.mcts, "memo", False):
+            raise ValueError("search_memo needs a search that can continue from a subtree (mcts_impl=cpp).")
+        # (previous search's forest and states, chosen root children) of this step's last eval search, see _search
+        self._memo: Optional[Tuple[Any, List[Any], List[int]]] = None
+        self._pending_memo: Optional[Tuple[Any, List[Any]]] = None
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
@@ -253,16 +258,21 @@ class TreeRMInner(GRAM_Inner):
     # preallocated arenas [capacity, S, H], so a round gathers its leaves with one index_select and appends all its
     # children with one copy, instead of stacking per-node views and slicing K views per leaf in Python
 
-    def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int) -> None:
+    def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int, keep: bool = False) -> None:
         """Sizes the arenas for this search (root children, then K children per leaf per round: B*K*(sims + 1) nodes,
         plus a round's worth of slack for a WU-UCT search's wider rounds; reused across searches) and writes the root
-        children in."""
+        children in. keep: continue a memoised search (its nodes stay where they are; this step's searches share the
+        arena, hence H_cycles times the capacity)."""
         B, K, S, H = cand.shape
-        capacity = B * K * (num_simulations + getattr(self.mcts, "leaves_per_round", 1) + 1)
+        per_search = B * K * (num_simulations + getattr(self.mcts, "leaves_per_round", 1) + 1)
+        capacity = per_search * (self.config.H_cycles if self.config.search_memo else 1)
         arena = getattr(self, "_arena", None)
         if arena is None or arena[0].shape[0] < capacity or arena[0].shape[1:] != (S, H) or arena[0].device != cand.device or arena[0].dtype != cand.dtype:
             arena = tuple(torch.empty(capacity, S, H, dtype=cand.dtype, device=cand.device) for _ in range(2))
             self._arena = arena
+            keep = False
+        if keep and self._arena_next + per_search <= capacity:
+            return
         arena[0][: B * K].copy_(cand.flatten(0, 1))
         arena[1][: B * K].copy_(z_L.repeat_interleave(K, dim=0))
         self._arena_next = B * K
@@ -315,8 +325,13 @@ class TreeRMInner(GRAM_Inner):
         self.mcts.num_simulations = self.config.mcts_simulations if self.training else (self.config.eval_mcts_simulations or self.config.mcts_simulations)
         fused = getattr(self.mcts, "fused", False)
         B, K = cand.shape[:2]
+        # search_memo (eval): the previous cycle's search of this step chose root child k*; its subtree (children
+        # states in the arena, priors, rollout values at the depths this search needs) is exactly this search's
+        # start, so the search continues from it instead of re-rolling what it already valued
+        reuse = self._memo if self.config.search_memo and not self.training else None
+        self._memo = self._pending_memo = None
         if fused:
-            self._arena_reset(cand, z_L, self.mcts.num_simulations)
+            self._arena_reset(cand, z_L, self.mcts.num_simulations, keep=reuse is not None)
         roots = []
         for b in range(B):
             root = Node(latent=None, allowed_depth=remaining[b])
@@ -328,7 +343,11 @@ class TreeRMInner(GRAM_Inner):
             expand_fn=lambda states: self._expand(states, x),
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
             **({"step_fn": lambda states, depths: self._step(states, depths, x, y)} if fused else {}),
+            **({"reuse": reuse} if reuse is not None else {}),
+            **({"cache": True} if self.config.search_memo and not self.training else {}),
         )
+        if self.config.search_memo and not self.training:
+            self._pending_memo = self.mcts.last  # completed by _mcts_guidance once the candidate is picked
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         posterior = visits / visits.sum(dim=-1, keepdim=True)
         # Mix in the uniform so a one-hot visit distribution can't drive the prior's logits to infinity through the KL
@@ -380,6 +399,9 @@ class TreeRMInner(GRAM_Inner):
             weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
+        if self._pending_memo is not None:
+            self._memo = (*self._pending_memo, weights.argmax(dim=-1).tolist())
+            self._pending_memo = None
         diag = self._search_diagnostics(cand, prior_logits, post_logits)
         with torch.no_grad():  # candidate norm relative to the TRM update it replaces
             diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
@@ -414,6 +436,7 @@ class TreeRMInner(GRAM_Inner):
         seq_dict = self._seq_dict()
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
+        self._memo = self._pending_memo = None  # a search memo only carries across the cycles of one step
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
             for key, value in diag.items():

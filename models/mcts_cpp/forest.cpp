@@ -21,6 +21,8 @@ struct Node {
     int visits = 0;
     int unobserved = 0;  // WU-UCT: simulations through this node whose value is still pending
     double value_sum = 0.0;
+    bool evaluated = false;  // its rollout value is known (cached_value): a reused subtree keeps these across searches
+    double cached_value = 0.0;
 };
 
 class Forest {
@@ -71,22 +73,38 @@ public:
         return out;
     }
 
-    // One round's results: priors holds K priors per leaf with depth left (in ids order; a repeated leaf's second
-    // copy is consumed and ignored), values one value per leaf. Expands, releases the unobserved visits, updates the
-    // min-max stats and backs up, in ids order. Returns, per leaf, whether this call expanded it (its K children
-    // got the next ids), so the Python side can append their states in the same order.
+    // Which of ids already carry a rollout value (from this search or a reused subtree), and those values.
+    std::pair<std::vector<bool>, std::vector<double>> cached(const std::vector<int>& ids) const {
+        std::vector<bool> flags;
+        std::vector<double> values;
+        for (int id : ids) {
+            flags.push_back(nodes_[id].evaluated);
+            values.push_back(nodes_[id].cached_value);
+        }
+        return {flags, values};
+    }
+
+    // One round's results: priors holds K priors per *fresh* leaf with depth left (in ids order; a repeated leaf's
+    // second copy is consumed and ignored), values one value per leaf, fresh[i] false for leaves whose value came
+    // from the cache (already expanded, no priors). Expands, releases the unobserved visits, updates the min-max stats
+    // and backs up, in ids order. Returns, per leaf, whether this call expanded it (its K children got the next
+    // ids), so the Python side can append their states in the same order.
     std::vector<bool> backup(const std::vector<int>& ids, const std::vector<double>& values, const std::vector<double>& priors,
-                             int num_children, bool release) {
+                             int num_children, bool release, const std::vector<bool>& fresh) {
         std::vector<bool> expanded(ids.size(), false);
         size_t cursor = 0;
         for (size_t i = 0; i < ids.size(); ++i) {
             int id = ids[i];
-            if (nodes_[id].depth_left > 0) {
+            if (nodes_[id].depth_left > 0 && fresh[i]) {
                 if (nodes_[id].num_children == 0) {
                     expand(id, std::vector<double>(priors.begin() + cursor, priors.begin() + cursor + num_children));
                     expanded[i] = true;
                 }
                 cursor += num_children;
+            }
+            if (!nodes_[id].evaluated) {
+                nodes_[id].evaluated = true;
+                nodes_[id].cached_value = values[i];
             }
             if (release)
                 for (int n = id; n >= 0; n = nodes_[n].parent) nodes_[n].unobserved -= 1;
@@ -112,10 +130,57 @@ public:
         return counts;
     }
 
+    // The forest re-rooted at root child picks[tree] of every tree, for the next search: structure, priors and cached
+    // rollout values are kept, every count is zero. Nodes are renumbered breadth-first (a node's children stay
+    // contiguous); the second element maps each new id to its old id so the caller can carry the states over.
+    std::pair<Forest, std::vector<int>> subtree(const std::vector<int>& picks) const {
+        Forest out(static_cast<int>(roots_.size()), c_puct_);
+        std::vector<int> old_ids;
+        std::vector<std::pair<int, int>> queue;  // (old id, new id)
+        for (size_t tree = 0; tree < roots_.size(); ++tree) {
+            const Node& root = nodes_[roots_[tree]];
+            int old = root.first_child + picks[tree] % root.num_children;
+            out.roots_.push_back(static_cast<int>(out.nodes_.size()));
+            out.nodes_.push_back(copy_of(nodes_[old], -1));
+            old_ids.push_back(old);
+            queue.emplace_back(old, out.roots_.back());
+        }
+        for (size_t q = 0; q < queue.size(); ++q) {
+            int old = queue[q].first, id = queue[q].second;
+            const Node& n = nodes_[old];
+            if (n.num_children == 0) continue;
+            int first = static_cast<int>(out.nodes_.size());
+            for (int c = n.first_child; c < n.first_child + n.num_children; ++c) {
+                queue.emplace_back(c, static_cast<int>(out.nodes_.size()));
+                out.nodes_.push_back(copy_of(nodes_[c], id));
+                old_ids.push_back(c);
+            }
+            out.nodes_[id].first_child = first;
+            out.nodes_[id].num_children = n.num_children;
+        }
+        return {out, old_ids};
+    }
+
+    // The new search's root priors come from the model's prior at that cycle, as a fresh search's would.
+    void set_root_priors(const std::vector<double>& flat) {
+        size_t cursor = 0;
+        for (int root : roots_) {
+            const Node& r = nodes_[root];
+            for (int k = 0; k < r.num_children; ++k) nodes_[r.first_child + k].prior = flat[cursor++];
+        }
+    }
+
     int size() const { return static_cast<int>(nodes_.size()); }
     int unobserved(int id) const { return nodes_[id].unobserved; }
 
 private:
+    static Node copy_of(const Node& n, int parent) {
+        Node c{n.tree, parent, n.depth_left, n.prior};
+        c.evaluated = n.evaluated;
+        c.cached_value = n.cached_value;
+        return c;
+    }
+
     void expand(int id, const std::vector<double>& priors) {
         if (nodes_[id].num_children > 0 || nodes_[id].depth_left == 0) return;
         int first = static_cast<int>(nodes_.size());
@@ -159,7 +224,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("forced", &Forest::forced)
         .def("select", &Forest::select)
         .def("depth_left", &Forest::depth_left)
+        .def("cached", &Forest::cached)
         .def("backup", &Forest::backup)
+        .def("subtree", &Forest::subtree)
+        .def("set_root_priors", &Forest::set_root_priors)
         .def("root_counts", &Forest::root_counts)
         .def("size", &Forest::size)
         .def("unobserved", &Forest::unobserved);

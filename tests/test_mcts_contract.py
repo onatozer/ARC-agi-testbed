@@ -23,7 +23,7 @@ class Trace:
     """Runs one search over a batch of toy trees and records every callback: the states each round evaluated and
     expanded (as tuples per tree), so the tests can check the traffic, not just the final counts."""
 
-    def __init__(self, impl: str, values, depths, num_children, num_simulations, c_puct=1.25, priors=None, leaves_per_round=None):
+    def __init__(self, impl: str, values, depths, num_children, num_simulations, c_puct=1.25, priors=None, leaves_per_round=None, cache=False):
         self.values = values  # callable(tree, state) -> float
         self.evaluated = []  # per round: list of (tree, state, allowed_depth)
         self.expanded = []  # per round: list of (tree, state)
@@ -37,7 +37,7 @@ class Trace:
         self.search = MCTS_IMPLS[impl](num_simulations=num_simulations, c_puct=c_puct)
         if leaves_per_round is not None:
             self.search.leaves_per_round = leaves_per_round
-        self.counts = self.search.run(self.roots, self.expand_fn, self.evaluate_fn)
+        self.counts = self.search.run(self.roots, self.expand_fn, self.evaluate_fn, **({"cache": True} if cache else {}))
 
     def expand_fn(self, states):
         self.expanded.append([state for state in states])
@@ -225,6 +225,17 @@ def test_wu_wider_rounds_spread_a_rounds_selections():
     assert len(first_wide_round) == 4 and len(set(first_wide_round)) > 1
 
 
+def test_cpp_value_cache_skips_revisited_leaves_with_the_baselines_counts():
+    values = {(0,): 0.5, (1,): 0.2, (0, 0): 0.9, (0, 1): 0.1, (1, 0): 0.4, (1, 1): 0.3}
+    kwargs = dict(depths=[2], num_children=2, num_simulations=6)
+    plain = Trace("python", lambda tree, path: values[path], **kwargs)
+    cached = Trace("cpp", lambda tree, path: values[path], cache=True, **kwargs)
+    assert cached.counts == plain.counts
+    plain_seen, cached_seen = [s for _, s in _evaluated(plain)], [s for _, s in _evaluated(cached)]
+    assert len(cached_seen) == len(set(cached_seen)) < len(plain_seen)  # each state valued once; the baseline repeats (0, 0)
+    assert cached_seen == list(dict.fromkeys(plain_seen))  # the same states, in first-visit order
+
+
 def test_wu_with_one_leaf_per_round_is_the_baseline():
     values = _by_first_child([0.3, 0.8, 0.5, 0.1])
     kwargs = dict(depths=[2, 3], num_children=4, num_simulations=12)
@@ -307,10 +318,30 @@ def test_treerm_trains_and_evals_with_the_impl(impl, compile_):
     assert torch.isfinite(outputs["logits"]).all()
 
 
+@needs_cuda
+def test_search_memo_continues_from_the_chosen_subtree_and_matches_a_fresh_search():
+    # H_cycles = 2: the second cycle's eval search starts from what the first one chose. Same picks (argmax), same
+    # logits as without the memo, and fewer leaves sent to the domain in the second cycle
+    outputs, leaves = {}, {}
+    for memo in (False, True):
+        model, batch = _treerm_head(mcts_impl="cpp", search_memo=memo, mcts_simulations=8, num_candidates=3, candidate_mode="flags", argmax_pick=True, forward_dtype="float32")
+        model.eval()
+        inner = model.model.inner
+        sent = []
+        original = inner._step
+        inner._step = lambda states, depths, x, y: sent.append(len(states)) or original(states, depths, x, y)
+        with torch.inference_mode():
+            _, outputs[memo] = model.model(carry=model.initial_carry(batch), batch=batch)
+        leaves[memo] = sum(sent)
+    torch.testing.assert_close(outputs[True]["logits"], outputs[False]["logits"])
+    torch.testing.assert_close(outputs[True]["search/post_entropy"], outputs[False]["search/post_entropy"])
+    assert leaves[True] < leaves[False]
+
+
 def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
-        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead",
+        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
         "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None,
     })
