@@ -225,7 +225,7 @@ run on the held-out TreeRM trained with `puzzle_emb_lr=3e-2`, with the same embe
 | | Full-TTT (heads train) | 2 | 3 | 4 | 0.779 | 0.39 |
 | | Embed-TTT (heads frozen) | queued | | | | |
 | | Embed-Full-TTT, flat lr | queued | | | | |
-| | **Embed+heads-TTT**: backbone frozen, embedding + heads train, flat lr | queued | | | | |
+| | **Embed+heads-TTT**: backbone frozen, embedding + heads train, flat lr | 1 | 1 | 2 | 0.763 | 0.40 |
 
 ## 4. Head freezing in regular training
 
@@ -261,8 +261,8 @@ control `treerm_emblr3` (5.4 / 7.4 / 10.7, seed 1: 3.4 / 4.7 / 6.0):
 
 | run | schedule | pass@1 | pass@2 | pass@5 | token acc | train lm loss end | wall |
 |---|---|---|---|---|---|---|---|
-| `treerm_emblr3` (control) | everything, every step | 5.4% | 7.4% | 10.7% | 0.738 | | |
-| `treerm_e3_althd` | 100-step blocks: backbone+embeddings / heads only | queued | | | | | |
+| `treerm_emblr3` (control) | everything, every step | 5.4% | 7.4% | 10.7% | 0.738 | 0.40 | 1124 s |
+| `treerm_e3_althd` | 100-step blocks: backbone+embeddings / heads only | 2.0% | 4.7% | 7.4% | 0.721 | 0.80 | 1178 s |
 | `treerm_e3_altemb` | 100-step blocks: embeddings / weights (the paper's schedule) | queued | | | | | |
 | `treerm_e3_2k` -> `treerm_e3_2k_ctrl` | 2000 steps, then 2000 more with everything | queued | | | | | |
 | `treerm_e3_2k` -> `treerm_e3_2k_heads` | 2000 steps, then 2000 more with the heads frozen | queued | | | | | |
