@@ -215,6 +215,7 @@ noise 2-4 tasks).
 | `mcts_horizon=full` | rollouts to the end of the last supervision step (up to 24 updates) | stopped at step 1296 | 1.3 (vs 5.1) | **too slow for this GPU**: 4x the training cost and an eval with depth-24 searches; killed to keep the queue moving |
 | `halt_max_steps=16` | twice the supervision steps (and twice the eval searches) | 2.0 / 2.0 / 5.4 | 4.3 | no gain (within noise of the recipe's 2.7 / 4.7 / 6.7), 23% more wall-clock (1573 s) |
 | `num_candidates=8` | eight flag candidates per z_H update | 4.0 / 4.0 / 4.7 | 4.9 | best pass@1 of any run (6 tasks) but no gain at pass@2/5; eval GPU memory doubles (1,150 MB allocated vs 550); within noise |
+| `mcts_simulations=16, eval 32` | twice the search, train and eval | 1.3 / 2.7 / 6.0 | 4.5 | no gain, 14% more wall-clock (1459 s), eval memory 706 MB: the search depth is not what limits TreeRM here |
 | `puzzle_emb_lr=3e-2` | task embeddings at 3x the lr (SignSGD) | **5.4 / 7.4 / 10.7** | 5.1 | **best run of the night**: 11 tasks at pass@2 vs the recipe's 7 (seeds 0/1: 7 and 3), token acc 0.738 vs 0.719. Each augmented copy's embedding gets only ~30 updates in 4000 steps, so a larger step helps. Needs: a seed replicate, 1e-1, and TRM at 3e-2 (TreeRM gain or recipe fix?): phase 7 |
 
 ## 6. Run log
