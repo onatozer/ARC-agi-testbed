@@ -155,6 +155,19 @@ alone after the embedding (backbone frozen) gives nothing at all.
 Caveats: 30 tasks (3.3 points each), one seed, 20 TTT epochs, a 0.6M-param model pretrained for 4k steps; the
 cosine confound for the Embed-Full variants is addressed by the flat-lr reruns of 3b.
 
+### 3b. Flat learning rate (`lr_min_ratio=1.0`) and longer Embed-TTT
+The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran at a decaying lr; rerun with a flat
+3e-4 (and Full with the same flat lr for a fair pair), plus Embed-TTT for 40 epochs.
+
+| model | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end |
+|---|---|---|---|---|---|---|
+| TRM | Embed-Full-TTT, flat lr | 1 | 3 | 3 | 0.747 | 0.56 |
+| TRM | Full-TTT, flat lr | pending | | | | |
+| TRM | Embed-TTT, 40 epochs | pending | | | | |
+
+TRM: the flat lr fixes Embed-Full (1 -> 3 at pass@2) and puts the paper's ordering one task ahead of cosine
+Full-TTT (2); the flat-lr Full decides whether that is the ordering or the schedule.
+
 ## 4. Head freezing in regular training
 
 ## 5. Open loop: ideas tried
