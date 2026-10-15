@@ -1,5 +1,28 @@
+"""Per-puzzle MCTS over TreeRM's z_H candidates. MCTS_IMPLS (bottom) lists the searches TreeRM can run (config
+mcts_impl); the baseline MCTS is the reference every other implementation is compared against.
+
+Contract of an implementation, Impl(num_simulations, c_puct):
+- attribute num_simulations: TreeRM overwrites it before every search (eval may search deeper than training);
+- run(roots, expand_fn, evaluate_fn) -> each root's children's visit counts, in child order. The roots are Nodes already
+  expanded with their K child states and priors; root.allowed_depth >= 1 is how many levels its tree may grow, a child
+  has one less (so a root child may have 0). expand_fn(states) -> (child states per leaf, child priors per leaf) is the
+  transition, evaluate_fn(states, allowed_depths) -> one value per leaf, higher is better; both batch over the leaves of
+  every tree so the domain can batch its work. Nothing reads the Node tree after run returns;
+- class attribute exact: True when the search reproduces the baseline's counts given the same inputs and callback
+  values; a search that changes the semantics sets False, and tests/test_mcts_contract.py skips its parity tests.
+
+Invariants every implementation keeps (tests/test_mcts_contract.py):
+- each root's counts sum to num_simulations and, with num_simulations >= K, every root child is visited; the baseline's
+  first K simulations visit child 0..K-1 once each, in order, before PUCT takes over;
+- a leaf with allowed_depth 0 is evaluated but never expanded: expand_fn only sees leaves with depth left, no state is
+  created below the root's allowed depth, evaluate_fn gets every leaf with its own allowed_depth;
+- Q is min-max normalised per tree (MinMaxStats): an affine rescaling of a tree's values changes nothing, and one tree
+  never affects another's counts; PUCT ties go to the first maximal child;
+- deterministic: identical inputs give identical counts.
+"""
+
 import math
-from typing import Any, Callable, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 #NOTE: Worth considering if we think it's worth it to store all the latents in the nodes or not, might be overkill in terms of memory
 class Node:
@@ -63,6 +86,8 @@ class MCTS:
     expand_fn(states) -> (child states per leaf, child priors per leaf) and
     evaluate_fn(states, allowed_depths) -> one value per leaf (higher is better)."""
 
+    exact = True  # the reference semantics (see the module docstring)
+
     def __init__(self, num_simulations: int, c_puct: float):
         self.num_simulations = num_simulations
         self.c_puct = c_puct
@@ -112,3 +137,7 @@ class MCTS:
                 leaf.backpropagate(value)
 
         return [[child.num_visits for child in root.children] for root in roots]
+
+
+# The searches TreeRM can run, by config mcts_impl; every entry honours the contract in the module docstring
+MCTS_IMPLS: Dict[str, type] = {"python": MCTS}

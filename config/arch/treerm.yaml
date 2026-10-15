@@ -12,6 +12,7 @@ loss:
 num_candidates: 8 # number of z_H proposals the prior scorer / MCTS choose between at every z_H update
 mcts_simulations: 16 # MCTS simulations per puzzle per z_H update
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
+mcts_impl: python # which models.mcts.MCTS_IMPLS implementation runs the search
 mcts_horizon: step # how far a search looks ahead: 'step' = to the end of this supervision step, 'full' = to the end of the last one
 gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
 candidate_mode: flags # flags = u_t + gated fixed orthonormal direction per slot (cannot collapse; best); full = generator outputs K z_H vectors; residual = u_t + generator output

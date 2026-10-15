@@ -7,7 +7,7 @@ from torch import nn
 
 from models.losses import IGNORE_LABEL_ID
 from models.losses.base import kl_balanced_logits
-from models.mcts import MCTS, Node
+from models.mcts import MCTS_IMPLS, Node
 from ..layers import (
     CastedLinear,
     SwiGLU,
@@ -87,7 +87,9 @@ class TreeRMInner(GRAM_Inner):
             num_heads=self.config.num_heads,
             norm_eps=self.config.rms_norm_eps,
         )
-        self.mcts = MCTS(num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
+        if self.config.mcts_impl not in MCTS_IMPLS:
+            raise ValueError(f"mcts_impl must be one of {sorted(MCTS_IMPLS)}, got {self.config.mcts_impl!r}.")
+        self.mcts = MCTS_IMPLS[self.config.mcts_impl](num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
 
         if self.config.mcts_horizon not in ("step", "full"):
             raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
