@@ -1,11 +1,13 @@
 """Contract tests every models.mcts.MCTS_IMPLS implementation must pass (the contract is the module docstring of
 models/mcts.py). Exact implementations (impl.exact) must reproduce the baseline's visit counts and callback
 traffic; semantics-changing ones only keep the invariants."""
+import copy
+
 import pytest
 import torch
 
 from models.mcts import MCTS, MCTS_IMPLS, Node
-from models.recursive_reasoning.treerm import TreeRM
+from models.recursive_reasoning.treerm import TreeRM, _compiled_step_core
 
 from tests.test_gram import _cfg
 from tests.test_treerm import _treerm_head
@@ -222,6 +224,28 @@ def test_search_posterior_matches_the_baseline_on_the_model(impl, compile_, trai
     reference = _posterior("python", False, training, horizon)
     posterior = _posterior(impl, compile_, training, horizon)
     torch.testing.assert_close(posterior, reference)
+
+
+@needs_cuda
+def test_compiled_search_runs_in_the_module_copy_that_calls_it():
+    # The EMA eval model is a deepcopy of the training model; its search must use the copy's mode and weights
+    model, batch = _treerm_head(mcts_impl="fused", search_compile=True, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
+    model.train()
+    copied = copy.deepcopy(model)
+    copied.eval()
+    inner = copied.model.inner
+    inner.rollout_loss_fn = None  # as under the inference loss head: an eval search must never need the label CE
+    with torch.no_grad():
+        inner.candidate_generator.gate.bias.fill_(0.5)  # the copy's weights differ from the original's
+        cand, prior, z_L, x = _search_inputs(copied, batch)
+        n = cand.shape[0]
+        args = (cand[:, 0].contiguous(), z_L, x, batch["labels"], torch.full((n,), 2, device="cuda"), 2)
+        compiled = _compiled_step_core()(inner, *args)  # a copy in eval mode: no label CE, the copy's weights
+        eager = inner._step_core(*args)
+    # Inductor's fused kernels round differently from eager: ~1e-2 on bf16 latents after 10 passes, nothing like the
+    # O(1) difference the original's weights (gate 1.0 vs 0.5: sqrt(H)/2 per element) would give
+    for got, want in zip(compiled, eager):  # values, targets, leaf tokens, candidates, priors, next z_L
+        torch.testing.assert_close(got.float(), want.float(), rtol=5e-2, atol=0.25 if got.dtype == torch.bfloat16 else 5e-2)
 
 
 @needs_cuda

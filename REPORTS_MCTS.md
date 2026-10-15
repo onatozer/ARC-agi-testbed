@@ -113,5 +113,103 @@ The recipe for 2000 steps on `data/sudoku-6u`, checkpoint kept under `~/ARC-agi-
 
 Entries are in order; each records the change, the measured effect against the baseline, and whether it stays.
 
-### 4.0 Baseline (`mcts_impl=python`)
-Pending: numbers from `bench.py --impl python` once the reference checkpoint's final eval finishes.
+### 4.0 Baseline (`mcts_impl=python`), commit `029b7d9`
+`scripts/mcts_bench/results/baseline_python.json`. Search alone (batch 64, median of 5):
+
+| mode | sims | depth | ms | rollout ms | expand ms | tree ms |
+|---|---|---|---|---|---|---|
+| train | 8 | 1 | 24.7 | 21 | 0 | 4 |
+| train | 8 | 3 | 245.9 | 132 | 118 | 8 |
+| train | 16 | 1 | 35.0 | 30 | 0 | 5 |
+| train | 16 | 3 | 435.9 | 243 | 204 | 12 |
+| eval | 8 | 1 | 14.9 | 11 | 0 | 3 |
+| eval | 8 | 3 | 264.0 | 134 | 93 | 8 |
+| eval | 16 | 1 | 27.8 | 25 | 0 | 5 |
+| eval | 16 | 3 | 538.5 | 238 | 207 | 14 |
+
+Training: 9.04 it/s (109 ms/step, compiled model, 50 steps, peak 282 MB). Eval: 96.4 s for the 1000-puzzle test set at
+16 sims, exact accuracy 0.865 (the training run's own final eval: 0.866), peak 354 MB.
+
+What this says:
+- **The Python tree is not the problem.** Selection + backprop + bookkeeping ("tree") is 3-5% of a search. A C++
+  or tensor tree, on its own, could not give more than that; the user's C++ idea is only worth it combined with a
+  cheaper domain step.
+- **The domain callbacks are, and not because of their GEMMs.** `profile_search.py` (train, 8 sims, depth 3): one
+  search issues ~8,900 kernel launches; CPU-side time 260 ms vs 97 ms of GPU time, i.e. the GPU waits for Python
+  and the launch queue most of the time. Of the GPU time itself only ~18% is matmul and 9% attention; 22% is
+  `aten::mul`, 11% `add`, 15% `copy_`/`_to_copy` (every `CastedLinear` casts its fp32 weight to bf16 on every call),
+  6% `cat` (the per-round `torch.stack`s), and the rest is rms-norm's pow/mean/rsqrt and SiLU: small elementwise
+  kernels that an eager loop cannot fuse.
+- The expand costs almost as much as a 3-update rollout (118 vs 132 ms) although it runs a third of the passes:
+  it carries its own stack, the scorer's cross-attention, 256 candidate slices into Python tuples and a second host
+  sync per round.
+- Depth matters more than simulations: 16 sims at depth 1 cost 35 ms, 8 sims at depth 3 cost 246 ms. Training
+  searches run at depth 3, 2, 1 across the three cycles (only the grad cycle searches); eval searches at every cycle.
+
+So the order of attack is: fewer passes per round (fuse), then make a round one launch instead of a thousand
+(CUDA graph / `torch.compile` of the fixed-shape round, which also fuses the elementwise chains), then the tree.
+
+**Can a compiled function run inside the compiler-disabled search?** Yes. Probe (`tmp/compile_probe.py`): a
+`torch.compile(mode="reduce-overhead")` callee invoked from a `@torch.compiler.disable` frame, itself called from a
+compiled outer function, ran compiled with CUDA graphs: 1.3-1.5 ms vs 13.9 ms eager for 8 x 20 elementwise ops. The
+only trap is that CUDA-graph outputs are overwritten by the next replay, so anything kept across rounds (candidates,
+bootstrap targets) must be cloned out.
+
+### 4.1 Fused expand + rollout, batched forced root visits (`mcts_impl=fused`)
+`models/mcts.py::FusedMCTS`, `TreeRMInner._step`. Two changes, both exact:
+- **One domain call per round.** `run` takes a `step_fn(states, depths) -> (values, children, priors)`; TreeRM's
+  `_step` runs the rollout once and, after its first TRM update (which is exactly what `_expand` recomputed), takes the
+  candidates and priors of the leaves with depth left from that update. Saves the 5 expand passes and one stack per
+  round, and merges the two host syncs (`values.tolist()`, `priors.tolist()`) into one. Without a `step_fn` the class
+  composes the two baseline callbacks, so the toy contract tests cover it like any other impl.
+- **The forced root visits in one batch.** The baseline spends its first K rounds evaluating root child k of every
+  tree, by construction without any selection in between; they are independent, so `FusedMCTS` evaluates all K x B
+  of them in a single call (K rounds become one; at batch 256 instead of 64 a launch-bound pass costs about the same).
+  Backprop and min-max updates commute, so the tree state after the batch is identical to the baseline's.
+- **Loss normalisation made batching-proof.** The value-bootstrap term divided by `len(self._bootstrap)`, i.e. the
+  number of rollout *calls*, which equals the number of simulations only when every round is its own call. It now
+  divides by `mcts.num_simulations` (the same number for the baseline; `tests/test_treerm.py` still asserts one
+  bootstrap entry per simulation for it).
+- **Contract tests adjusted.** "One evaluate call per simulation" was a baseline property, not part of the contract;
+  the tests now compare the flattened order of evaluated (tree, state) pairs, which a batched round must still follow.
+- Floating point: the fused candidates come from a `u_t` computed at the rollout's batch (64) instead of at the
+  growing subset's batch, and the forced round runs at batch 256; the kernels can differ in the last bf16 bit, so
+  posterior parity on the real model is checked empirically (micro `parity` field, contract test on the tiny model).
+
+**Measured** (`results/fused_sudoku6u.json`, the first version of `_step`: masked leaf values, candidates only for
+growing rows):
+
+| mode | sims | depth | baseline ms | fused ms | speedup | posterior argmax agreement |
+|---|---|---|---|---|---|---|
+| train | 8 | 1 | 24.7 | 9.2 | 2.7x | 1.000 |
+| train | 8 | 3 | 245.9 | 113.0 | 2.2x | 1.000 |
+| train | 16 | 1 | 35.0 | 27.7 | 1.3x | 1.000 |
+| train | 16 | 3 | 435.9 | 205.7 | 2.1x | 0.984 (1 row of 64) |
+| eval | 8 | 1 | 14.9 | 7.7 | 1.9x | 1.000 |
+| eval | 8 | 3 | 264.0 | 122.9 | 2.1x | 1.000 |
+| eval | 16 | 1 | 27.8 | 15.0 | 1.9x | 1.000 |
+| eval | 16 | 3 | 538.5 | 235.3 | 2.3x | 1.000 |
+
+Training 9.04 -> 10.79 it/s (109 -> 87 ms/step). Full eval 96.4 -> 53.7 s (1.8x), exact accuracy 0.865 -> 0.868
+(seed noise: the sampled picks differ once any value differs in the last bit), peak memory 354 -> 564 MB (the
+batch-256 forced round). The one disagreeing row is the bf16 last-bit effect above flipping one PUCT decision; all
+57 GPU tests pass, including exact posterior parity on the tiny model. **Kept.** The depth-1 case shows the batching
+of the forced round alone: with 8 sims, 4 rounds become 1, hence 2.7x on a search that never expands.
+
+### 4.2 Static-shape round + `torch.compile(mode="reduce-overhead")` (`search_compile=true`)
+`TreeRMInner._step_core`. The round's tensor work is rewritten so nothing depends on data: leaf values are computed
+for every row at every stage and selected by `torch.where(depth == stage)` instead of boolean indexing (which
+synced the host twice per stage), and candidates/priors are computed for every row of the round and only used for
+the rows with depth left. That makes the round a pure function of (batch, max depth, train/eval mode), so it can be
+`torch.compile`d with CUDA graphs: one replay per round instead of ~1,000 launches, with the elementwise chains
+(rms-norm, residual mixes, SiLU, the fp32->bf16 weight casts) fused by inductor. Outputs that outlive the round
+(candidates, the next z_L, bootstrap tokens/targets) are cloned out of graph memory. Specialisations: 2 batch sizes
+(64, 256 for the forced round) x 3 depths x 2 modes = 12 graphs, so `torch._dynamo.config.cache_size_limit` is
+raised to 64 when the option is on. `search_compile` requires `mcts_impl=fused` (the baseline callbacks run on
+variable-size subsets and would recompile per size).
+**Measured, rewrite without compile** (`results/fused_static_sudoku6u.json`): training search depth 3 109.8 ms
+(fused 113.0), eval 16 sims depth 3 248.8 ms (235.3), training 9.62 it/s (10.79; one 50-step sample each, so
+within noise), full eval 50.6 s (53.7), accuracy 0.868, parity as before. The two syncs per stage it removes are
+paid back by the all-row leaf values and candidates, so on its own it is a wash; it exists to make the round
+compilable. The breakdown now attributes ~95% of a depth-3 search to the single step callback and 5-7% to the tree.
+**Measured, with compile:** pending.

@@ -95,14 +95,8 @@ class TreeRMInner(GRAM_Inner):
             raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
         if self.config.rollout_policy not in ("trm", "prior"):
             raise ValueError(f"rollout_policy must be 'trm' or 'prior', got {self.config.rollout_policy!r}.")
-        if self.config.search_compile:
-            if not getattr(self.mcts, "fused", False):
-                raise ValueError("search_compile needs a fused search (mcts_impl=fused): only its round has fixed shapes.")
-            # The search is launch-bound and outside the model's compile (data-dependent control flow), but a compiled
-            # callee still runs compiled from inside it: the fixed-shape round becomes one CUDA graph replay per
-            # (batch, depth, mode). Each of those is a cache entry, so the default limit of 8 is too small
-            torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
-            self._step_core_compiled = torch.compile(self._step_core, mode="reduce-overhead", dynamic=False)
+        if self.config.search_compile and not getattr(self.mcts, "fused", False):
+            raise ValueError("search_compile needs a fused search (mcts_impl=fused): only its round has fixed shapes.")
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
@@ -235,34 +229,51 @@ class TreeRMInner(GRAM_Inner):
                 z_H = u_t
         return values, targets, leaf_token, cand, priors, z_L_next
 
-    def _step(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor):
-        """_rollout_values and _expand in one pass (FusedMCTS's step_fn): the rollout's first TRM update is exactly the
-        expand's u_t, so the candidates and priors of the leaves with depth left come from it instead of a second
-        update; one host sync carries both the values and the priors."""
-        rows = [row for row, _, _ in states]
-        z_H = torch.stack([s[1] for s in states])
-        z_L = torch.stack([s[2] for s in states])
-        depths_t = torch.tensor(depths, device=z_H.device)
-        core = self._step_core_compiled if self.config.search_compile else self._step_core
-        outputs = core(z_H, z_L, x[rows], y[rows], depths_t, max(depths))
-        if self.config.search_compile:
-            # The compiled core's outputs live in CUDA-graph memory that the next round's replay overwrites
-            outputs = tuple(t.clone() if t is not None else None for t in outputs)
-        values, targets, leaf_token, cand, priors, z_L_next = outputs
+    # A fused search's state is (batch row, arena index): the latents of every node of this search live in two
+    # preallocated arenas [capacity, S, H], so a round gathers its leaves with one index_select and appends all its
+    # children with one copy, instead of stacking per-node views and slicing K views per leaf in Python
+
+    def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int) -> None:
+        """Sizes the arenas for this search (root children, then K children per leaf per round: B*K*(sims + 1) nodes,
+        reused across searches) and writes the root children in."""
+        B, K, S, H = cand.shape
+        capacity = B * K * (num_simulations + 1)
+        arena = getattr(self, "_arena", None)
+        if arena is None or arena[0].shape[0] < capacity or arena[0].shape[1:] != (S, H) or arena[0].device != cand.device or arena[0].dtype != cand.dtype:
+            arena = tuple(torch.empty(capacity, S, H, dtype=cand.dtype, device=cand.device) for _ in range(2))
+            self._arena = arena
+        arena[0][: B * K].copy_(cand.flatten(0, 1))
+        arena[1][: B * K].copy_(z_L.repeat_interleave(K, dim=0))
+        self._arena_next = B * K
+
+    def _step(self, states: List[Tuple[int, int]], depths: List[int], x: torch.Tensor, y: torch.Tensor):
+        """_rollout_values and _expand in one pass (FusedMCTS's step_fn) over arena states: the rollout's first TRM
+        update is exactly the expand's u_t, so the candidates and priors of the leaves with depth left come from it
+        instead of a second update; one host sync carries both the values and the priors."""
+        arena_H, arena_L = self._arena
+        rows = [row for row, _ in states]
+        ids = torch.tensor([index for _, index in states], device=arena_H.device)
+        depths_t = torch.tensor(depths, device=arena_H.device)
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], depths_t, max(depths))
+        values, targets, leaf_token, cand, priors, z_L_next = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
 
         if self.training and self.config.value_bootstrap_weight > 0:
-            self._bootstrap.append((leaf_token, targets))
-        children: List[Optional[List[Tuple[int, torch.Tensor, torch.Tensor]]]] = [None] * len(states)
+            # Kept until the loss: the compiled core's outputs live in CUDA-graph memory that the next replay overwrites
+            self._bootstrap.append((leaf_token.clone(), targets.clone()) if self.config.search_compile else (leaf_token, targets))
+        children: List[Optional[List[Tuple[int, int]]]] = [None] * len(states)
         prior_lists: List[Optional[List[float]]] = [None] * len(states)
         if cand is None:
             return values.tolist(), children, prior_lists
+        n, k = cand.shape[:2]
+        start, self._arena_next = self._arena_next, self._arena_next + n * k
+        arena_H[start : start + n * k].copy_(cand.flatten(0, 1))
+        arena_L[start : start + n * k].copy_(z_L_next.repeat_interleave(k, dim=0))
         flat = torch.cat([values, priors.flatten()]).tolist()
-        k = priors.shape[1]
         for i, depth in enumerate(depths):
             if depth > 0:
-                children[i] = [(rows[i], cand[i, j], z_L_next[i]) for j in range(k)]
-                prior_lists[i] = flat[len(states) + i * k : len(states) + (i + 1) * k]
-        return flat[: len(states)], children, prior_lists
+                children[i] = [(rows[i], start + i * k + j) for j in range(k)]
+                prior_lists[i] = flat[n + i * k : n + (i + 1) * k]
+        return flat[:n], children, prior_lists
 
     @torch.compiler.disable
     @torch.no_grad()
@@ -271,20 +282,23 @@ class TreeRMInner(GRAM_Inner):
         distribution) [B, K]."""
         priors = prior_logits.float().softmax(dim=-1).tolist()
         self._bootstrap = []  # (leaf first-token states, rollout targets) this search's rollouts record for the value head
-        roots = []
-        for b in range(cand.shape[0]):
-            root = Node(latent=None, allowed_depth=remaining[b])
-            root.expand([(b, cand[b, k], z_L[b]) for k in range(cand.shape[1])], priors[b])
-            roots.append(root)
-
         # Eval may search deeper than training (test-time compute); the value head is what it relies on
         self.mcts.num_simulations = self.config.mcts_simulations if self.training else (self.config.eval_mcts_simulations or self.config.mcts_simulations)
-        fused = {"step_fn": lambda states, depths: self._step(states, depths, x, y)} if getattr(self.mcts, "fused", False) else {}
+        fused = getattr(self.mcts, "fused", False)
+        B, K = cand.shape[:2]
+        if fused:
+            self._arena_reset(cand, z_L, self.mcts.num_simulations)
+        roots = []
+        for b in range(B):
+            root = Node(latent=None, allowed_depth=remaining[b])
+            root.expand([(b, b * K + k) if fused else (b, cand[b, k], z_L[b]) for k in range(K)], priors[b])
+            roots.append(root)
+
         counts = self.mcts.run(
             roots,
             expand_fn=lambda states: self._expand(states, x),
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
-            **fused,
+            **({"step_fn": lambda states, depths: self._step(states, depths, x, y)} if fused else {}),
         )
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         posterior = visits / visits.sum(dim=-1, keepdim=True)
@@ -407,6 +421,24 @@ class TreeRMInner(GRAM_Inner):
         }
 
         return LatentCarry(z_H, z_L), info
+
+
+_STEP_CORE_COMPILED: Optional[Callable[..., Any]] = None
+
+
+def _compiled_step_core() -> Callable[..., Any]:
+    """TreeRMInner._step_core under torch.compile(mode=reduce-overhead), built once for the process. The search is
+    launch-bound and outside the model's compile (data-dependent control flow), but a compiled callee still runs
+    compiled from inside it: the fixed-shape round becomes one CUDA graph replay per (batch, depth, mode). The
+    unbound function is compiled, with the module as its first argument, so dynamo guards on the module that calls
+    it (its mode and weights); a compiled bound method stored on the instance would survive the deepcopy that makes
+    the EMA eval model and keep running the original instance."""
+    global _STEP_CORE_COMPILED
+    if _STEP_CORE_COMPILED is None:
+        # One cache entry per (batch, depth, mode) specialisation, so the default limit of 8 is too small
+        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
+        _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode="reduce-overhead", dynamic=False)
+    return _STEP_CORE_COMPILED
 
 
 class TreeRM(GRAM):
