@@ -205,6 +205,26 @@ and solves the fewest tasks (1): with the schedule held equal, the paper's embed
 fine-tuning for TRM by two tasks, and the mechanism the paper gives (fitting the embedding first keeps the backbone
 from overfitting the few demos) is what the training losses show. Still one seed and 30 tasks.
 
+### 3c. Which TTT variants train TreeRM's heads, and the joint embedding-plus-heads variant
+
+A note on what each TTT variant does to the candidate generator, scorer and LPRM value head (`candidate_*`,
+`v_head`), since the question came up: **Full-TTT trains them** (every parameter, at their 0.1x lr scale);
+**Embed-TTT freezes them** by definition (`freeze_weights`: only the task embedding moves); **Embed-Full-TTT**
+freezes them in the embedding block and trains them in the backbone block. The "heads frozen" rows of the table
+above remove them from Full / Embed-Full. What was missing is the TreeRM-native analogue of Embed-TTT: the backbone
+frozen and the embedding **and** the heads trained together, so the search can re-tune its prior and value to the
+new task while the representation stays put. That variant (`embed_heads_e3`) and the three standard variants are
+run on the held-out TreeRM trained with `puzzle_emb_lr=3e-2`, with the same embedding lr at test time
+(`+train_overrides.puzzle_emb_lr=3e-2`), flat lr for the two-block variants.
+
+| TreeRM (held-out, emb lr 3e-2) | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end |
+|---|---|---|---|---|---|---|
+| | no-TTT control (in-training eval) | 0 | 0 | 0 | 0.65 | – |
+| | Full-TTT (heads train) | queued | | | | |
+| | Embed-TTT (heads frozen) | queued | | | | |
+| | Embed-Full-TTT, flat lr | queued | | | | |
+| | **Embed+heads-TTT**: backbone frozen, embedding + heads train, flat lr | queued | | | | |
+
 ## 4. Head freezing in regular training
 
 1000-step continuations of the standard TreeRM checkpoint (`+load_checkpoint`, weights only, warmup 50), same
@@ -227,6 +247,23 @@ training) does not help: both alternation runs end exactly where the checkpoint 
 a higher training loss, because the backbone trains in only half of the steps; freezing the heads on top changes
 nothing. **Question 2, training side: no effect either way.** The control that trains everything is the best
 continuation (3.4 / 5.4 / 8.1), i.e. the model simply wanted more steps.
+
+### 4b. Head alternation from scratch (`freeze_alternation_substrings`)
+
+The continuations above only ever froze the heads of a trained model. To see the effect of freezing them
+*iteratively throughout training*, `pretrain.py` now takes `freeze_alternation_substrings`: together with
+`freeze_alternation_epochs` it alternates between training everything except the matched parameters and training
+only them (gradients of the sitting-out set are dropped before the step, so their optimizer state does not move
+either; `train/freeze_phase` logs the phase). From-scratch 4000-step runs at the `puzzle_emb_lr=3e-2` recipe,
+control `treerm_emblr3` (5.4 / 7.4 / 10.7, seed 1: 3.4 / 4.7 / 6.0):
+
+| run | schedule | pass@1 | pass@2 | pass@5 | token acc | train lm loss end | wall |
+|---|---|---|---|---|---|---|---|
+| `treerm_emblr3` (control) | everything, every step | 5.4% | 7.4% | 10.7% | 0.738 | | |
+| `treerm_e3_althd` | 100-step blocks: backbone+embeddings / heads only | queued | | | | | |
+| `treerm_e3_altemb` | 100-step blocks: embeddings / weights (the paper's schedule) | queued | | | | | |
+| `treerm_e3_2k` -> `treerm_e3_2k_ctrl` | 2000 steps, then 2000 more with everything | queued | | | | | |
+| `treerm_e3_2k` -> `treerm_e3_2k_heads` | 2000 steps, then 2000 more with the heads frozen | queued | | | | | |
 
 ## 5. Open loop: ideas tried
 
