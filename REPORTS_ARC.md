@@ -168,7 +168,7 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 |---|---|---|---|---|---|---|
 | TRM | Embed-Full-TTT, flat lr | 1 | 3 | 3 | 0.747 | 0.56 |
 | TRM | Full-TTT, flat lr | 1 | 1 | 2 | 0.758 | 0.36 |
-| TRM | Embed-TTT, 40 epochs | pending | | | | |
+| TRM | Embed-TTT, 40 epochs | 1 | 1 | 3 | 0.766 | 0.42 |
 
 TRM: the flat lr fixes Embed-Full (1 -> 3 at pass@2), while flat-lr Full fits the demos hardest (train loss 0.36)
 and solves the fewest tasks (1): with the schedule held equal, the paper's embed-first ordering beats joint
