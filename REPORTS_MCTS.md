@@ -303,3 +303,30 @@ accuracy 0.870, `search/argmax_agree` 0.364 (the search overrides the prior noti
 baseline's 0.464: with 4 leaves chosen blind per round the visit distribution is flatter). Verdict: **W = 2 is the
 useful setting** (same accuracy, 10-30% off the search); W = 4 buys little more speed and visibly changes the
 search's behaviour. Neither is the default; `mcts_leaves_per_round` stays 1 unless a user opts in.
+
+### 4.5 C++ search forest (`mcts_impl=cpp`, commit `da64895`)
+The user's first idea. `models/mcts_cpp/forest.cpp` (pybind11 through `torch.utils.cpp_extension.load`, built on
+first use into `build/mcts_cpp`, needs g++ and ninja; `ninja` was added to the venv) holds every tree of a search
+as one node array: parent, children range, prior, visits, value sum, unobserved count, depth left; `select(width)`
+does the PUCT walks (with WU-UCT's unobserved counts, so it is also the `wu` search at W > 1), `backup(...)`
+expands, releases unobserved visits, updates the per-tree min-max stats and backs up, all with the baseline's
+arithmetic and tie rule. Python keeps the domain state of node i at index i (the arena index for TreeRM, a tuple in
+the toy tests) and still makes one batched domain call per round, so the latents never cross into C++, which is
+what keeps the implementation 150 lines and generic. Visit counts are the baseline's: it passes every exact
+contract test (hand-computed traces, random-tree parity, posterior parity on the tiny model). Measured: pending
+(`cpp_compile`, `cpp_wu2_compile`).
+
+### 4.6 What is left, and the next levers
+With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
+In an eval batch the searches themselves are roughly 8 steps x (93 + 50 + 16) ms ~ 1.3 s, but a batch takes ~2.8 s
+(45 s / 16): **about half of the eval wall-clock is outside the searches**, so `profile_eval.py` is next.
+Candidates after that, in order of expected value:
+1. **Subtree value memo across a step's cycles (exact).** The children of root child k* in cycle c's search are,
+   up to bf16 noise, exactly cycle c+1's root children (same TRM update), with the same allowed depth and hence the
+   same rollout values; keeping the forest/arena across cycles and re-rooting at k* (counts reset, values and
+   expansions kept) makes cycle c+1's forced round free when k*'s children were visited and skips every repeated
+   rollout. Applies only where consecutive searches happen, i.e. eval (training searches on the grad cycle alone).
+   Estimate ~20% of eval search time.
+2. **Inductor max-autotune** for the round's small GEMMs (K = 128) and epilogue fusion; cheap to try.
+3. **Semantics-changing eval knobs**, each judged on the reference checkpoint: cap the rollout length and let the
+   value head finish early; fewer eval simulations at depth 3 (the one that costs); W = 2 batching.
