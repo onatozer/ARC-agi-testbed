@@ -221,7 +221,29 @@ unbound `TreeRMInner._step_core` once per process and pass the module as its fir
 caller's mode and parameters; a regression test deep-copies a compiled model and checks the copy's round against
 its own eager round. Lesson for every future variant: the parity field and the eval section are the test, not the
 micro speed.
-**Measured, with compile (fixed):** pending (`arena_compile`, measured together with 4.3).
+**Measured, with compile (fixed, on arena states; `results/arena_compile_sudoku6u.json`):**
+
+| mode | sims | depth | baseline ms | arena (eager) ms | arena + compile ms | vs baseline | argmax agreement |
+|---|---|---|---|---|---|---|---|
+| train | 8 | 1 | 24.7 | 9.3 | 6.1 | 4.0x | 1.000 |
+| train | 8 | 3 | 245.9 | 106.3 | 65.4 | 3.8x | 0.984 |
+| train | 16 | 1 | 35.0 | 19.9 | 16.4 | 2.1x | 1.000 |
+| train | 16 | 3 | 435.9 | 210.0 | 94.5 | 4.6x | 1.000 |
+| eval | 8 | 1 | 14.9 | 7.8 | 11.7 | 1.3x | 1.000 |
+| eval | 8 | 3 | 264.0 | 112.9 | 63.4 | 4.2x | 1.000 |
+| eval | 16 | 1 | 27.8 | 13.5 | 16.7 | 1.7x | 1.000 |
+| eval | 16 | 3 | 538.5 | 228.4 | 96.7 | 5.6x | 1.000 |
+
+Training 9.17 it/s (eager arena 9.44: within noise, and training searches are depth 1, where the compiled round is
+only a value-head call and the graph replay's fixed cost shows). Full eval 48.6 s vs 49.9 s eager, accuracy 0.868,
+`search/argmax_agree` 0.464 (baseline 0.462): the search makes the same decisions. The eval barely moved although
+its searches are 2.4-5.6x faster: hypothesis, the 1000-puzzle test set ends with a 40-row batch, and every new
+batch size means new specialisations (40 and 160 rows x 3 depths) compiled inside the timed eval.
+**Confirmed:** the same eval over the 15 full batches only takes 27.0 s (960 puzzles, accuracy 0.869), so the
+last 40-puzzle batch alone cost ~21 s of compilation. Fix: the round's batch dimension is marked dynamic
+(`torch._dynamo.maybe_mark_dynamic(t, 0)` on the round's inputs), so each (depth, mode) is compiled once with a
+symbolic batch and CUDA graphs are merely recorded per batch size (milliseconds), which also covers any other batch
+size a user evals with. Measured: `arena_compile_dyn`, pending.
 
 ### 4.3 Arena-indexed states (`fused` impls, commit `3b4adaa`)
 A fused search's state was (row, z_H view, z_L view): every round `torch.stack`ed 64-256 views and built K views
@@ -230,8 +252,11 @@ per leaf (256 to 1,024 small tensor objects) for the children. Now `_search` all
 root children written in; a state is (row, arena index); a round gathers its leaves with one `index_select` and
 writes all its children with one copy, and child states are integers. With `search_compile` the compiled round's
 outputs are written straight into the arena instead of being cloned. Memory is the same as before (the per-round
-candidate tensors were kept alive by the node views anyway), just preallocated. Measured: pending (`arena`,
-`arena_compile`).
+candidate tensors were kept alive by the node views anyway), just preallocated.
+**Measured** (`results/arena_sudoku6u.json`, eager): training search depth 3 106.3 ms (static 109.8), eval 16 sims
+depth 3 228.4 ms (248.8), "tree" 2-11 ms (3-13), full eval 49.9 s (50.6), accuracy 0.868, peak memory 265 MB
+(564: the batch-256 forced round's candidate tensor is no longer held next to its views). A few percent on its own;
+its point is the fixed-shape, no-clone round for the compiled path. **Kept.**
 
 ### 4.4 WU-UCT batching (`mcts_impl=wu`, `mcts_leaves_per_round=W`)
 `models/mcts.py::WUMCTS`, from the user's third paper (Liu et al., ICLR 2020; arXiv 2006.08785 is its BU-UCT

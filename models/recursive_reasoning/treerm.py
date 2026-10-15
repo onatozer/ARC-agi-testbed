@@ -259,8 +259,16 @@ class TreeRMInner(GRAM_Inner):
         rows = [row for row, _ in states]
         ids = torch.tensor([index for _, index in states], device=arena_H.device)
         depths_t = torch.tensor(depths, device=arena_H.device)
-        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], depths_t, max(depths))
-        values, targets, leaf_token, cand, priors, z_L_next = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], depths_t)
+        if self.config.search_compile:
+            # The round's batch (B, K*B, and whatever a partial last eval batch gives) is the one shape that varies, so it
+            # is compiled symbolically: one compile per (depth, mode), and CUDA graphs record per batch size instead
+            for t in args:
+                torch._dynamo.maybe_mark_dynamic(t, 0)
+            outputs = _compiled_step_core()(self, *args, max(depths))
+        else:
+            outputs = self._step_core(*args, max(depths))
+        values, targets, leaf_token, cand, priors, z_L_next = outputs
 
         if self.training and self.config.value_bootstrap_weight > 0:
             # Kept until the loss: the compiled core's outputs live in CUDA-graph memory that the next replay overwrites
