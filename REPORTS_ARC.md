@@ -49,3 +49,18 @@ freezing, 5 the open loop, 6 run log.
 ## 5. Open loop: ideas tried
 
 ## 6. Run log
+
+- **Phase 0 smoke** (200 steps + one full eval over the 4,768-row test split, W&B disabled): TRM 530,690 params,
+  56 s wall, peak RSS 1.85 GB; VARC 606,768 params, 19 s; TreeRM 597,254 params, training at 5.1 it/s at batch
+  128 (the compiled C++ search). TreeRM's first eval crashed in the ARC evaluator: it breaks vote ties by
+  `sigmoid(q_halt_logits)` and TreeRM (like GRAM) has no halt head. Fix: TreeRM reports the logit of its LPRM
+  value as `q_halt_logits`, so the tie-break uses the model's own correctness estimate (VARC reports a constant
+  0 there, so its tie-break is arbitrary). 2-task TTT smokes on the TRM checkpoint ran end to end through the new
+  MiniARC task loader (Full and Embed variants).
+  The three `smoke_*` 200-step runs are also the first sanity check of `freeze_param_substrings` etc. on real data.
+- **TTT trap found by the smoke.** Every TTT variant on the 2-task smokes returned bit-identical metrics, and a
+  probe (1 vs 30 epochs, lr 1e-2, embeddings-only) confirmed the eval never changed: the training loop ran zero
+  steps. `PuzzleDataset` fills a batch with whole puzzles and drops under-filled tails, and 3 aux tasks x 3 demos
+  never fill a batch of 16. The recipe's 16 aux tasks x ~3.5 demos would have trained (2 batches per epoch, a third
+  of the demos dropped every epoch), so `ttt_mini` moves to batch 8 (5-6 steps per epoch, as VARC's recipe), and
+  `evaluate_ttt.py` now raises if a task trains for 0 steps instead of silently evaluating the untouched checkpoint.

@@ -487,6 +487,9 @@ class TreeRMInner(GRAM_Inner):
 
         info = {
             "lprm_value": self._lprm_value(z_H),
+            # No halt head: the LPRM value (the model's own estimate that its answer is right) stands in for ACT's halt
+            # logit where the evaluators want a confidence, e.g. the ARC vote's tie-break (sigmoid of this is the value)
+            "q_halt_logits": torch.logit(self._lprm_value(z_H).clamp(1e-6, 1 - 1e-6)),
             "logits": self._decode(z_H),
             "kl_loss": kl_loss,
             **diagnostics,  # per-puzzle, averaged over the H_cycles searches

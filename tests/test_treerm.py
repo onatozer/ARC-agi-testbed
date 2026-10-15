@@ -141,6 +141,16 @@ def test_treerm_runs_every_supervision_step_and_infers(horizon):
 
 
 @needs_cuda
+def test_treerm_reports_the_lprm_value_as_its_halt_confidence():
+    # The ARC evaluator breaks vote ties by sigmoid(q_halt_logits); TreeRM has no halt head, so it reports the LPRM value
+    model, batch = _treerm_head()
+    model.eval()
+    with torch.inference_mode():
+        _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
+    torch.testing.assert_close(outputs["q_halt_logits"].sigmoid(), outputs["lprm_value"], atol=1e-5, rtol=1e-4)
+
+
+@needs_cuda
 def test_treerm_eval_without_search_never_searches():
     model, batch = _treerm_head(eval_search=False)
     model.eval()
