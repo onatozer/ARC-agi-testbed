@@ -12,7 +12,7 @@ loss:
 num_candidates: 8 # number of z_H proposals the prior scorer / MCTS choose between at every z_H update
 mcts_simulations: 16 # MCTS simulations per puzzle per z_H update
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
-mcts_impl: fused # models.mcts.MCTS_IMPLS: python (the reference search), fused (one model call per round, batched root visits; exact), wu (WU-UCT, mcts_leaves_per_round), cpp (fused with the tree in C++, exact; needs g++; fastest, see REPORTS_MCTS.md)
+mcts_impl: cpp # models.mcts.MCTS_IMPLS: cpp (the fused search with its tree in C++, exact, fastest; built on first use with g++ + ninja, falls back to fused without them), fused (same search, Python tree), wu (WU-UCT, mcts_leaves_per_round), python (the reference search the tests compare against)
 mcts_leaves_per_round: 1 # WU-UCT (mcts_impl=wu): leaves selected per tree per round before they are all evaluated together; 1 = the baseline search
 search_compile: true # torch.compile the fixed-shape core of each search round (one CUDA graph per round shape; ~1 min of compiles on first use); needs mcts_impl=fused/wu/cpp
 eval_rollout_cap: null # eval only: cap every rollout at this many TRM updates (>= 1) and let the value head score the truncated state; changes the search's values, measured in REPORTS_MCTS.md

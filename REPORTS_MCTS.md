@@ -65,8 +65,11 @@ the batch is a wash.
   `data/4x4-sudoku` actually holds 9x9 boards (seq 81) and is not used.
 - **The report file.** The task named it `MCTS_REPORTS.md`; the user later asked for `REPORTS_MCTS.md`, which is this
   file.
-- **Defaults changed in `config/arch/treerm.yaml`** (end of the loop): `mcts_impl: fused` and `search_compile: true`,
-  both exact, no toolchain needed; `mcts_impl: cpp` is the recommended opt-in where g++ exists (a few percent more).
+- **Defaults changed in `config/arch/treerm.yaml`** (end of the loop): `mcts_impl: cpp` and `search_compile: true`,
+  both exact. The full-batch eval decided between `cpp` and `fused`: 17.7 s vs 26.2 s
+  (`results/evalfull_fused_compile_noiseless.json`), far more than the micro's 10 ms per search of Python tree
+  work predicted (the real eval loop also pays Python's allocation and GC for the per-search node objects). When
+  the C++ forest cannot be built (no g++/ninja) TreeRM falls back to `fused` with a warning rather than failing.
   `python` remains the reference the tests compare against. `search_memo`, `mcts_leaves_per_round`,
   `eval_rollout_cap` stay off. The first forward with `search_compile` spends ~1 minute compiling the round's
   specialisations (2 batch shapes x 3 depths x train/eval); the bench's warmups absorb it.

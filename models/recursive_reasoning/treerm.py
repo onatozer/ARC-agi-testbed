@@ -1,4 +1,5 @@
 import math
+import warnings
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -105,7 +106,14 @@ class TreeRMInner(GRAM_Inner):
         )
         if self.config.mcts_impl not in MCTS_IMPLS:
             raise ValueError(f"mcts_impl must be one of {sorted(MCTS_IMPLS)}, got {self.config.mcts_impl!r}.")
-        self.mcts = MCTS_IMPLS[self.config.mcts_impl](num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
+        try:
+            self.mcts = MCTS_IMPLS[self.config.mcts_impl](num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
+        except ImportError as exc:
+            if self.config.mcts_impl != "cpp":
+                raise
+            # The default search needs a C++ toolchain; without one the same search runs with its tree in Python
+            warnings.warn(f"mcts_impl=cpp could not be built, falling back to mcts_impl=fused (same visit counts, slower eval): {exc}")
+            self.mcts = MCTS_IMPLS["fused"](num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
 
         if self.config.mcts_horizon not in ("step", "full"):
             raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
