@@ -276,7 +276,7 @@ control `treerm_emblr3` (5.4 / 7.4 / 10.7, seed 1: 3.4 / 4.7 / 6.0):
 | `treerm_e3_althd` | 100-step blocks: backbone+embeddings / heads only | 2.0% | 4.7% | 7.4% | 0.721 | 0.80 | 1178 s |
 | `treerm_e3_altemb` | 100-step blocks: embeddings / weights (the paper's schedule) | 1.3% | 2.0% | 2.0% | 0.708 | 0.77 | 1262 s |
 | `treerm_e3_2k` -> `treerm_e3_2k_ctrl` | 2000 steps, then 2000 more with everything | queued | | | | | |
-| `treerm_e3_2k` -> `treerm_e3_2k_heads` | 2000 steps, then 2000 more with the heads frozen | queued | | | | | |
+| `treerm_e3_2k` -> `treerm_e3_2k_heads` | 2000 steps (1.3 / 2.7 / 5.4), then 2000 more with the heads frozen | 5.4% | 6.7% | 10.1% | 0.732 | 0.33 | 555 + 853 s |
 
 ## 5. Open loop: ideas tried
 
