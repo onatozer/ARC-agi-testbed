@@ -458,6 +458,25 @@ the cycle-0 search, batch 256, 10 -> 5 passes), worth ~5% of that search, and th
 below). **Verdict: nothing to gain here; the option stays off.** The rollouts are short by construction; the cost
 of a depth-3 search is its 13 rounds x (expansion update + value) at batch 64-256, which is the algorithm.
 
+### 4.12 Second shape: 6-queens (`--env nqueens6`, reference checkpoint in REFERENCE.md)
+Same sequence length (36) and recipe, vocab 3, 1000 steps of training (accuracy there is meaningless, see
+REPORTS.md section 1; this is a runtime check that nothing was tuned to Sudoku alone).
+
+| | baseline python | C++ forest + compile (default path) | speedup |
+|---|---|---|---|
+| search ms, train 8 sims depth 3 | 266.7 | 46.5 | 5.7x |
+| search ms, eval 16 sims depth 3 | 440.6 | 99.9 | 4.4x |
+| search ms, eval 8 sims depth 1 | 15.9 | 6.2 | 2.6x |
+| training it/s | 8.2 | 10.2 | 1.2x |
+| eval, 15 full batches (960 puzzles) | 84.4 s | 47.6 s | 1.8x |
+| eval peak GPU alloc / reserved MB | 349 / 380 | 270 / 464 | |
+
+The searches speed up as on Sudoku (parity 1.000 everywhere), but the full eval only 1.8x: both runs show a
+steady ~2.9 s (C++) vs ~5.5 s (baseline) per batch where Sudoku's compiled run takes 1.2 s, i.e. ~1.7 s per batch
+that is not search. The N-Queens config adds the `NQueens` evaluator (a CPU board check per puzzle per batch),
+which neither variant touches; it is the same cost for both and outside this loop's scope, but it caps what the
+search speedup can show on this environment.
+
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
 In an eval batch the searches themselves are roughly 8 steps x (93 + 50 + 16) ms ~ 1.3 s, but a batch takes ~2.8 s
