@@ -285,7 +285,10 @@ class TreeRMInner(GRAM_Inner):
         per_search = B * K * (num_simulations + getattr(self.mcts, "leaves_per_round", 1) + 1)
         capacity = per_search * (self.config.H_cycles if self.config.search_memo else 1)
         arena = getattr(self, "_arena", None)
-        if arena is None or arena[0].shape[0] < capacity or arena[0].shape[1:] != (S, H) or arena[0].device != cand.device or arena[0].dtype != cand.dtype:
+        # A tensor made under inference_mode (the in-training eval) cannot be written outside it (the next training
+        # step) and vice versa, so an arena is only reused on the same side of that boundary
+        if arena is None or arena[0].shape[0] < capacity or arena[0].shape[1:] != (S, H) or arena[0].device != cand.device or arena[0].dtype != cand.dtype \
+                or arena[0].is_inference() != torch.is_inference_mode_enabled():
             arena = tuple(torch.empty(capacity, S, H, dtype=cand.dtype, device=cand.device) for _ in range(2))
             self._arena = arena
             keep = False
