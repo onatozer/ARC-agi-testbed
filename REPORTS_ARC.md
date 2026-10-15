@@ -18,7 +18,7 @@ Standard protocol (149 tasks, 4000 steps x batch 128, vote over 32 augmented cop
 | TreeRM, `puzzle_emb_lr=3e-2` (section 5; 2 seeds: 5.4 / 7.4 / 10.7 and 3.4 / 4.7 / 6.0) | 597k | 4.4% | 6.0% | 8.4% | ~1150 s | 550 MB | treerm_emblr3, treerm_emblr3_s1 |
 | TRM, `puzzle_emb_lr=3e-2` (1 seed) | 531k | 4.7% | 8.1% | 10.1% | 578 s | 343 MB | trm_emblr3 |
 | TreeRM, `puzzle_emb_lr=3e-2`, **8000 steps** | 597k | 6.7% | 10.1% | 12.8% | 2308 s | 550 MB | treerm_emblr3_8k |
-| TRM, `puzzle_emb_lr=3e-2`, **8000 steps** | 531k | 6.7% | 9.4% | 15.4% | 1338 s | 343 MB | trm_emblr3_8k |
+| TRM, `puzzle_emb_lr=3e-2`, **8000 steps** (2 seeds: 6.7 / 9.4 / 15.4 and 7.4 / 8.1 / 12.1) | 531k | 7.0% | 8.7% | 13.8% | ~1380 s | 343 MB | trm_emblr3_8k, trm_emblr3_8k_s1 |
 | TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 4000 steps | 598k | 5.4% | 8.1% | 12.1% | 1218 s | 1150 MB | treerm_k8_emblr3 |
 | **TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 8000 steps** (2 seeds: 7.4 / 13.4 / 17.5 and 4.0 / 8.7 / 12.8) | 598k | **5.7%** | **11.1%** | **15.2%** | ~2680 s | 1150 MB | treerm_k8_emblr3_8k, treerm_k8_emblr3_8k_s1 |
 
@@ -28,7 +28,11 @@ configuration gives 2.7 / 3.4 / 7.4 (seed 0: 5.4 / 8.1 / 12.1), so over two seed
 9.8, no better than 3e-2 alone (4.4 / 6.0 / 8.4): K=8 is not a reliable gain at 4k. The 8k seed replicate lands at
 4.0 / 8.7 / 12.8 (13 tasks at pass@2 against seed 0's 20), so the 8k configuration averages 5.7 / 11.1 / 15.2 over
 two seeds: a spread of 7 tasks between seeds of the same configuration, as large as any model gap in this table.
-The robust finding stays the embedding lr; TRM-8k's seed replicate is queued for the paired comparison.
+TRM-8k's replicate gives 7.4 / 8.1 / 12.1, so over two seeds TRM-8k averages 7.0 / 8.7 / 13.8 against TreeRM K=8-8k's
+5.7 / 11.1 / 15.2: TreeRM +2.4 points at pass@2 (3.6 tasks) and +1.4 at pass@5, TRM +1.3 at pass@1, with per-seed
+spreads of 1-7 tasks. A gap that small and that inconsistent across k is not a gap at two seeds; what does hold is
+that TRM reaches these numbers in half the wall-clock and a third of the GPU memory. The robust finding stays the
+embedding lr.
 
 Seed noise is 2-4 tasks (TreeRM seed 1: 1.3 / 2.0 / 2.7; TRM seed 1: 2.7 / 4.0 / 5.4), so the three architectures are
 level at this budget; the one change that moved TreeRM across seeds is a faster task-embedding lr (the recipe's
@@ -223,7 +227,7 @@ run on the held-out TreeRM trained with `puzzle_emb_lr=3e-2`, with the same embe
 |---|---|---|---|---|---|---|
 | | no-TTT control (in-training eval) | 0 | 0 | 0 | 0.65 | – |
 | | Full-TTT (heads train) | 2 | 3 | 4 | 0.779 | 0.39 |
-| | Embed-TTT (heads frozen) | queued | | | | |
+| | Embed-TTT (heads frozen) | 0 | 0 | 2 | 0.761 | 0.57 |
 | | Embed-Full-TTT, flat lr | queued | | | | |
 | | **Embed+heads-TTT**: backbone frozen, embedding + heads train, flat lr | 1 | 1 | 2 | 0.763 | 0.40 |
 
@@ -285,7 +289,7 @@ noise 2-4 tasks).
 | `num_candidates=8` + `puzzle_emb_lr=3e-2` | the two best knobs together | 5.4 / 8.1 / 12.1 | 4.9 | best 4k TreeRM run at pass@5 (18 tasks); level with emblr3 seed 0 at pass@1/2; eval memory 1,150 MB |
 | TreeRM, `puzzle_emb_lr=3e-2`, 8000 steps | twice the budget | 4.0 / 6.7 / 10.1 @4k, 5.4 / 7.4 / 12.1 @6k, **6.7 / 10.1 / 12.8 @8k** | 5.0 | still climbing at 8k (15 tasks at pass@2, token acc 0.757, 2308 s): the budget, not the architecture, limits these numbers; TRM at 8k queued for the fair pair |
 
-| TRM, `puzzle_emb_lr=3e-2`, 8000 steps | the fair pair for the row above | 4.7 / 6.0 / 8.7 @4k, 5.4 / 7.4 / 13.4 @6k, **6.7 / 9.4 / 15.4 @8k** | 7.5 | level with TreeRM at 8k (pass@1 equal, TreeRM +1 task at pass@2, TRM +4 at pass@5) in 58% of the wall-clock (1338 s) and 62% of the GPU memory |
+| TRM, `puzzle_emb_lr=3e-2`, 8000 steps | the fair pair for the row above | 4.7 / 6.0 / 8.7 @4k, 5.4 / 7.4 / 13.4 @6k, **6.7 / 9.4 / 15.4 @8k** | 7.5 | level with TreeRM at 8k (pass@1 equal, TreeRM +1 task at pass@2, TRM +4 at pass@5) in 58% of the wall-clock (1338 s) and 62% of the GPU memory. **Seed 1: 7.4 / 8.1 / 12.1** (2.0 / 4.7 / 6.0 @4k, 4.0 / 8.1 / 10.1 @6k; token acc 0.760, 1423 s) |
 
 | TreeRM, K=8 + `puzzle_emb_lr=3e-2`, 8000 steps | the best configuration at the larger budget | 5.4 / 6.7 / 9.4 @4k, 5.4 / 10.7 / 12.1 @6k, **7.4 / 13.4 / 17.5 @8k** | 4.6 | **best run of the night**: 20 tasks at pass@2 vs TRM-8k's 14 and K=4 TreeRM-8k's 15; token acc 0.765, exact-row 2.8%; 2633 s, eval memory 1,150 MB. **Seed 1: 4.0 / 8.7 / 12.8** (3.4 / 4.7 / 8.7 @4k, 4.0 / 7.4 / 9.4 @6k; token acc 0.757, 2718 s): the seed spread (20 vs 13 tasks at pass@2) is as large as the gap to TRM-8k (14) |
 
