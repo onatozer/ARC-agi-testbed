@@ -42,6 +42,19 @@ freezing, 5 the open loop, 6 run log.
 
 ## 2. Baselines (standard protocol)
 
+4000 steps x batch 128, eval on all 4,768 test rows (149 tasks x 32 copies), ARC vote across the copies. W&B runs
+`trm_std`, `varc_std`, `treerm_std` in `ozeronatwanb/ARC-agi-testbed`.
+
+| model | params | pass@1 @2k / @4k | pass@2 @2k / @4k | pass@5 @4k | exact (row) @4k | train token acc | wall | peak GPU alloc / RSS |
+|---|---|---|---|---|---|---|---|---|
+| TRM | 530,690 | 0.7% / 2.7% | 2.0% / 4.0% | 6.0% | 1.4% | 0.88 | 635 s | 343 MB / 1.88 GB |
+| VARC | 606,768 | 2.0% / 2.7% | 2.7% / 6.0% | 6.0% | 1.1% | 0.80 | 367 s | 105 MB / 2.05 GB |
+| TreeRM | 597,254 | pending (first attempt crashed at the step-2000 eval, see run log; rerun queued) | | | | | | |
+
+Reading: at this budget every model solves only a handful of the 149 tasks (pass@2 4-6%); the user's 10x10 EqR
+run reached pass@2 6% after 20k steps, so 5x5 at 4k steps is in the same regime. Token accuracy is high (0.7-0.9)
+while exact-grid accuracy is ~1%: the models get most cells right and rarely a whole grid.
+
 ## 3. Test-time training (held-out protocol)
 
 ## 4. Head freezing in regular training
