@@ -65,6 +65,11 @@ the batch is a wash.
   `data/4x4-sudoku` actually holds 9x9 boards (seq 81) and is not used.
 - **The report file.** The task named it `MCTS_REPORTS.md`; the user later asked for `REPORTS_MCTS.md`, which is this
   file.
+- **Defaults changed in `config/arch/treerm.yaml`** (end of the loop): `mcts_impl: fused` and `search_compile: true`,
+  both exact, no toolchain needed; `mcts_impl: cpp` is the recommended opt-in where g++ exists (a few percent more).
+  `python` remains the reference the tests compare against. `search_memo`, `mcts_leaves_per_round`,
+  `eval_rollout_cap` stay off. The first forward with `search_compile` spends ~1 minute compiling the round's
+  specialisations (2 batch shapes x 3 depths x train/eval); the bench's warmups absorb it.
 
 ## 2. Where the search's time goes (reading the code)
 
@@ -444,7 +449,14 @@ length itself. At eval a rollout runs the leaf's full remaining depth of TRM upd
 `eval_rollout_cap=1` runs one update (the transition the expansion needs anyway) and asks the value head there, so
 a depth-3 round costs 5 passes instead of up to 15. The search's values change (the head scores an earlier state),
 so this is judged on the reference checkpoint's accuracy, like WU-UCT; training rollouts are never capped (the
-label CE needs the step's final state). Measured: pending (`evalfull_cpp_compile_cap1`).
+label CE needs the step's final state).
+**Measured** (`results/evalfull_cpp_compile_cap1.json`): 22.1 s (uncapped 17.7), accuracy 0.871, `argmax_agree`
+0.459, entropy 1.227 vs 1.213: the search barely changed, and the time did not improve. The reason is in the depth
+structure: with `mcts_horizon=step` and H_cycles 3, only cycle 0's root children ever roll out two updates (depth
+2); every other leaf of every search is at depth 1 or 0 already. So the cap touches one round (the forced round of
+the cycle-0 search, batch 256, 10 -> 5 passes), worth ~5% of that search, and the 22.1 s is a noisy run (re-measured
+below). **Verdict: nothing to gain here; the option stays off.** The rollouts are short by construction; the cost
+of a depth-3 search is its 13 rounds x (expansion update + value) at batch 64-256, which is the algorithm.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
