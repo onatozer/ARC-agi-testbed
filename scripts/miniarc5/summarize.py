@@ -19,9 +19,12 @@ def summarize(run_dir: str) -> None:
     if log.exists():
         text = log.read_text(errors="replace")
         wall = re.findall(r"exit=(\d+) seconds=(\d+)", text)
+        # /usr/bin/time's elapsed is the process alone; the exit= seconds include the wait for the GPU lock
+        elapsed = re.findall(r"Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (?:(\d+):)?(\d+):([\d.]+)", text)
         rss = re.findall(r"Maximum resident set size \(kbytes\): (\d+)", text)
         params = re.findall(r"Model parameters: (\d+)", text)
-        print(f"params {params[-1] if params else '?'} | wall {wall[-1][1] + ' s (exit ' + wall[-1][0] + ')' if wall else '?'} | peak RSS {int(rss[-1]) // 1024 if rss else '?'} MB")
+        secs = int(elapsed[-1][0] or 0) * 3600 + int(elapsed[-1][1]) * 60 + float(elapsed[-1][2]) if elapsed else None
+        print(f"params {params[-1] if params else '?'} | wall {f'{secs:.0f} s' if secs is not None else '?'} (exit {wall[-1][0] if wall else '?'}, {wall[-1][1] + ' s incl. lock wait' if wall else ''}) | peak RSS {int(rss[-1]) // 1024 if rss else '?'} MB")
     last_train = None
     for row in history(run_dir):
         if any(k in row for k in KEYS[:4]):
