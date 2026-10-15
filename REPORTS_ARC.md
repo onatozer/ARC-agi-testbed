@@ -233,6 +233,7 @@ noise 2-4 tasks).
 | `puzzle_emb_lr=1e-1` | task embeddings at 10x the lr | 2.7 / 4.7 / 6.7 | 5.1 | back at the recipe's level (token acc 0.740): 3e-2 is the sweet spot, 1e-1 overshoots |
 | TRM, `puzzle_emb_lr=3e-2` | the same change on the baseline | 4.7 / 8.1 / 10.1 | 7.3 | TRM gains as much (its seeds at 1e-2: 4.0 / 4.0 at pass@2), so the faster embedding lr is a **recipe fix for both recurrent models**, not a TreeRM advantage; with it TRM (8.1) and TreeRM (7.4 / 4.7 over two seeds) are level again |
 
+| `num_candidates=8` + `puzzle_emb_lr=3e-2` | the two best knobs together | 5.4 / 8.1 / 12.1 | 4.9 | best 4k TreeRM run at pass@5 (18 tasks); level with emblr3 seed 0 at pass@1/2; eval memory 1,150 MB |
 | TreeRM, `puzzle_emb_lr=3e-2`, 8000 steps | twice the budget | 4.0 / 6.7 / 10.1 @4k, 5.4 / 7.4 / 12.1 @6k, **6.7 / 10.1 / 12.8 @8k** | 5.0 | still climbing at 8k (15 tasks at pass@2, token acc 0.757, 2308 s): the budget, not the architecture, limits these numbers; TRM at 8k queued for the fair pair |
 
 Where that leaves question 3 after the loop: on MiniARC 5x5 at ~0.6M params and 4000 steps, TreeRM's search buys
