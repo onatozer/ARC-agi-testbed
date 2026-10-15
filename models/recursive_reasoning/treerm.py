@@ -13,7 +13,7 @@ from ..layers import (
     SwiGLU,
     rms_norm,
 )
-from .merged_arch import ModelCarry, LatentCarry, _add_puzzle_emb_positions
+from .merged_arch import Blocks, ModelCarry, LatentCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
 from .grampd import CandidateScorer
 
@@ -62,6 +62,20 @@ class FlagCandidates(nn.Module):
         return u_t.unsqueeze(1) + gate.to(u_t.dtype) * flags
 
 
+class NoiselessBlocks(Blocks):
+    """Blocks whose forward skips the noise draw when noise_scale is 0: the same value (x + 0 * noise is x) without
+    a philox kernel per pass, which matters to TreeRM because its search replays this block hundreds of times per
+    step. Only TreeRM uses it: other models keep the draw (TRMRoot's memory savers align their RNG streams on it)."""
+
+    def forward(self, hidden_states: torch.Tensor, input_injection: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+        if self.noise_scale:
+            return super().forward(hidden_states, input_injection, **kwargs)
+        updated_states = hidden_states + input_injection
+        for layer in self.layers:
+            updated_states = layer(hidden_states=updated_states, **kwargs)
+        return (1 - self.lambda_) * hidden_states + self.lambda_ * updated_states
+
+
 class TreeRMInner(GRAM_Inner):
     """GRAM_Inner where each z_H update is one of num_candidates proposals, picked by a per-puzzle MCTS. The prior p(k)
     is the candidate scorer; the posterior is the search's root visit distribution, valued by the label CE of a rollout
@@ -72,6 +86,8 @@ class TreeRMInner(GRAM_Inner):
 
         # Replace GRAM's Gaussian prior / posterior heads: the prior is the scorer, the posterior comes from the search
         del self.prior_head, self.posterior_head
+        # The same layers (state-dict keys unchanged) in a block that skips the zero-scale noise draw the search replays
+        self.L_level = NoiselessBlocks(layers=list(self.L_level.layers), config=self.config)
         if self.config.candidate_mode not in ("full", "residual", "flags"):
             raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
         if self.config.candidate_mode == "flags":

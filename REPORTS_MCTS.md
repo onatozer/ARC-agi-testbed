@@ -375,8 +375,19 @@ settle it the other way: outer model compiled 18.9 s, outer model eager 23.9 s. 
 inside the outer compiled region was what made inductor's CUDA-graph trees stall (every replay then waits for the
 whole queue), not the nesting itself. Lesson recorded: time sections with the uninstrumented protocol, use the
 profiler only for the op mix. A `search_compile_mode=graphs` variant (inductor without graph trees + a plain
-`torch.cuda.CUDAGraph` per round shape, no tree/generation bookkeeping) was written during the investigation and
-is measured below for completeness.
+`torch.cuda.CUDAGraph` per round shape) was written during the investigation; inductor's default-mode code is
+not stream-capturable as is ("operation not permitted when stream is capturing"), and with the artefact explained
+there was nothing to gain, so it was removed. What the detour did measure: `search_compile_mode=default` (inductor
+fusion, no CUDA graphs) costs 20-30% over `reduce-overhead` (train 8 sims depth 3 66 vs 50 ms, eval 16 sims
+depth 3 113 vs 94 ms; `results/micro_compile_default.json`), i.e. the graph replay is worth that much on top of
+the kernel fusion.
+
+### 4.8 Skip the zero-scale noise draw in the backbone block (shared code, 4 lines)
+`Blocks.forward` (merged_arch.py) added `randn_like(x) * noise_scale` on every pass although every config here
+sets `noise_scale = 0`; inside the compiled round that is a philox kernel plus a wider fused epilogue per pass,
+15 times a round. The block now returns the mix directly when `noise_scale` is 0: bitwise the same value (x + 0
+is x), one fewer kernel per pass, and the RNG stream is no longer advanced by the search (training runs differ in
+their random draws, not in semantics). Measured: `results/micro_noise_guard.json`, pending.
 
 ### 4.6 What is left, and the next levers
 With the round compiled the search is GPU-bound at ~0.45 ms per pass (batch 64), and the Python tree is a few ms.
