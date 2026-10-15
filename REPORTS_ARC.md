@@ -228,8 +228,15 @@ run on the held-out TreeRM trained with `puzzle_emb_lr=3e-2`, with the same embe
 | | no-TTT control (in-training eval) | 0 | 0 | 0 | 0.65 | – |
 | | Full-TTT (heads train) | 2 | 3 | 4 | 0.779 | 0.39 |
 | | Embed-TTT (heads frozen) | 0 | 0 | 2 | 0.761 | 0.57 |
-| | Embed-Full-TTT, flat lr | queued | | | | |
+| | Embed-Full-TTT, flat lr | 1 | 1 | 2 | 0.753 | 0.46 |
 | | **Embed+heads-TTT**: backbone frozen, embedding + heads train, flat lr | 1 | 1 | 2 | 0.763 | 0.40 |
+
+Reading: the faster embedding lr does not change TreeRM's TTT ordering (Full 2 / 3 / 4, the three variants that
+keep the backbone frozen for part or all of the run 0-1 at pass@2). The joint embedding-plus-heads variant answers
+the question of whether the heads were what Embed-TTT was missing: letting them train brings the demo fit from
+0.57 down to Full-TTT's 0.40, so the search heads can absorb a new task's demos, but the test outputs do not follow
+(1 / 1 / 2 against Full's 2 / 3 / 4). For TreeRM the backbone is what has to move at test time; training the heads
+with or without it is not the lever.
 
 ## 4. Head freezing in regular training
 
