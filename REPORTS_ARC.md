@@ -78,7 +78,7 @@ get most cells right and rarely a whole grid. TreeRM costs 2.0x TRM's wall-clock
 cycle of all 8 supervision steps over 4,768 rows, twice) and 1.6x its GPU memory. Seeds (phase 5) decide whether
 any ordering among the three is real.
 
-Seed replicates (phase 5): TreeRM seed 1 reaches pass@1 1.3% / pass@2 2.0% / pass@5 2.7% at 4000 steps (seed 0:
+Seed replicates (phase 5): TRM seed 1 gives 2.7% / 4.0% / 5.4% (seed 0: 2.7 / 4.0 / 6.0, steady); TreeRM seed 1 reaches pass@1 1.3% / pass@2 2.0% / pass@5 2.7% at 4000 steps (seed 0:
 2.7 / 4.7 / 6.7), i.e. seed noise is 2-4 tasks, as large as every gap in the table above. At this budget the three
 architectures are indistinguishable on MiniARC 5x5.
 
