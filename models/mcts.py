@@ -139,5 +139,62 @@ class MCTS:
         return [[child.num_visits for child in root.children] for root in roots]
 
 
+class FusedMCTS(MCTS):
+    """The baseline search with its per-round domain work fused. run takes an optional step_fn(states, allowed_depths)
+    -> (values, children per leaf, priors per leaf) that evaluates and expands the round's leaves in one call (children /
+    priors are None for leaves with no depth left), so the domain computes the transition once instead of inside both
+    callbacks; without it the two callbacks are composed. The forced first-K root-child visits, which are independent
+    of one another, run as one batched round (K x B leaves in the baseline's order) instead of K rounds. Visit counts
+    are the baseline's (exact)."""
+
+    exact = True
+    fused = True  # TreeRM passes step_fn to implementations with this attribute
+
+    def run(self, roots, expand_fn, evaluate_fn, step_fn=None) -> List[List[int]]:
+        if step_fn is None:
+            step_fn = compose_step(expand_fn, evaluate_fn)
+        stats = [MinMaxStats() for _ in roots]
+        num_children = max(len(root.children) for root in roots)
+        simulation = 0
+        while simulation < self.num_simulations:
+            if simulation == 0:
+                # The baseline's rounds 0..min(K, sims)-1 (root child k of every tree) in one batch, round-major
+                forced = min(num_children, self.num_simulations)
+                leaves = [(tree, root.children[k % len(root.children)]) for k in range(forced) for tree, root in enumerate(roots)]
+                simulation = forced
+            else:
+                leaves = []
+                for tree, (root, tree_stats) in enumerate(zip(roots, stats)):
+                    node = root
+                    while node.is_expanded:
+                        node = self.select(node, tree_stats)
+                    leaves.append((tree, node))
+                simulation += 1
+
+            values, children, priors = step_fn([leaf.state for _, leaf in leaves], [leaf.allowed_depth for _, leaf in leaves])
+            for (tree, leaf), value, child_states, child_priors in zip(leaves, values, children, priors):
+                if leaf.allowed_depth > 0:
+                    leaf.expand(child_states, child_priors)
+                stats[tree].update(value)
+                leaf.backpropagate(value)
+
+        return [[child.num_visits for child in root.children] for root in roots]
+
+
+def compose_step(expand_fn, evaluate_fn):
+    """A step_fn from the baseline's two callbacks: evaluate every leaf, expand those with depth left."""
+
+    def step_fn(states, allowed_depths):
+        values = evaluate_fn(states, allowed_depths)
+        growing = [i for i, depth in enumerate(allowed_depths) if depth > 0]
+        children, priors = [None] * len(states), [None] * len(states)
+        if growing:
+            for i, child_states, child_priors in zip(growing, *expand_fn([states[i] for i in growing])):
+                children[i], priors[i] = child_states, child_priors
+        return values, children, priors
+
+    return step_fn
+
+
 # The searches TreeRM can run, by config mcts_impl; every entry honours the contract in the module docstring
-MCTS_IMPLS: Dict[str, type] = {"python": MCTS}
+MCTS_IMPLS: Dict[str, type] = {"python": MCTS, "fused": FusedMCTS}

@@ -37,8 +37,8 @@ def main(paths: List[str]) -> None:
         print()
         print("| breakdown of the first micro row | " + " | ".join(names) + " |")
         print("|---|" + "---|" * len(names))
-        for part in ("rollout", "expand", "tree"):
-            print(f"| {part} ms | " + " | ".join(f"{r['micro'][0]['breakdown_ms'][part]:.1f}" if r.get("micro") else "–" for r in results) + " |")
+        for part in ("rollout", "expand", "step", "tree"):
+            print(f"| {part} ms | " + " | ".join(f"{r['micro'][0]['breakdown_ms'].get(part, 0):.1f}" if r.get("micro") else "–" for r in results) + " |")
         print("| peak mem MB | " + " | ".join(f"{max(row['peak_mem_mb'] for row in r['micro']):.0f}" if r.get("micro") else "–" for r in results) + " |")
         print()
 

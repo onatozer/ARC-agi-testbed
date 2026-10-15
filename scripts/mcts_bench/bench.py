@@ -169,21 +169,24 @@ def bench_micro(model, labels: torch.Tensor, impl: str, sims_list: List[int], de
                     times.append(time.perf_counter() - start)
                 peak_mb = torch.cuda.max_memory_allocated() / 2**20
 
-                # Breakdown (instrumented, so its total is a little above the uninstrumented median)
-                inner._rollout_values, inner._expand = Timed(inner._rollout_values), Timed(inner._expand)
+                # Breakdown (instrumented, so its total is a little above the uninstrumented median): the baseline's two
+                # callbacks, the fused impl's one step callback, and "tree" = everything else (selection, backprop, syncs)
+                inner._rollout_values, inner._expand, inner._step = Timed(inner._rollout_values), Timed(inner._expand), Timed(inner._step)
                 torch.cuda.synchronize()
                 start = time.perf_counter()
                 run_search(inner, inputs, labels, depth)
                 torch.cuda.synchronize()
                 total = time.perf_counter() - start
-                rollout, expand = inner._rollout_values, inner._expand
-                del inner._rollout_values, inner._expand
+                rollout, expand, step = inner._rollout_values, inner._expand, inner._step
+                del inner._rollout_values, inner._expand, inner._step
 
+                domain = rollout.seconds + expand.seconds + step.seconds
                 row = {
                     "mode": "train" if training else "eval", "sims": sims, "depth": depth, "batch": labels.shape[0],
                     "ms_median": 1e3 * statistics.median(times), "ms_min": 1e3 * min(times), "peak_mem_mb": peak_mb,
-                    "breakdown_ms": {"rollout": 1e3 * rollout.seconds, "expand": 1e3 * expand.seconds, "tree": 1e3 * (total - rollout.seconds - expand.seconds)},
-                    "rollout_calls": rollout.calls, "rollout_states": rollout.states, "expand_calls": expand.calls, "expand_states": expand.states,
+                    "breakdown_ms": {"rollout": 1e3 * rollout.seconds, "expand": 1e3 * expand.seconds, "step": 1e3 * step.seconds, "tree": 1e3 * (total - domain)},
+                    "calls": {"rollout": rollout.calls, "expand": expand.calls, "step": step.calls},
+                    "states": {"rollout": rollout.states, "expand": expand.states, "step": step.states},
                 }
                 if impl != "python":
                     # Parity with the baseline on the same inputs (exact impls must agree; the contract tests check it too)
@@ -197,7 +200,7 @@ def bench_micro(model, labels: torch.Tensor, impl: str, sims_list: List[int], de
                     }
                 rows.append(row)
                 print(f"micro {row['mode']:5s} sims={sims:2d} depth={depth}: {row['ms_median']:8.1f} ms  "
-                      f"(rollout {row['breakdown_ms']['rollout']:.0f} / expand {row['breakdown_ms']['expand']:.0f} / tree {row['breakdown_ms']['tree']:.0f})"
+                      f"(rollout {row['breakdown_ms']['rollout']:.0f} / expand {row['breakdown_ms']['expand']:.0f} / step {row['breakdown_ms']['step']:.0f} / tree {row['breakdown_ms']['tree']:.0f})"
                       + (f"  parity argmax {row['parity']['argmax_agree']:.3f}" if "parity" in row else ""), flush=True)
     return rows
 

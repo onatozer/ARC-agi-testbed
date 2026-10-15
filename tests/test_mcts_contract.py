@@ -109,11 +109,16 @@ def test_search_is_deterministic(impl):
 
 # Exact semantics: these pin the baseline (hand-computed) and anything that claims to reproduce it
 
+def _evaluated(trace):
+    """Every evaluated (tree, state) in order, rounds flattened: an implementation may batch several of the baseline's
+    rounds into one call, but the order of the work it hands the domain is the baseline's."""
+    return [(tree, state) for round_ in trace.evaluated for tree, state, _ in round_]
+
+
 @pytest.mark.parametrize("impl", EXACT_IMPLS)
 def test_first_k_simulations_visit_each_root_child_once_in_order(impl):
     trace = Trace(impl, _by_first_child([0.0, 1.0, 0.5, 0.2]), depths=[1, 2], num_children=4, num_simulations=6)
-    for k in range(4):
-        assert [state for _, state, _ in trace.evaluated[k]] == [(k,), (k,)]
+    assert _evaluated(trace)[:8] == [(tree, (k,)) for k in range(4) for tree in range(2)]
 
 
 @pytest.mark.parametrize("impl", EXACT_IMPLS)
@@ -124,9 +129,9 @@ def test_hand_computed_depth_two_search(impl):
     values = {(0,): 0.5, (1,): 0.2, (0, 0): 0.9, (0, 1): 0.1, (1, 0): 0.4, (1, 1): 0.3}
     trace = Trace(impl, lambda tree, path: values[path], depths=[2], num_children=2, num_simulations=4)
     assert trace.counts == [[3, 1]]
-    assert [[s for _, s, _ in r] for r in trace.evaluated] == [[(0,)], [(1,)], [(0, 0)], [(0, 0)]]
-    assert [[s for _, s in r] for r in trace.expanded] == [[(0,)], [(1,)]]
-    assert [[d for _, _, d in r] for r in trace.evaluated] == [[1], [1], [0], [0]]
+    assert [s for _, s in _evaluated(trace)] == [(0,), (1,), (0, 0), (0, 0)]
+    assert [s for r in trace.expanded for _, s in r] == [(0,), (1,)]
+    assert [d for r in trace.evaluated for _, _, d in r] == [1, 1, 0, 0]
 
 
 @pytest.mark.parametrize("impl", EXACT_IMPLS)
@@ -135,7 +140,7 @@ def test_puct_ties_go_to_the_first_maximal_child(impl):
     # rotate and every tie resolves to the lowest index: [1,1,1] -> child 0 -> children 1, 2 tie -> 1 -> 2 -> 0
     trace = Trace(impl, _by_first_child([0.5, 0.5, 0.5]), depths=[1], num_children=3, num_simulations=7)
     assert trace.counts == [[3, 2, 2]]
-    assert [[s for _, s, _ in r] for r in trace.evaluated] == [[(0,)], [(1,)], [(2,)], [(0,)], [(1,)], [(2,)], [(0,)]]
+    assert [s for _, s in _evaluated(trace)] == [(0,), (1,), (2,), (0,), (1,), (2,), (0,)]
 
 
 @pytest.mark.parametrize("impl", EXACT_IMPLS)
@@ -144,14 +149,15 @@ def test_priors_order_unvisited_children(impl):
     values = {(0,): 0.5, (1,): 0.5, (0, 0): 0.5, (0, 1): 0.5, (1, 0): 0.5, (1, 1): 0.5}
     trace = Trace(impl, lambda tree, path: values[path], depths=[2], num_children=2, num_simulations=4, priors=[[0.3, 0.7]])
     # Round 2: child 1 (prior .7) beats child 0; its own children have uniform priors, so (1, 0) is first
-    assert [[s for _, s, _ in r] for r in trace.evaluated][2] == [(1, 0)]
+    assert [s for _, s in _evaluated(trace)][2] == (1, 0)
 
 
 @pytest.mark.parametrize("impl", EXACT_IMPLS)
-def test_one_evaluate_call_per_simulation_over_every_tree(impl):
+def test_every_simulation_evaluates_one_leaf_per_tree_and_expands_those_with_depth(impl):
     trace = Trace(impl, _by_first_child([0.1, 0.9]), depths=[2, 3, 1], num_children=2, num_simulations=6)
-    assert len(trace.evaluated) == 6 and all(len(round_) == 3 for round_ in trace.evaluated)
-    assert [[t for t, _, _ in r] for r in trace.evaluated] == [[0, 1, 2]] * 6
+    evaluated = _evaluated(trace)
+    assert len(evaluated) == 6 * 3
+    assert [t for t, _ in evaluated] == [0, 1, 2] * 6  # tree-major within every simulation
     growing = sum(len(round_) for round_ in trace.expanded)
     assert growing == sum(1 for r in trace.evaluated for _, _, d in r if d > 0)
 
@@ -191,29 +197,37 @@ def _search_inputs(model, batch, seed=0):
     return cand, prior, z_L, x
 
 
-@needs_cuda
-@pytest.mark.parametrize("impl", EXACT_IMPLS)
-@pytest.mark.parametrize("training", [True, False])
-@pytest.mark.parametrize("horizon", ["step", "full"])
-def test_search_posterior_matches_the_baseline_on_the_model(impl, training, horizon):
-    model, batch = _treerm_head(mcts_horizon=horizon, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
+# (impl, search_compile): every exact implementation, and the fused one with its compiled round
+EXACT_VARIANTS = [(impl, False) for impl in EXACT_IMPLS] + [("fused", True)]
+VARIANTS = [(impl, False) for impl in IMPLS] + [("fused", True)]
+
+
+def _posterior(impl, compile_, training, horizon):
+    """The posterior logits of one search on the tiny model (same seed, so the same weights) under impl."""
+    model, batch = _treerm_head(mcts_impl=impl, search_compile=compile_, mcts_horizon=horizon, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
     model.train(training)
     inner = model.model.inner
     inner.steps_done = torch.zeros(batch["inputs"].shape[0], dtype=torch.long)
     remaining = inner._remaining_updates(0, batch["inputs"].shape[0])
-    posteriors = {}
-    for name in ("python", impl):
-        inner.mcts = MCTS_IMPLS[name](num_simulations=inner.config.mcts_simulations, c_puct=inner.config.mcts_c_puct)
-        with torch.no_grad():
-            cand, prior, z_L, x = _search_inputs(model, batch)
-            posteriors[name] = inner._search(cand, prior, z_L, x, batch["labels"], remaining)
-    torch.testing.assert_close(posteriors[impl], posteriors["python"])
+    with torch.no_grad():
+        cand, prior, z_L, x = _search_inputs(model, batch)
+        return inner._search(cand, prior, z_L, x, batch["labels"], remaining)
 
 
 @needs_cuda
-@pytest.mark.parametrize("impl", IMPLS)
-def test_treerm_trains_and_evals_with_the_impl(impl):
-    model, batch = _treerm_head(mcts_impl=impl, candidate_mode="flags")
+@pytest.mark.parametrize("impl,compile_", EXACT_VARIANTS)
+@pytest.mark.parametrize("training", [True, False])
+@pytest.mark.parametrize("horizon", ["step", "full"])
+def test_search_posterior_matches_the_baseline_on_the_model(impl, compile_, training, horizon):
+    reference = _posterior("python", False, training, horizon)
+    posterior = _posterior(impl, compile_, training, horizon)
+    torch.testing.assert_close(posterior, reference)
+
+
+@needs_cuda
+@pytest.mark.parametrize("impl,compile_", VARIANTS)
+def test_treerm_trains_and_evals_with_the_impl(impl, compile_):
+    model, batch = _treerm_head(mcts_impl=impl, search_compile=compile_, candidate_mode="flags")
     model.train()
     _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
     assert torch.isfinite(loss) and metrics["kl_loss"] > 0
@@ -227,9 +241,12 @@ def test_treerm_trains_and_evals_with_the_impl(impl):
 def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
-        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope",
+        "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "search_compile": False,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
         "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None,
     })
     with pytest.raises(ValueError, match="mcts_impl"):
         TreeRM(cfg)
+    cfg.update(mcts_impl="python", search_compile=True)
+    with pytest.raises(ValueError, match="search_compile"):
+        TreeRM(cfg)  # only the fused round has the fixed shapes a compiled callee needs

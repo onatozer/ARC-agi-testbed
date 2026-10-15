@@ -95,6 +95,14 @@ class TreeRMInner(GRAM_Inner):
             raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
         if self.config.rollout_policy not in ("trm", "prior"):
             raise ValueError(f"rollout_policy must be 'trm' or 'prior', got {self.config.rollout_policy!r}.")
+        if self.config.search_compile:
+            if not getattr(self.mcts, "fused", False):
+                raise ValueError("search_compile needs a fused search (mcts_impl=fused): only its round has fixed shapes.")
+            # The search is launch-bound and outside the model's compile (data-dependent control flow), but a compiled
+            # callee still runs compiled from inside it: the fixed-shape round becomes one CUDA graph replay per
+            # (batch, depth, mode). Each of those is a cache entry, so the default limit of 8 is too small
+            torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
+            self._step_core_compiled = torch.compile(self._step_core, mode="reduce-overhead", dynamic=False)
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
@@ -195,6 +203,67 @@ class TreeRMInner(GRAM_Inner):
             self._bootstrap.append((leaf_token, targets))
         return values.tolist()
 
+    def _step_core(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, depths: torch.Tensor, max_depth: int):
+        """The fixed-shape tensor work of one fused search round over n leaves: max_depth plain TRM updates, each
+        leaf's value at its own depth (computed for every row at every stage and selected by depth, so nothing is
+        data-dependent), and from the first update the K candidates and their prior for every leaf. Returns
+        (values [n], bootstrap targets [n], leaf tokens [n, H], candidates [n, K, S, H], priors [n, K], z_L after the
+        first update [n, S, H]); the last three are None when max_depth is 0. Compiled when search_compile is on."""
+        values = torch.zeros(z_H.shape[0], device=z_H.device)
+        targets = torch.zeros(z_H.shape[0], device=z_H.device)
+        leaf_token = rms_norm(z_H, self.config.rms_norm_eps)[:, 0]
+        cand = priors = z_L_next = None
+        seq_dict = self._seq_dict()
+        for n_updates in range(max_depth + 1):
+            value, target = (t.float() for t in self._leaf_values(z_H, y))
+            done = depths == n_updates
+            values, targets = torch.where(done, value, values), torch.where(done, target, targets)
+            if n_updates == max_depth:
+                break
+            for _ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            u_t = self.L_level(z_H, z_L, **seq_dict)
+            if n_updates == 0 or self.config.rollout_policy == "prior":
+                step_cand = self._candidates(z_L, u_t)
+                step_scores = self.candidate_scorer(u_t, step_cand, seq_dict["cos_sin"])
+                if n_updates == 0:
+                    # The transition: the rollout's first update is exactly the expand's u_t
+                    cand, priors, z_L_next = step_cand, step_scores.softmax(dim=-1), z_L
+            if self.config.rollout_policy == "prior":
+                z_H = step_cand[torch.arange(step_cand.shape[0], device=step_cand.device), step_scores.argmax(dim=-1)]
+            else:
+                z_H = u_t
+        return values, targets, leaf_token, cand, priors, z_L_next
+
+    def _step(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor):
+        """_rollout_values and _expand in one pass (FusedMCTS's step_fn): the rollout's first TRM update is exactly the
+        expand's u_t, so the candidates and priors of the leaves with depth left come from it instead of a second
+        update; one host sync carries both the values and the priors."""
+        rows = [row for row, _, _ in states]
+        z_H = torch.stack([s[1] for s in states])
+        z_L = torch.stack([s[2] for s in states])
+        depths_t = torch.tensor(depths, device=z_H.device)
+        core = self._step_core_compiled if self.config.search_compile else self._step_core
+        outputs = core(z_H, z_L, x[rows], y[rows], depths_t, max(depths))
+        if self.config.search_compile:
+            # The compiled core's outputs live in CUDA-graph memory that the next round's replay overwrites
+            outputs = tuple(t.clone() if t is not None else None for t in outputs)
+        values, targets, leaf_token, cand, priors, z_L_next = outputs
+
+        if self.training and self.config.value_bootstrap_weight > 0:
+            self._bootstrap.append((leaf_token, targets))
+        children: List[Optional[List[Tuple[int, torch.Tensor, torch.Tensor]]]] = [None] * len(states)
+        prior_lists: List[Optional[List[float]]] = [None] * len(states)
+        if cand is None:
+            return values.tolist(), children, prior_lists
+        flat = torch.cat([values, priors.flatten()]).tolist()
+        k = priors.shape[1]
+        for i, depth in enumerate(depths):
+            if depth > 0:
+                children[i] = [(rows[i], cand[i, j], z_L_next[i]) for j in range(k)]
+                prior_lists[i] = flat[len(states) + i * k : len(states) + (i + 1) * k]
+        return flat[: len(states)], children, prior_lists
+
     @torch.compiler.disable
     @torch.no_grad()
     def _search(self, cand: torch.Tensor, prior_logits: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> torch.Tensor:
@@ -210,10 +279,12 @@ class TreeRMInner(GRAM_Inner):
 
         # Eval may search deeper than training (test-time compute); the value head is what it relies on
         self.mcts.num_simulations = self.config.mcts_simulations if self.training else (self.config.eval_mcts_simulations or self.config.mcts_simulations)
+        fused = {"step_fn": lambda states, depths: self._step(states, depths, x, y)} if getattr(self.mcts, "fused", False) else {}
         counts = self.mcts.run(
             roots,
             expand_fn=lambda states: self._expand(states, x),
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
+            **fused,
         )
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         posterior = visits / visits.sum(dim=-1, keepdim=True)
@@ -248,12 +319,13 @@ class TreeRMInner(GRAM_Inner):
             if self.config.candidate_diversity_weight > 0:
                 kl_loss = kl_loss + self.config.candidate_diversity_weight * self._pairwise_cosine(cand).sum()
             # Value bootstrapping (AlphaZero-style): the value head predicts each visited leaf's rollout token accuracy.
-            # Summed over puzzles, averaged over this search's leaves, so it scales like the loss head's LPRM term
+            # Summed over puzzles, averaged over this search's leaves (one leaf per puzzle per simulation, however the
+            # search batches them), so it scales like the loss head's LPRM term
             if self.config.value_bootstrap_weight > 0 and self._bootstrap:
                 leaf_tokens = torch.cat([t for t, _ in self._bootstrap])
                 targets = torch.cat([v for _, v in self._bootstrap])
                 predicted = torch.sigmoid(self.v_head(leaf_tokens).to(torch.float32)).squeeze(-1)
-                bootstrap = F.mse_loss(predicted, targets, reduction="sum") / len(self._bootstrap)
+                bootstrap = F.mse_loss(predicted, targets, reduction="sum") / self.mcts.num_simulations
                 kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
