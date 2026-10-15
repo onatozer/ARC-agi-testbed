@@ -180,10 +180,11 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 | TreeRM | Embed-TTT, 40 epochs | 0 | 0 | 1 | 0.744 | 0.50 |
 
 | VARC | Embed-Full-TTT, flat lr | 2 | 4 | 4 | 0.805 | 0.37 |
-| VARC | Full-TTT, flat lr | pending | | | | |
+| VARC | Full-TTT, flat lr | 4 | 4 | 7 | 0.813 | 0.34 |
 | VARC | Embed-TTT, 40 epochs | pending | | | | |
 
-VARC: the flat lr lifts Embed-Full from 1 / 3 / 4 to 2 / 4 / 4, level with cosine Full-TTT (3 / 4 / 4) at pass@2
+VARC: the flat lr lifts Embed-Full from 1 / 3 / 4 to 2 / 4 / 4, but flat-lr Full-TTT is the best adaptation of the night
+(4 / 4 / 7: 23% of the held-out tasks at pass@5), so for VARC joint fine-tuning keeps the edge; the embed-first ordering wins only for TRM here. (The original comparison was
 and pass@5.
 
 TreeRM: the flat lr changes nothing for Embed-Full (0 / 1 / 2 either way, Full-TTT 2 / 3 / 4), so for TreeRM the
