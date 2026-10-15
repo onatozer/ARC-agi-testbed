@@ -187,7 +187,7 @@ random prior and value, so the question is asked on a trained model. "alt" = `fr
 | checkpoint at 4000 steps (start) | 2.7% | 4.7% | 6.7% | 1.3% | 0.719 | 0.456 | – |
 | control: everything trains | 3.4% | 5.4% | 8.1% | 1.1% | 0.722 | 0.432 | 528 s |
 | heads frozen (`candidate_`, `v_head`: 66,822 values) | 1.3% | 4.7% | 9.4% | 1.4% | 0.738 | 0.415 | 431 s |
-| alt: embeddings / weights alternation | pending | | | | | | |
+| alt: embeddings / weights alternation | 2.7% | 4.0% | 6.7% | 1.2% | 0.723 | 0.570 | 442 s |
 | alt + heads frozen in the weight phase | pending | | | | | | |
 
 Reading so far: all three numbers of the heads-frozen run sit within seed noise of the control (one task =
