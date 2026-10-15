@@ -9,6 +9,7 @@ semantics-changing search is judged on a trained model rather than on a noisy sh
 | env | steps | lr | wall (train + final eval) | test puzzles | exact accuracy | token accuracy | checkpoint |
 |---|---|---|---|---|---|---|---|
 | sudoku6u | 2000 | 1e-3 | 378 s | 1000 | 0.866 | 0.970 | `ref_sudoku6u/outputs/34827415-.../checkpoints/step_2000_34827415-4f22-4169-83b0-d452bb958280.pth` (2026-10-14, commit `bd24ad6`) |
+| nqueens6 | 1000 | 3e-4 | – | 1000 | 0.125 (`NQueens/accuracy`; 6-queens has 4 solutions and its test set is in train, see REPORTS.md section 1: a second *shape* for the runtime benchmark, not an accuracy benchmark) | 0.906 | `ref_nqueens6/outputs/cec82506-.../checkpoints/step_1000_cec82506-dd7c-48d9-abc3-0b4ada33d4a1.pth` (2026-10-14, commit `cb4aefc`) |
 
 Training ran alone on the GPU at ~7 it/s (the 4.4 min of training; the 1000-puzzle eval with 16 simulations took
 ~1.9 min of the wall-clock). The eval's `search/argmax_agree` was 0.46: the eval search overrode the prior's pick in

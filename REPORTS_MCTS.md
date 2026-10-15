@@ -23,6 +23,9 @@ memory is the eval section's peak GPU allocated. Exact = same visit counts as th
 | `mcts_impl=fused search_compile=true` | 50.7 | 97.1 | 9.8 | 27.0* | 0.868 | 270 | yes (bf16-level) | kept |
 | `mcts_impl=cpp search_compile=true` | 50.1 | 93.9 | 9.8 | **18.9** | 0.869 | 121 (eval-only run) | yes (bf16-level) | **kept, recommended** |
 | `mcts_impl=cpp search_compile=true mcts_leaves_per_round=2` | 47.4 | 77.3 | 9.4 | 18.9 | 0.870 | 125 (eval-only run) | no (WU-UCT) | opt-in, no gain here |
+| + `NoiselessBlocks` (now always on for TreeRM) | 53.9 | 81.6 | – | **17.7** | 0.871 | 120 | yes | **kept, current default path** |
+| + `search_memo=true` | – | 84.4 (depth 1: 2.8) | – | 17.2 | 0.871 | 282 | yes | opt-in (3% for 2.3x memory) |
+| + eval batch 256 | – | – | – | 13.4 ms/puzzle vs 18.4 | 0.861 (other subset) | 439 | yes | protocol: use it for eval-only runs |
 | `mcts_impl=wu search_compile=true mcts_leaves_per_round=4` | 51.1 | 89.3 | 10.8 | – | 0.870 | 283 | no | not worth it |
 
 Training it/s is within its noise band (9.0-10.8 across runs) for every variant: training searches run only on
