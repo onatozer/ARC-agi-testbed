@@ -82,6 +82,11 @@ Seed replicates (phase 5): TRM seed 1 gives 2.7% / 4.0% / 5.4% (seed 0: 2.7 / 4.
 2.7 / 4.7 / 6.7), i.e. seed noise is 2-4 tasks, as large as every gap in the table above. At this budget the three
 architectures are indistinguishable on MiniARC 5x5.
 
+Augmentation sensitivity: TreeRM on `miniarc5-aug-100-t31` (100 augmented copies per task in training, the test
+split capped at the same 32 copies) gives pass@1 1.3% / pass@2 4.0% / pass@5 4.7% and a lower token accuracy
+(0.672 vs 0.719): three times the copies with a third of the embedding updates each is no better, as the
+updates-per-copy argument of section 1 predicted. 31 stays.
+
 ## 3. Test-time training (held-out protocol)
 
 Pretraining on 119 tasks (`miniarc5-aug-31-ho30`), the 30 held-out tasks' test pairs as the eval split. The
