@@ -174,6 +174,13 @@ The cosine schedule spans both blocks of Embed-Full, so its backbone phase ran a
 | TreeRM | Full-TTT, flat lr | 1 | 2 | 3 | 0.748 | 0.37 |
 | TreeRM | Embed-TTT, 40 epochs | 0 | 0 | 1 | 0.744 | 0.50 |
 
+| VARC | Embed-Full-TTT, flat lr | 2 | 4 | 4 | 0.805 | 0.37 |
+| VARC | Full-TTT, flat lr | pending | | | | |
+| VARC | Embed-TTT, 40 epochs | pending | | | | |
+
+VARC: the flat lr lifts Embed-Full from 1 / 3 / 4 to 2 / 4 / 4, level with cosine Full-TTT (3 / 4 / 4) at pass@2
+and pass@5.
+
 TreeRM: the flat lr changes nothing for Embed-Full (0 / 1 / 2 either way, Full-TTT 2 / 3 / 4), so for TreeRM the
 schedule was not the reason the embed-first ordering lags; the embedding alone cannot steer its search.
 
