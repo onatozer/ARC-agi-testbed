@@ -100,6 +100,21 @@ carries the task). The Embed-Full ordering did not add anything for TRM here; on
 phase runs on the decaying half of the cosine schedule (`lr_min_ratio 0`), so it trains at a much lower effective
 lr than Full-TTT's backbone. Re-tried below with a flat lr if time allows.
 
+| model | variant | pass@1 | pass@2 | pass@5 | token acc | train loss end | s / task |
+|---|---|---|---|---|---|---|---|
+| VARC | no TTT (control) | 0 | 0 | 0 | 0.60 | – | – |
+| VARC | Full-TTT | 3 | 4 | 4 | 0.805 | 0.37 | 5.1 |
+| VARC | Embed-TTT | 1 | 1 | 2 | 0.765 | 0.48 | 4.1 |
+| VARC | Embed-Full-TTT | 1 | 3 | 4 | 0.788 | 0.42 | 4.6 |
+
+VARC reading: the paper's model adapts best of the three (Full-TTT 4 of 30 at pass@2, fitting the demos to a
+training loss of 0.37), but its embedding alone is not enough (1 task), unlike TRM's. Embed-Full recovers three of
+Full's four tasks (`color_the_outer_edge`, `find_the_most_frequent`, `which_side_has_more`; Full also solves
+`Change_color_of_object`) and adds none. So at this scale (0.6M params, 4k pretraining steps, 20 TTT epochs) the
+paper's Embed-Full > Full ordering (63.8% vs 59.7% at 18M params) is not reproduced; the same cosine confound
+applies. What does reproduce is the paper's mechanism claim: the task embedding carries most of the adaptation for
+TRM, less so for VARC.
+
 ## 4. Head freezing in regular training
 
 ## 5. Open loop: ideas tried
