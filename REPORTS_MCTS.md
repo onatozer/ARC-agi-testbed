@@ -457,8 +457,11 @@ label CE needs the step's final state).
 0.459, entropy 1.227 vs 1.213: the search barely changed, and the time did not improve. The reason is in the depth
 structure: with `mcts_horizon=step` and H_cycles 3, only cycle 0's root children ever roll out two updates (depth
 2); every other leaf of every search is at depth 1 or 0 already. So the cap touches one round (the forced round of
-the cycle-0 search, batch 256, 10 -> 5 passes), worth ~5% of that search, and the 22.1 s is a noisy run (re-measured
-below). **Verdict: nothing to gain here; the option stays off.** The rollouts are short by construction; the cost
+the cycle-0 search, batch 256, 10 -> 5 passes), worth ~5% of that search. Re-measured cleanly: 24.2 s, so the cap
+is reproducibly *slower* while doing less GPU work. The suspect is inductor's CUDA-graph trees: they record one
+graph per *path* (sequence of graph invocations within a generation), and a search whose rounds visit the
+(batch, depth) specialisations in a new order re-records; capped values change the orders. Checked in 4.13.
+**Verdict: nothing to gain here; the option stays off.** The rollouts are short by construction; the cost
 of a depth-3 search is its 13 rounds x (expansion update + value) at batch 64-256, which is the algorithm.
 
 ### 4.12 Second shape: 6-queens (`--env nqueens6`, reference checkpoint in REFERENCE.md)
