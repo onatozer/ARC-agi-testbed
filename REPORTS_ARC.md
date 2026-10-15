@@ -16,7 +16,19 @@ Standard protocol (149 tasks, 4000 steps x batch 128, vote over 32 augmented cop
 | VARC | 607k | 2.7% | 6.0% | 6.0% | 361 s | 105 MB | varc_std |
 | TreeRM | 597k | 2.7% | 4.7% | 6.7% | 1277 s | 550 MB | treerm_std |
 
-Held-out protocol (30 tasks never seen in pretraining) and TTT: section 3. Head freezing: section 4.
+Held-out protocol (30 tasks never seen in pretraining; no model solves any without TTT), test-time training, tasks
+solved at pass@2 out of 30 (section 3):
+
+| model | Full-TTT | Embed-TTT (embedding only) | Embed-Full-TTT (paper's ordering) | heads frozen (TreeRM) |
+|---|---|---|---|---|
+| TRM | 2 | 2 | 1 | – |
+| VARC | 4 | 1 | 3 | – |
+| TreeRM | 3 | 0 | 1 | Full 3, Embed-Full 0, heads-only 0 |
+
+Verdicts so far: TTT works for all three (0 -> 2-4 of 30); the paper's embed-first ordering does not beat joint
+fine-tuning at this scale for any of them, and for TreeRM the task embedding alone is not enough (its search and
+prior need the backbone to move); freezing TreeRM's heads at test time changes nothing. Head freezing in regular
+training: section 4.
 
 ## 1. Setup and decisions
 
