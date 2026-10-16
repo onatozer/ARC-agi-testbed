@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, **overrides,
+        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -260,3 +260,61 @@ def test_treerm_eval_can_search_with_more_simulations():
     with torch.inference_mode():
         model.model(carry=model.initial_carry(batch), batch=batch)
     assert seen[0] == 6 and seen[-1] == 16
+
+
+# Candidate training: without a candidate loss only the picked candidate gets a gradient (the collapse mechanism)
+
+def _slot_grad_norms(model):
+    """Gradient norm of the candidate generator's output rows per slot (full mode: the last linear is [K*H, H])."""
+    gen = model.model.inner.candidate_generator
+    return gen.head[-1].weight.grad.view(gen.num_candidates, -1).norm(dim=-1)
+
+
+def _train_backward(**overrides):
+    """One training step's backward with the scorer's candidate input detached: the KL and the straight-through pick
+    reach every candidate through the scorer (to be scored right), so what is left is the gradient that improves a
+    candidate as a z_H, which is what the candidate loss / soft gradient are about."""
+    model, batch = _treerm_head(**overrides)
+    model.train()
+    scorer = model.model.inner.candidate_scorer
+    scorer_forward = scorer.forward
+    scorer.forward = lambda u_t, cand, cos_sin: scorer_forward(u_t, cand.detach(), cos_sin)
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
+    loss.backward()
+    return model, metrics
+
+
+@needs_cuda
+def test_without_candidate_loss_only_the_picked_candidate_gets_a_gradient():
+    model, metrics = _train_backward(batch_size=1)
+    assert (_slot_grad_norms(model) > 0).sum() == 1
+    assert "search/cand_loss" not in metrics
+
+
+@needs_cuda
+@pytest.mark.parametrize("mode", ["wta", "posterior"])
+def test_candidate_loss_gives_every_candidate_a_gradient(mode):
+    model, metrics = _train_backward(batch_size=1, candidate_loss=mode)
+    assert (_slot_grad_norms(model) > 0).all()
+    assert all(torch.isfinite(metrics[k]) for k in ("search/cand_loss", "search/cand_ce_gap"))  # summed over the halted rows, none on step 1
+    assert 0 <= metrics["search/cand_best_agree"] <= 1
+
+
+@needs_cuda
+def test_candidate_loss_rolls_out_the_updates_left_in_the_step():
+    # grad_cycles=2 of H_cycles=2: the first grad cycle's candidates are one TRM update away from the decode
+    model, _ = _train_backward(batch_size=1, candidate_loss="wta", grad_cycles=2)
+    assert (_slot_grad_norms(model) > 0).all()
+
+
+@needs_cuda
+def test_candidate_soft_grad_gives_every_candidate_a_gradient():
+    model, _ = _train_backward(batch_size=1, candidate_soft_grad=True)
+    assert (_slot_grad_norms(model) > 0).all()
+
+
+@needs_cuda
+def test_candidate_loss_rejects_unknown_modes():
+    with pytest.raises(ValueError):
+        _treerm_head(candidate_loss="all")
