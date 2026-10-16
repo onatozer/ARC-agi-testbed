@@ -318,3 +318,16 @@ def test_candidate_soft_grad_gives_every_candidate_a_gradient():
 def test_candidate_loss_rejects_unknown_modes():
     with pytest.raises(ValueError):
         _treerm_head(candidate_loss="all")
+
+
+@needs_cuda
+def test_search_refuses_non_finite_prior_logits():
+    model, batch = _treerm_head()
+    inner = model.model.inner
+    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+    u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
+    with torch.no_grad():
+        cand = inner._candidates(z_L, u_t)
+        prior = torch.full((shape[0], cand.shape[1]), float("nan"), device="cuda")
+        with pytest.raises(FloatingPointError):
+            inner._search(cand, prior, z_L, x, batch["labels"], [1] * shape[0])

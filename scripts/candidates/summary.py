@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mcts_bench"))
 from wandb_offline import history  # noqa: E402
 
-EVAL_KEYS = ("all/exact_accuracy", "all/accuracy", "all/lm_loss", "all/search/cand_div", "all/search/post_entropy", "all/search/argmax_agree", "all/search/kl_nats", "eval/gpu_alloc_mb")
+EVAL_KEYS = ("NQueens/accuracy", "all/exact_accuracy", "all/accuracy", "all/lm_loss", "all/search/cand_div", "all/search/post_entropy", "all/search/argmax_agree", "all/search/kl_nats", "eval/gpu_alloc_mb")
 TRAIN_KEYS = ("train/lm_loss", "train/kl_loss", "train/search/cand_loss", "train/search/cand_ce_gap", "train/search/cand_div", "train/search/post_entropy", "train/search/argmax_agree", "train/search/cand_best_agree", "train/search/kl_nats")
 
 

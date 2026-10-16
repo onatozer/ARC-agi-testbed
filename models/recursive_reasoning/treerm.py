@@ -345,6 +345,8 @@ class TreeRMInner(GRAM_Inner):
     def _search(self, cand: torch.Tensor, prior_logits: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> torch.Tensor:
         """One MCTS per puzzle from the root candidates, run in lockstep; returns the posterior logits log(visit
         distribution) [B, K]."""
+        if not torch.isfinite(prior_logits).all():  # the C++ tree segfaults on NaN priors; a diverged run should say so
+            raise FloatingPointError("TreeRM search: the candidate scorer's logits are not finite (the run diverged).")
         priors = prior_logits.float().softmax(dim=-1).tolist()
         self._bootstrap = []  # (leaf first-token states, rollout targets) this search's rollouts record for the value head
         # Eval may search deeper than training (test-time compute); the value head is what it relies on
