@@ -557,13 +557,17 @@ class TreeRMInner(GRAM_Inner):
         seq_dict = self._seq_dict()
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
+        counts: Dict[str, int] = {}
         self._memo = self._pending_memo = None  # a search memo only carries across the cycles of one step
         if self.training and torch.is_grad_enabled():
             self._train_forwards += 1
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
+            # Each key is averaged over the cycles that report it: the search diagnostics over every cycle, the
+            # candidate-loss ones (cand_loss, cand_ce_gap, ...) over the grad cycles only
             for key, value in diag.items():
-                diagnostics[key] = diagnostics.get(key, 0) + value / self.config.H_cycles
+                diagnostics[key] = diagnostics.get(key, 0) + value
+                counts[key] = counts.get(key, 0) + 1
 
         # Run the recursion cycle for H_cycles - grad_cycles times without the gradient; every z_H update is searched
         with torch.no_grad():
@@ -595,7 +599,7 @@ class TreeRMInner(GRAM_Inner):
             "q_halt_logits": torch.logit(self._lprm_value(z_H).clamp(1e-6, 1 - 1e-6)),
             "logits": self._decode(z_H),
             "kl_loss": kl_loss,
-            **diagnostics,  # per-puzzle, averaged over the H_cycles searches
+            **{key: value / counts[key] for key, value in diagnostics.items()},  # per-puzzle, averaged over the cycles reporting them
         }
 
         return LatentCarry(z_H, z_L), info

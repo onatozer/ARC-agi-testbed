@@ -85,9 +85,10 @@ candidates become different in outcome without losing accuracy.
 | nqueens8 | residual_k4_wta_all3 | | | | | |
 
 **Reading of phase 1 so far.** The fast tier cannot answer the question. Every variant lands in the recipe's seed band
-(80-89%), and the diagnostics say why: the candidates differ by 0.007 nats in rollout CE (`cand_ce_gap`), the search's
-argmax agrees with the prior 98-100% of the time, and the search's pick is the CE-best candidate only at chance rate
-(`cand_best_agree` 0.33 for K=4). On unique-solution Sudoku one good u_t is enough, there is nothing for a second
+(80-89%), and the diagnostics say why: the candidates differ by ~0.02 nats in rollout CE (`cand_ce_gap`, logged 0.007), the search's
+argmax agrees with the prior 98-100% of the time, and the search's argmax is the CE-best candidate ~100% of the time
+(`cand_best_agree` logged 0.33 = 1.0 after the x3 correction): the search finds the best candidate, but with a 0.02-nat
+gap the best is no better than the prior's pick. On unique-solution Sudoku one good u_t is enough, there is nothing for a second
 proposal to be *for*, so neither a winner-take-all loss nor a bigger K has anything to buy. This is the "Sudoku is near
 ceiling" caveat of REPORTS.md in its sharpest form. Phase 2 moves the question to 8x8 N-Queens, where the first loop
 measured the eval search overriding the prior in ~70% of searches.
@@ -95,12 +96,16 @@ measured the eval search overriding the prior in ~70% of searches.
 ### Phase 1 (2026-10-16, 6x6 Sudoku): does any candidate loss stop the collapse at K=4, and does K=8 then pay?
 
 Runs take 6-7 min each with the compiled C++ search (the first loop's 50 min were the Python search).
+**Diagnostic scale caveat:** until commit `f615f83` (2026-10-16 02:30) the grad-cycle-only diagnostics
+(`cand_loss`, `cand_ce_gap`, `cand_best_agree`, `cand_eps`, `balance`, `pick_entropy`, `recover_*`) were divided by
+H_cycles=3 like the per-cycle search diagnostics, so the logged values of the runs below are 1/3 of the truth
+(summary rows are quoted as logged; the readings use the corrected values). Runs started after that commit log them right.
 
 | run | candidates | loss | K / sims (guided) | exact @2000 | notes |
 |---|---|---|---|---|---|
 | flags_k4 | flags | none | 4 / 8 (4) | **85.2%** (50.4 @1500) | the recipe, fresh on this branch; 337 s wall with the compiled C++ search; 593k params |
 | residual_k4_none | residual | none | 4 / 8 (4) | **86.3%** (82.6 @1500) | no fix at all and no collapse: with the heads at 0.1x lr and value bootstrap (neither was on when residual collapsed in the first loop) residual candidates are at recipe level. But cand_div 0.06: the K candidates are nearly the same vector |
-| residual_k4_wta | residual | wta 0.05 | 4 / 8 (4) | 80.3% | cand_ce_gap 0.0075 nats: the candidates barely differ in outcome, so the winner-take-all has nothing to separate; cand_best_agree 0.33 (chance 0.25) |
+| residual_k4_wta | residual | wta 0.05 | 4 / 8 (4) | 80.3% | cand_ce_gap 0.0075 logged (0.02 nats): the candidates barely differ in outcome, so the winner-take-all has nothing to separate; cand_best_agree 0.33 logged = 1.0 |
 | residual_k4_post | residual | posterior | 4 / 8 (4) | **88.5%** | best of the phase, inside the +-4 seed band of the baseline |
 | residual_k4_soft | residual | soft grad | 4 / 8 (4) | diverged | loss NaN at step ~360 (kl_nats 13, cand_div 0.96: the candidates blew apart), then the C++ tree segfaulted on the NaN priors (now a FloatingPointError). Parked |
 | full_k4_wta | full | wta 0.05 | 4 / 8 (4) | 83.2% | full-vector candidates no longer collapse either (cand_div 0.28 at eval, the most diverse of the phase) but cand_ce_gap 0.012: different vectors, same outcome |

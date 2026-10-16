@@ -367,3 +367,12 @@ def test_wta_eps_anneals_from_uniform_over_training_forwards():
     with torch.inference_mode():
         model.model(carry=model.initial_carry(batch), batch=batch)
     assert int(inner._train_forwards) == 5  # eval forwards don't count
+
+
+@needs_cuda
+def test_grad_cycle_diagnostics_are_averaged_over_the_grad_cycles_only():
+    model, batch = _treerm_head(candidate_loss="wta", candidate_loss_eps=0.3)  # H_cycles=2, grad_cycles=1
+    model.train()
+    _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
+    torch.testing.assert_close(outputs["search/cand_eps"], torch.full_like(outputs["search/cand_eps"], 0.3))
+    assert outputs["search/post_entropy"].shape == outputs["search/cand_eps"].shape
