@@ -10,6 +10,17 @@ phases 2+ under `~/ARC-agi-testbed/autoresearch_runs/candidates/<tier>/` (W&B `c
 
 ## 0. Summary (read this first)
 
+**Terms.** TreeRM proposes K candidate vectors for each z_H update and a tree search picks one. `candidate_mode` is
+how the K candidates are made: `flags` = u_t (the plain TRM update) plus a fixed, frozen orthonormal direction per
+slot with a learned gate (the first loop's recipe; the slots differ by construction but nothing about them is
+learned); `residual` = u_t plus a learned per-slot delta from a small generator network; `full` = the generator
+outputs the K vectors outright; `flags_residual` = flags plus the learned delta. `candidate_loss` is how the
+candidates are trained: `none` = only the picked candidate gets the task gradient (the collapse of section 1);
+`wta` = relaxed winner-take-all, every candidate is rolled out to the end of the step and decoded, and the lowest-CE
+one gets weight 1 - eps (0.95) and the others share eps; `posterior` = the same rollouts weighted by the search's
+visit distribution. "K / sims (guided)" = candidates / simulations per search, of which K are the forced root-child
+rollouts, so sims - K are PUCT-guided. "residual + wta" is therefore a learned generator trained winner-take-all.
+
 State at 2026-10-16 13:15 (24 N-Queens runs over phases 2-7, 12 Sudoku runs over phases 1, 3, 4; section 4 is the log).
 
 1. **The candidate loss is the fix, and it is robust.** On 8x8 N-Queens (`NQueens/accuracy` at step 3000) every run
@@ -67,29 +78,48 @@ others never train: the standard multiple-choice-learning collapse.
    `search/cand_ce_gap` (CE of the worst minus the best candidate: how much the choice matters) and
    `search/cand_best_agree` (does the search's argmax pick the CE-best candidate).
 3. **`candidate_soft_grad`**: the pick's backward reaches every candidate in proportion to its posterior mass (the
-   forward is still exactly one candidate; the straight-through path to the scorer is unchanged).
-5. **`candidate_balance_weight`** (the user's pick, 2026-10-16): load balancing as for a mixture-of-experts router
+   forward is still exactly one candidate; the straight-through path to the scorer is unchanged). Diverged in its one
+   run (phase 1); parked.
+4. **`candidate_balance_weight`** (the user's pick, 2026-10-16): load balancing as for a mixture-of-experts router
    (Switch Transformer): K * sum_k f_k * P_k per puzzle, f_k the fraction of the batch's picks on slot k and P_k the
    scorer's mean prior on k. A slot cannot take every puzzle, so every slot's candidate trains on its share and
    specialises on it. Diagnostics `search/balance`, `search/pick_entropy` (entropy of the batch's pick distribution).
-6. **`candidate_recover_weight`**: slot recoverability (InfoGAN-style). A K-way linear classifier reads each
+5. **`candidate_recover_weight`**: slot recoverability (InfoGAN-style). A K-way linear classifier reads each
    candidate's decoded distribution (flattened probabilities) and must say which slot made it; its CE trains the
    generator through the decode, so candidates that decode alike are penalised in *outcome* space, not latent space.
    `search/recover_acc` is then a direct measure of outcome diversity (chance = 1/K).
-7. **`candidate_loss_eps_anneal_steps`**: the wta eps anneals linearly from 1 (every candidate trains equally) to
+6. **`candidate_loss_eps_anneal_steps`**: the wta eps anneals linearly from 1 (every candidate trains equally) to
    `candidate_loss_eps` over that many training steps, so no slot locks in before the others have trained
    (`search/cand_eps` logs it; a resumed run anneals again).
-8. Tests: `tests/test_treerm.py` (with the scorer's candidate input detached, `none` gives exactly one slot a gradient
-   and `wta` / `posterior` / soft grad give every slot one; the rollout path with `grad_cycles=2`),
-   `tests/test_param_lr_scales.py` (arch scales under train scales).
+7. **`candidate_mode=flags_residual`** (commit `4f4bfb6`, phase 6): slot k = u_t + its fixed flag + a learned delta
+   from the residual generator (`candidate_residual`), so the slots differ by construction and carry learned content.
+8. **Robustness and diagnostics.** The search raises a `FloatingPointError` on non-finite prior logits (the C++ tree
+   segfaulted on the NaNs of the diverged soft-grad run). The grad-cycle-only diagnostics (`cand_loss`, `cand_ce_gap`,
+   `cand_best_agree`, `cand_eps`, `balance`, `pick_entropy`, `recover_*`) are averaged over the cycles that report
+   them instead of over all H_cycles (commit `f615f83`; runs before it logged them at 1/3, noted where quoted).
+9. **Harness** `scripts/candidates/`: `run.sh <tier> <name> <overrides>` (one run under the shared GPU lock, W&B
+   online, local summary), `queue.sh <tier> <queue file>` (runs a queue file's lines in order), `summary.py <run dir>`
+   (eval rows and train means from the local W&B file), queue files `queues/{p1,p3,p4,nq_p2..nq_p7}.txt` = the
+   exact overrides of every run in section 4. `run6.sh` / `queue6.sh` are the phase-1 Sudoku-only versions.
+10. Tests: `tests/test_treerm.py` (with the scorer's candidate input detached, `none` gives exactly one slot a gradient
+   and `wta` / `posterior` / soft grad / recover give every slot one; the rollout path with `grad_cycles=2`; balance
+   reaches the scorer; the anneal schedule; the non-finite guard; diagnostic averaging; `flags_residual` composition
+   and per-slot gradients), `tests/test_param_lr_scales.py` (arch scales under train scales). 122 pass.
 
 ## 3. Protocol
 
-Fast tier of REPORTS.md: 6x6 Sudoku with unique solutions (`data/sudoku-6u`), hidden 128, batch 64 x 2000 steps, lr
-1e-3, eval on 512 test puzzles every 500 steps, metric `all/exact_accuracy` at step 2000, seed 0 unless stated. The
-recipe's seed spread on this tier is about +-4 points. One GPU job at a time (the shared `gpu.lock`). Every root child
-is rolled out once before PUCT, so K and the simulation count are tuned together: "guided" simulations =
-`mcts_simulations - K`.
+Two tiers, both hidden 128, 4 heads, 2 L layers, H3 / L4 cycles, halt 8, seed 0 unless the name says `_sN`, the
+C++ compiled search, one GPU job at a time (the shared `gpu.lock`). Every root child is rolled out once before PUCT,
+so K and the simulation count are tuned together: "guided" simulations = `mcts_simulations - K`; eval uses 16
+simulations unless stated.
+
+- **sudoku6** (phase 1, 3, 4): REPORTS.md's fast tier, 6x6 Sudoku with unique solutions (`data/sudoku-6u`), batch 64
+  x 2000 steps, lr 1e-3, eval on 512 test puzzles every 500 steps, metric `all/exact_accuracy` at step 2000; 6-9
+  min a run; the recipe's seed spread is about +-4 points. It turned out unable to separate candidate variants.
+- **nqueens8** (phases 2-7): REPORTS.md's confirmation tier, 8x8 N-Queens (`data/nqueens-8`,
+  `cfg_pretrain_nqueens`), batch 128 x 3000 steps, lr 3e-4, eval on the full 1000-puzzle test set every 500 steps,
+  metric `NQueens/accuracy` at step 3000 (a valid 8-queens board; `all/exact_accuracy` = label match); 17-31 min a
+  run; seed spread 4-6 points on trained runs, up to 20 on the untrained flags.
 
 Harness mishap (2026-10-16 00:41-01:16): the diverged `residual_k4_soft` run segfaulted, but its orphaned dataloader
 worker kept the inherited `gpu.lock` descriptor, so the next run waited 35 min on the lock with the GPU idle. The run
@@ -97,37 +127,24 @@ scripts now use `flock -o` (the lock descriptor is closed before the command run
 
 ## 4. Log
 
-### Phase 3 (queued 2026-10-16 01:40, both tiers): the three diversity mechanisms on residual + wta
+### Phase 1 (2026-10-16, 6x6 Sudoku): does any candidate loss stop the collapse at K=4, and does K=8 then pay?
 
-Weights 0.1 for balance and recover, anneal over 1000 (Sudoku) / 1500 (N-Queens) steps; `_all3` combines them.
-Watch `cand_div`, `cand_ce_gap`, `recover_acc`, `pick_entropy` as much as the accuracy: the question is whether the
-candidates become different in outcome without losing accuracy.
+Runs take 6-7 min each with the compiled C++ search (the first loop's 50 min were the Python search).
+**Diagnostic scale caveat:** until commit `f615f83` (2026-10-16 02:30) the grad-cycle-only diagnostics
+(`cand_loss`, `cand_ce_gap`, `cand_best_agree`, `cand_eps`, `balance`, `pick_entropy`, `recover_*`) were divided by
+H_cycles=3 like the per-cycle search diagnostics, so the logged values of the runs below are 1/3 of the truth
+(summary rows are quoted as logged; the readings use the corrected values). Runs started after that commit log them right.
 
-The two `_bal` runs started before the diagnostic-scale fix (phase 1 caveat), so their `cand_ce_gap` and
-`pick_entropy` are quoted x3. `cand_div` is the eval value, the other diagnostics are train means over the last
-200 rows. Reference rows: wta alone is 80.3% on Sudoku (phase 1) and 55.2% on N-Queens (phase 2).
-
-| tier | run | exact / NQueens acc @end | cand_div | cand_ce_gap | recover_acc | pick_entropy |
-|---|---|---|---|---|---|---|
-| sudoku6 | residual_k4_wta_bal | 87.9% | 0.084 | 0.050 | - | 1.30 |
-| sudoku6 | residual_k4_wta_rec | 88.1% | 0.096 | 0.072 | 0.26 (chance 0.25) | - |
-| sudoku6 | residual_k4_wta_anneal | **92.8%** | 0.077 | 0.047 | - | - |
-| sudoku6 | residual_k4_wta_all3 | 89.7% | 0.068 | 0.058 | 0.26 | 1.30 |
-| nqueens8 | residual_k4_wta_bal | 51.7% (exact 48.3) | 0.084 | 0.068 | - | 1.35 |
-| nqueens8 | residual_k4_wta_rec | 52.5% (47.4) | 0.109 | 0.105 | 0.52 | - |
-| nqueens8 | residual_k4_wta_anneal | 44.0% (41.9) | 0.079 | 0.061 | - | - |
-| nqueens8 | residual_k4_wta_all3 | 52.0% (48.4) | 0.091 | 0.090 | 0.52 | 1.37 |
-
-**Reading.** None of the three moves the outcome diversity. The balance loss does what a router constraint does
-(the batch's picks spread evenly over the four slots: pick entropy 1.30-1.37 of ln 4 = 1.39, balance loss ~1 = its
-minimum) and the recover head does learn to tell the slots apart on N-Queens (0.52 vs chance 0.25; on Sudoku it
-stays at chance: the decoded boards are the same), but `cand_div` and `cand_ce_gap` are the wta-alone values on both
-tiers and so are the accuracies (N-Queens 51.7-52.5% for bal / rec / all3 against 55.2% for wta alone; Sudoku
-88-90% against the 80-89% band). A balanced scorer does not make a single shared generator's K outputs differ, and a
-recoverability term of weight 0.1 buys separability in the decoded distribution without a CE gap. The annealed wta is
-the one variant that moved accuracy, in opposite directions on the two tiers (92.8% Sudoku, 44.0% N-Queens), which
-reads as seed noise until the replicate (`residual_k4_wta_anneal_s1`, queued) says otherwise.
-
+| run | candidates | loss | K / sims (guided) | exact @2000 | notes |
+|---|---|---|---|---|---|
+| flags_k4 | flags | none | 4 / 8 (4) | **85.2%** (50.4 @1500) | the recipe, fresh on this branch; 337 s wall with the compiled C++ search; 593k params |
+| residual_k4_none | residual | none | 4 / 8 (4) | **86.3%** (82.6 @1500) | no fix at all and no collapse: with the heads at 0.1x lr and value bootstrap (neither was on when residual collapsed in the first loop) residual candidates are at recipe level. But cand_div 0.06: the K candidates are nearly the same vector |
+| residual_k4_wta | residual | wta 0.05 | 4 / 8 (4) | 80.3% | cand_ce_gap 0.0075 logged (0.02 nats): the candidates barely differ in outcome, so the winner-take-all has nothing to separate; cand_best_agree 0.33 logged = 1.0 |
+| residual_k4_post | residual | posterior | 4 / 8 (4) | **88.5%** | best of the phase, inside the +-4 seed band of the baseline |
+| residual_k4_soft | residual | soft grad | 4 / 8 (4) | diverged | loss NaN at step ~360 (kl_nats 13, cand_div 0.96: the candidates blew apart), then the C++ tree segfaulted on the NaN priors (now a FloatingPointError). Parked |
+| full_k4_wta | full | wta 0.05 | 4 / 8 (4) | 83.2% | full-vector candidates no longer collapse either (cand_div 0.28 at eval, the most diverse of the phase) but cand_ce_gap 0.012: different vectors, same outcome |
+| residual_k4_wta_s12 | residual | wta 0.05 | 4 / 12 (8) | 86.5% | cand_ce_gap 0.011; 8 guided simulations change nothing on this tier |
+| residual_k8_wta_s16 | residual | wta 0.05 | 8 / 16 (8) | 85.6% | K=8 at 8 guided sims: level with K=4; cand_div 0.10, cand_ce_gap 0.024; eval memory 807 MB vs 358 (the arena scales with K x sims) |
 ### Phase 2 (2026-10-16 02:00-05:50, 8x8 N-Queens): the candidate loss where the search overrides the prior
 
 Confirmation tier of REPORTS.md (`cfg_pretrain_nqueens`, batch 128 x 3000 steps, lr 3e-4, eval on the full
@@ -163,6 +180,37 @@ eight copies of one vector, `cand_div` 0.057). The surprise is `flags_k8_s16` at
 at K=4 / 8 sims, which the first loop's Sudoku runs had ruled out (K=8 no better than K=4 there, but that tier is at
 ceiling). Eight frozen orthonormal directions are eight genuinely different proposals, and with the simulations
 scaled the search can use them. Single seed; phase 5 replicates it.
+
+### Phase 3 (queued 2026-10-16 01:40, both tiers): the three diversity mechanisms on residual + wta
+
+Weights 0.1 for balance and recover, anneal over 1000 (Sudoku) / 1500 (N-Queens) steps; `_all3` combines them.
+Watch `cand_div`, `cand_ce_gap`, `recover_acc`, `pick_entropy` as much as the accuracy: the question is whether the
+candidates become different in outcome without losing accuracy.
+
+The two `_bal` runs started before the diagnostic-scale fix (phase 1 caveat), so their `cand_ce_gap` and
+`pick_entropy` are quoted x3. `cand_div` is the eval value, the other diagnostics are train means over the last
+200 rows. Reference rows: wta alone is 80.3% on Sudoku (phase 1) and 55.2% on N-Queens (phase 2).
+
+| tier | run | exact / NQueens acc @end | cand_div | cand_ce_gap | recover_acc | pick_entropy |
+|---|---|---|---|---|---|---|
+| sudoku6 | residual_k4_wta_bal | 87.9% | 0.084 | 0.050 | - | 1.30 |
+| sudoku6 | residual_k4_wta_rec | 88.1% | 0.096 | 0.072 | 0.26 (chance 0.25) | - |
+| sudoku6 | residual_k4_wta_anneal | **92.8%** | 0.077 | 0.047 | - | - |
+| sudoku6 | residual_k4_wta_all3 | 89.7% | 0.068 | 0.058 | 0.26 | 1.30 |
+| nqueens8 | residual_k4_wta_bal | 51.7% (exact 48.3) | 0.084 | 0.068 | - | 1.35 |
+| nqueens8 | residual_k4_wta_rec | 52.5% (47.4) | 0.109 | 0.105 | 0.52 | - |
+| nqueens8 | residual_k4_wta_anneal | 44.0% (41.9) | 0.079 | 0.061 | - | - |
+| nqueens8 | residual_k4_wta_all3 | 52.0% (48.4) | 0.091 | 0.090 | 0.52 | 1.37 |
+
+**Reading.** None of the three moves the outcome diversity. The balance loss does what a router constraint does
+(the batch's picks spread evenly over the four slots: pick entropy 1.30-1.37 of ln 4 = 1.39, balance loss ~1 = its
+minimum) and the recover head does learn to tell the slots apart on N-Queens (0.52 vs chance 0.25; on Sudoku it
+stays at chance: the decoded boards are the same), but `cand_div` and `cand_ce_gap` are the wta-alone values on both
+tiers and so are the accuracies (N-Queens 51.7-52.5% for bal / rec / all3 against 55.2% for wta alone; Sudoku
+88-90% against the 80-89% band). A balanced scorer does not make a single shared generator's K outputs differ, and a
+recoverability term of weight 0.1 buys separability in the decoded distribution without a CE gap. The annealed wta is
+the one variant that moved accuracy, in opposite directions on the two tiers (92.8% Sudoku, 44.0% N-Queens), which
+reads as seed noise until the replicate (`residual_k4_wta_anneal_s1`, queued) says otherwise.
 
 ### Phase 4 (2026-10-16 06:00-08:10): the control and the replicates
 
@@ -226,21 +274,3 @@ proposal to be *for*, so neither a winner-take-all loss nor a bigger K has anyth
 ceiling" caveat of REPORTS.md in its sharpest form. Phase 2 moves the question to 8x8 N-Queens, where the first loop
 measured the eval search overriding the prior in ~70% of searches.
 
-### Phase 1 (2026-10-16, 6x6 Sudoku): does any candidate loss stop the collapse at K=4, and does K=8 then pay?
-
-Runs take 6-7 min each with the compiled C++ search (the first loop's 50 min were the Python search).
-**Diagnostic scale caveat:** until commit `f615f83` (2026-10-16 02:30) the grad-cycle-only diagnostics
-(`cand_loss`, `cand_ce_gap`, `cand_best_agree`, `cand_eps`, `balance`, `pick_entropy`, `recover_*`) were divided by
-H_cycles=3 like the per-cycle search diagnostics, so the logged values of the runs below are 1/3 of the truth
-(summary rows are quoted as logged; the readings use the corrected values). Runs started after that commit log them right.
-
-| run | candidates | loss | K / sims (guided) | exact @2000 | notes |
-|---|---|---|---|---|---|
-| flags_k4 | flags | none | 4 / 8 (4) | **85.2%** (50.4 @1500) | the recipe, fresh on this branch; 337 s wall with the compiled C++ search; 593k params |
-| residual_k4_none | residual | none | 4 / 8 (4) | **86.3%** (82.6 @1500) | no fix at all and no collapse: with the heads at 0.1x lr and value bootstrap (neither was on when residual collapsed in the first loop) residual candidates are at recipe level. But cand_div 0.06: the K candidates are nearly the same vector |
-| residual_k4_wta | residual | wta 0.05 | 4 / 8 (4) | 80.3% | cand_ce_gap 0.0075 logged (0.02 nats): the candidates barely differ in outcome, so the winner-take-all has nothing to separate; cand_best_agree 0.33 logged = 1.0 |
-| residual_k4_post | residual | posterior | 4 / 8 (4) | **88.5%** | best of the phase, inside the +-4 seed band of the baseline |
-| residual_k4_soft | residual | soft grad | 4 / 8 (4) | diverged | loss NaN at step ~360 (kl_nats 13, cand_div 0.96: the candidates blew apart), then the C++ tree segfaulted on the NaN priors (now a FloatingPointError). Parked |
-| full_k4_wta | full | wta 0.05 | 4 / 8 (4) | 83.2% | full-vector candidates no longer collapse either (cand_div 0.28 at eval, the most diverse of the phase) but cand_ce_gap 0.012: different vectors, same outcome |
-| residual_k4_wta_s12 | residual | wta 0.05 | 4 / 12 (8) | 86.5% | cand_ce_gap 0.011; 8 guided simulations change nothing on this tier |
-| residual_k8_wta_s16 | residual | wta 0.05 | 8 / 16 (8) | 85.6% | K=8 at 8 guided sims: level with K=4; cand_div 0.10, cand_ce_gap 0.024; eval memory 807 MB vs 358 (the arena scales with K x sims) |
