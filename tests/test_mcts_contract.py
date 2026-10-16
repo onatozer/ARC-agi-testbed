@@ -393,7 +393,7 @@ def test_cpp_falls_back_to_fused_without_a_toolchain(monkeypatch):
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "cpp", "mcts_leaves_per_round": 1,
         "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
-        "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False,
+        "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False, "candidate_loss_eps_anneal_steps": 0, "candidate_balance_weight": 0.0, "candidate_recover_weight": 0.0,
     })
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -406,7 +406,7 @@ def test_unknown_impl_is_rejected():
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None,
         "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "flags", "eval_search": True, "posterior_smoothing": 0.0,
-        "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False,
+        "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False, "candidate_loss_eps_anneal_steps": 0, "candidate_balance_weight": 0.0, "candidate_recover_weight": 0.0,
     })
     with pytest.raises(ValueError, match="mcts_impl"):
         TreeRM(cfg)

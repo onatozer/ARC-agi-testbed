@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False, **overrides,
+        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, "candidate_loss": "none", "candidate_loss_eps": 0.05, "candidate_loss_weight": 1.0, "candidate_soft_grad": False, "candidate_loss_eps_anneal_steps": 0, "candidate_balance_weight": 0.0, "candidate_recover_weight": 0.0, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -331,3 +331,39 @@ def test_search_refuses_non_finite_prior_logits():
         prior = torch.full((shape[0], cand.shape[1]), float("nan"), device="cuda")
         with pytest.raises(FloatingPointError):
             inner._search(cand, prior, z_L, x, batch["labels"], [1] * shape[0])
+
+
+@needs_cuda
+def test_candidate_recover_loss_gives_every_candidate_a_gradient_and_logs_accuracy():
+    model, metrics = _train_backward(batch_size=1, candidate_recover_weight=0.1)
+    assert (_slot_grad_norms(model) > 0).all()
+    assert all(torch.isfinite(metrics[k]) for k in ("search/recover_loss", "search/recover_acc"))
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.model.inner.candidate_recover_head.parameters())
+
+
+@needs_cuda
+def test_candidate_balance_loss_reaches_the_scorer_and_logs():
+    model, batch = _treerm_head(kl_strength=0.0, candidate_balance_weight=0.1)
+    model.train()
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    loss.backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.model.inner.candidate_scorer.parameters())
+    assert all(torch.isfinite(metrics[k]) for k in ("search/balance", "search/pick_entropy"))
+
+
+@needs_cuda
+def test_wta_eps_anneals_from_uniform_over_training_forwards():
+    model, batch = _treerm_head(candidate_loss="wta", candidate_loss_eps=0.05, candidate_loss_eps_anneal_steps=4)
+    model.train()
+    inner = model.model.inner
+    assert inner._candidate_loss_eps() == 1.0
+    for _ in range(2):
+        model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert inner._candidate_loss_eps() == pytest.approx(1.0 + (0.05 - 1.0) * 0.5)
+    for _ in range(3):
+        model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert inner._candidate_loss_eps() == pytest.approx(0.05)
+    model.eval()
+    with torch.inference_mode():
+        model.model(carry=model.initial_carry(batch), batch=batch)
+    assert int(inner._train_forwards) == 5  # eval forwards don't count

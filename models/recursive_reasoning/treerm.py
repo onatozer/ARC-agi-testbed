@@ -123,6 +123,16 @@ class TreeRMInner(GRAM_Inner):
             raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
         if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
             raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
+        if self.config.candidate_loss_eps_anneal_steps < 0:
+            raise ValueError("candidate_loss_eps_anneal_steps must be >= 0.")
+        if self.config.candidate_recover_weight > 0:
+            # Slot recoverability (InfoGAN-style): a K-way classifier reads a candidate's decoded distribution and must say
+            # which slot made it; its CE trains the generator, so identical candidates (unrecoverable slots) are penalised
+            decoded_len = self.config.seq_len - (self.config.puzzle_emb_len if self.config.puzzle_emb_ndim != 0 else 0)  # what _decode keeps
+            self.candidate_recover_head = nn.Linear(decoded_len * self.config.vocab_size, self.config.num_candidates)
+        # Training forwards so far (one per optimizer step: a batch is one forward); drives the eps anneal. Not saved,
+        # so a resumed run anneals again from the start
+        self.register_buffer("_train_forwards", torch.zeros((), dtype=torch.long), persistent=False)
         if self.config.search_compile and not getattr(self.mcts, "fused", False):
             raise ValueError("search_compile needs a fused search (mcts_impl=fused or wu): only its round has fixed shapes.")
         if self.config.mcts_leaves_per_round != 1:
@@ -421,9 +431,9 @@ class TreeRMInner(GRAM_Inner):
                 kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
             # Every candidate gets a gradient from its own rollout (see _candidate_loss); without this only the picked
             # one does, and learned candidates collapse (REPORTS.md section 4, REPORTS_CANDIDATES.md)
-            if self.config.candidate_loss != "none":
+            if self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0:
                 cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, left if left is not None else remaining[0])
-                kl_loss = kl_loss + self.config.candidate_loss_weight * cand_loss
+                kl_loss = kl_loss + cand_loss
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
@@ -441,11 +451,21 @@ class TreeRMInner(GRAM_Inner):
         else:
             z_H = torch.einsum("bk,bksh->bsh", weights, cand.float())
         z_H = z_H.to(u_t.dtype)
+        if torch.is_grad_enabled() and self.config.candidate_balance_weight > 0:
+            # Load balancing as for a mixture-of-experts router (Switch Transformer): K * sum_k f_k * P_k, with f_k the
+            # fraction of this batch's picks that went to slot k and P_k the scorer's mean prior on k; minimal (1) when
+            # the prior is spread over the slots and the picks follow it, so no slot can take every puzzle
+            picks = weights.detach().mean(dim=0)
+            mean_prior = prior_logits.float().softmax(dim=-1).mean(dim=0)
+            balance = logits.shape[-1] * (picks * mean_prior).sum()
+            kl_loss = kl_loss + self.config.candidate_balance_weight * balance * logits.shape[0]
+            cand_diag = {**(cand_diag if self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0 else {}),
+                         "search/balance": balance.detach().expand(logits.shape[0]), "search/pick_entropy": -(picks * picks.clamp_min(1e-8).log()).sum().expand(logits.shape[0])}
         if self._pending_memo is not None:
             self._memo = (*self._pending_memo, weights.argmax(dim=-1).tolist())
             self._pending_memo = None
         diag = self._search_diagnostics(cand, prior_logits, post_logits)
-        if torch.is_grad_enabled() and self.config.candidate_loss != "none":
+        if torch.is_grad_enabled() and (self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0 or self.config.candidate_balance_weight > 0):
             diag.update(cand_diag)
         with torch.no_grad():  # candidate norm relative to the TRM update it replaces
             diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
@@ -478,20 +498,43 @@ class TreeRMInner(GRAM_Inner):
             z_H = self.L_level(z_H, z_L, **seq_dict)
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         mask = y != IGNORE_LABEL_ID
-        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        logits = self._decode(z_H)
+        ce = self.rollout_loss_fn(logits, y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
         ce = ce.float().view(B, K)
-        if self.config.candidate_loss == "wta":
-            eps = self.config.candidate_loss_eps
-            weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K
-        else:
-            weights = post_logits.float().softmax(dim=-1)
-        loss = (weights.detach() * ce).sum(dim=-1)  # [B]
         diag = {
-            "search/cand_loss": loss.detach(),
             "search/cand_ce_gap": (ce.max(dim=-1).values - ce.min(dim=-1).values).detach(),
             "search/cand_best_agree": (ce.argmin(dim=-1) == post_logits.argmax(dim=-1)).float(),
         }
-        return loss.sum(), diag
+        total = ce.new_zeros(())
+        if self.config.candidate_loss != "none":
+            if self.config.candidate_loss == "wta":
+                eps = self._candidate_loss_eps()
+                weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K
+                diag["search/cand_eps"] = ce.new_full((B,), eps)
+            else:
+                weights = post_logits.float().softmax(dim=-1)
+            loss = (weights.detach() * ce).sum(dim=-1)  # [B]
+            diag["search/cand_loss"] = loss.detach()
+            total = total + self.config.candidate_loss_weight * loss.sum()
+        if self.config.candidate_recover_weight > 0:
+            # Which slot made this outcome? Trained on every candidate's decoded distribution (gradient into the generator
+            # through the decode); recover_acc is a direct measure of diversity in outcome space
+            slot_logits = self.candidate_recover_head(logits.float().softmax(dim=-1).flatten(1))
+            slots = torch.arange(K, device=ce.device).repeat(B)
+            recover = F.cross_entropy(slot_logits, slots, reduction="none").view(B, K).mean(dim=-1)  # [B]
+            diag["search/recover_loss"] = recover.detach()
+            diag["search/recover_acc"] = (slot_logits.argmax(dim=-1) == slots).float().view(B, K).mean(dim=-1)
+            total = total + self.config.candidate_recover_weight * recover.sum()
+        return total, diag
+
+    def _candidate_loss_eps(self) -> float:
+        """The wta eps in force: annealed linearly from 1 (every candidate trains equally) at the first training forward
+        to candidate_loss_eps at candidate_loss_eps_anneal_steps, so no slot locks in before the others have trained."""
+        steps = self.config.candidate_loss_eps_anneal_steps
+        if steps == 0:
+            return self.config.candidate_loss_eps
+        frac = min(int(self._train_forwards) / steps, 1.0)
+        return 1.0 + (self.config.candidate_loss_eps - 1.0) * frac
 
     @torch.no_grad()
     def _search_diagnostics(self, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -515,6 +558,8 @@ class TreeRMInner(GRAM_Inner):
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
         self._memo = self._pending_memo = None  # a search memo only carries across the cycles of one step
+        if self.training and torch.is_grad_enabled():
+            self._train_forwards += 1
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
             for key, value in diag.items():

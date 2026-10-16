@@ -38,7 +38,18 @@ others never train: the standard multiple-choice-learning collapse.
    `search/cand_best_agree` (does the search's argmax pick the CE-best candidate).
 3. **`candidate_soft_grad`**: the pick's backward reaches every candidate in proportion to its posterior mass (the
    forward is still exactly one candidate; the straight-through path to the scorer is unchanged).
-4. Tests: `tests/test_treerm.py` (with the scorer's candidate input detached, `none` gives exactly one slot a gradient
+5. **`candidate_balance_weight`** (the user's pick, 2026-10-16): load balancing as for a mixture-of-experts router
+   (Switch Transformer): K * sum_k f_k * P_k per puzzle, f_k the fraction of the batch's picks on slot k and P_k the
+   scorer's mean prior on k. A slot cannot take every puzzle, so every slot's candidate trains on its share and
+   specialises on it. Diagnostics `search/balance`, `search/pick_entropy` (entropy of the batch's pick distribution).
+6. **`candidate_recover_weight`**: slot recoverability (InfoGAN-style). A K-way linear classifier reads each
+   candidate's decoded distribution (flattened probabilities) and must say which slot made it; its CE trains the
+   generator through the decode, so candidates that decode alike are penalised in *outcome* space, not latent space.
+   `search/recover_acc` is then a direct measure of outcome diversity (chance = 1/K).
+7. **`candidate_loss_eps_anneal_steps`**: the wta eps anneals linearly from 1 (every candidate trains equally) to
+   `candidate_loss_eps` over that many training steps, so no slot locks in before the others have trained
+   (`search/cand_eps` logs it; a resumed run anneals again).
+8. Tests: `tests/test_treerm.py` (with the scorer's candidate input detached, `none` gives exactly one slot a gradient
    and `wta` / `posterior` / soft grad give every slot one; the rollout path with `grad_cycles=2`),
    `tests/test_param_lr_scales.py` (arch scales under train scales).
 
@@ -55,6 +66,23 @@ worker kept the inherited `gpu.lock` descriptor, so the next run waited 35 min o
 scripts now use `flock -o` (the lock descriptor is closed before the command runs, so only the flock process holds it).
 
 ## 4. Log
+
+### Phase 3 (queued 2026-10-16 01:40, both tiers): the three diversity mechanisms on residual + wta
+
+Weights 0.1 for balance and recover, anneal over 1000 (Sudoku) / 1500 (N-Queens) steps; `_all3` combines them.
+Watch `cand_div`, `cand_ce_gap`, `recover_acc`, `pick_entropy` as much as the accuracy: the question is whether the
+candidates become different in outcome without losing accuracy.
+
+| tier | run | exact / NQueens acc | cand_div | cand_ce_gap | recover_acc | pick_entropy |
+|---|---|---|---|---|---|---|
+| sudoku6 | residual_k4_wta_bal | | | | | |
+| sudoku6 | residual_k4_wta_rec | | | | | |
+| sudoku6 | residual_k4_wta_anneal | | | | | |
+| sudoku6 | residual_k4_wta_all3 | | | | | |
+| nqueens8 | residual_k4_wta_bal | | | | | |
+| nqueens8 | residual_k4_wta_rec | | | | | |
+| nqueens8 | residual_k4_wta_anneal | | | | | |
+| nqueens8 | residual_k4_wta_all3 | | | | | |
 
 **Reading of phase 1 so far.** The fast tier cannot answer the question. Every variant lands in the recipe's seed band
 (80-89%), and the diagnostics say why: the candidates differ by 0.007 nats in rollout CE (`cand_ce_gap`), the search's
