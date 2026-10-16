@@ -103,6 +103,6 @@ Runs take 6-7 min each with the compiled C++ search (the first loop's 50 min wer
 | residual_k4_wta | residual | wta 0.05 | 4 / 8 (4) | 80.3% | cand_ce_gap 0.0075 nats: the candidates barely differ in outcome, so the winner-take-all has nothing to separate; cand_best_agree 0.33 (chance 0.25) |
 | residual_k4_post | residual | posterior | 4 / 8 (4) | **88.5%** | best of the phase, inside the +-4 seed band of the baseline |
 | residual_k4_soft | residual | soft grad | 4 / 8 (4) | diverged | loss NaN at step ~360 (kl_nats 13, cand_div 0.96: the candidates blew apart), then the C++ tree segfaulted on the NaN priors (now a FloatingPointError). Parked |
-| full_k4_wta | full | wta 0.05 | 4 / 8 (4) | | |
-| residual_k4_wta_s12 | residual | wta 0.05 | 4 / 12 (8) | | matched guided sims for the K=8 run |
-| residual_k8_wta_s16 | residual | wta 0.05 | 8 / 16 (8) | | |
+| full_k4_wta | full | wta 0.05 | 4 / 8 (4) | 83.2% | full-vector candidates no longer collapse either (cand_div 0.28 at eval, the most diverse of the phase) but cand_ce_gap 0.012: different vectors, same outcome |
+| residual_k4_wta_s12 | residual | wta 0.05 | 4 / 12 (8) | 86.5% | cand_ce_gap 0.011; 8 guided simulations change nothing on this tier |
+| residual_k8_wta_s16 | residual | wta 0.05 | 8 / 16 (8) | 85.6% | K=8 at 8 guided sims: level with K=4; cand_div 0.10, cand_ce_gap 0.024; eval memory 807 MB vs 358 (the arena scales with K x sims) |
