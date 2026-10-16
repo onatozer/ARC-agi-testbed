@@ -1,0 +1,6 @@
+# Phase 7 (N-Queens): seeds. The flags recipe scored 51.0 / 32.0 at K=8 (seed 0 / 1), so single runs cannot rank the trained variants (44-55%):
+# a third seed of the best learned configuration and second seeds of its fixed-flag counterparts at K=4 and K=8
+residual_k4_wta_s2 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta seed=2
+flags_k4_wta_s1 arch=treerm arch.candidate_loss=wta seed=1
+flags_k8_wta_s16_s1 arch=treerm arch.candidate_loss=wta arch.num_candidates=8 arch.mcts_simulations=16 seed=1
+residual_k8_wta_s16_s1 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.num_candidates=8 arch.mcts_simulations=16 seed=1

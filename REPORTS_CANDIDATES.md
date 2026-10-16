@@ -10,30 +10,32 @@ phases 2+ under `~/ARC-agi-testbed/autoresearch_runs/candidates/<tier>/` (W&B `c
 
 ## 0. Summary (read this first)
 
-Interim (2026-10-16 08:20; phase 5, the K=8 follow-ups, is queued; section 4 is the log).
+Interim (2026-10-16 10:40; phase 7, seeds of the key comparison, is running; section 4 is the log).
 
 1. **The candidate loss is the change that matters, and it shows only where the search has something to decide.** On
-   8x8 N-Queens (phase 2) residual candidates trained with the wta loss reach **55.2% and 54.1%** (two seeds,
-   `NQueens/accuracy` at step 3000; posterior 52.7%) against **34.9% and 37.3%** for the flags recipe and **30.4%** for
-   residual candidates without the loss: +17 to +20 points, ten times the seed spread. The trained candidates also make
-   the prior usable as a policy (eval `argmax_agree` 0.70-0.80 vs 0.42, `kl_nats` 0.17-0.21 vs 0.47). On 6x6 Sudoku,
-   where one good u_t is enough, every variant stays in the recipe's 80-89% band (phase 1; the 92.8% of the annealed
-   wta was seed noise, its replicate is 86.1%).
-2. **About half of that gain is the learned proposals, half the K-rollout training signal** (phase 4). The loss rolls
-   out every candidate with gradient, so a step trains the TRM core on K rollouts instead of one. The control, the
-   wta loss on the fixed-direction flag candidates (no learned generator), scores **44.4%**: +8 over the recipe from
-   the extra signal, and the learned residual candidates add another +10 on top of it (their `cand_ce_gap` is 0.065
-   nats against 0.03 for the trained flags: the learned proposals differ more in outcome).
-3. **The three diversity mechanisms do not make the candidates more different in outcome** (phase 3, both tiers).
+   8x8 N-Queens (`NQueens/accuracy` at step 3000, 20 single-seed runs over phases 2-6) every run trained with the
+   candidate loss scores **44-55% (mean ~50)** and every run without it **30-37%, plus one 51% outlier** (mean ~36):
+   +14 points. With the loss the prior becomes a usable policy (eval `argmax_agree` 0.70-0.83 vs 0.42-0.47, `kl_nats`
+   0.13-0.21 vs 0.28-0.47). On 6x6 Sudoku, where one good u_t is enough, every variant stays in the recipe's 80-89%
+   band (phase 1; the annealed wta's 92.8% replicated at 86.1%).
+2. **The seed noise of this tier is larger than the differences between the trained variants.** The flags recipe at
+   K=8 scored 51.0% on seed 0 and 32.0% on seed 1 (phase 5), so the 44-55% spread among the trained variants cannot
+   rank them from single runs. What the single runs suggest, pending phase 7's seeds: the learned residual candidates
+   at K=4 are the top of the range (55.2 / 54.1 on two seeds; posterior 52.7), the wta loss on the fixed flags is
+   44.4% at K=4 and 55.0% at K=8, and the new `flags_residual` mode (phase 6: a fixed flag per slot plus a learned
+   delta) is 44.9 / 46.5 at K=4 / K=8, no better than the flags.
+3. **K=8 does not pay in any configuration tried** (phase 2, 5, 6): residual + wta 51.7% at 16 simulations and
+   46.6% at 24 (16 guided, and 16 guided at eval), flags_residual 46.5%, flags + wta 55.0%, all against the K=4
+   counterparts' 44-55%, at 2.4-2.6x the eval memory. The trained generator's 8 slots are not 8 different proposals
+   (`cand_div` 0.05-0.10 at both K, `cand_ce_gap` 0.06-0.10 nats), and giving the search more guided simulations at
+   K=8 did not help.
+4. **The three diversity mechanisms do not make the candidates more different in outcome** (phase 3, both tiers).
    Balancing works as a router constraint and recoverability trains to 0.52 on N-Queens (chance 0.25), but
-   `cand_div` and `cand_ce_gap` and the accuracies are the wta-alone values (N-Queens 52-53%, Sudoku 88-90%).
-4. **K=8 does not pay for the trained candidates yet, but it does for the flags.** `residual_k8_wta_s16` (8 guided
-   simulations, as at K=4) is 51.7%, level-to-below K=4 at 2.4x the eval memory; residual without the loss stays at
-   32.3% (its 8 candidates are copies). `flags_k8_s16` jumps to **51.0%** from 35-37% at K=4 / 8 sims: eight fixed
-   orthonormal directions plus the doubled simulations buy as much as the trained K=4 candidates (single seed; replicate,
-   the wta loss on top of it, and K=8 with 16 guided simulations are phase 5). Reading: what the search needs is
-   candidates that *differ*; the flags get that by construction at K=8, the residual generator gets it from the loss
-   at K=4 but its 8 slots are not yet 8 different proposals (`cand_div` 0.07-0.09 at both K).
+   `cand_div`, `cand_ce_gap` and the accuracies are the wta-alone values (N-Queens 52-53%, Sudoku 88-90%).
+5. **About half of the loss's gain is the K-rollout training signal** (phase 4): the loss rolls out every candidate
+   with gradient, so a step trains the TRM core on K rollouts instead of one, and the control (the loss on the fixed
+   flags, no learned generator) sits mid-way at 44.4%. Whether the learned proposals are worth the other half is
+   what phase 7's seeds decide.
 ## 1. The problem
 
 TreeRM's learned candidate generator (`candidate_mode=full`, and `residual` = u_t + generator output) collapsed in every
@@ -173,6 +175,32 @@ scaled the search can use them. Single seed; phase 5 replicates it.
 `flags_k8_s16_s1` (seed replicate of the 51.0%), `flags_k8_wta_s16` (the wta loss on the eight flags: does the
 K-rollout signal stack on the by-construction diversity), `residual_k8_wta_s24` (K=8 with 16 guided simulations in
 training and 16 guided at eval, `eval_mcts_simulations=24`: the trained K=8 with the search budget K=4 had).
+
+| run | acc @3000 | argmax_agree | kl_nats | cand_div | cand_ce_gap | eval MB | reading |
+|---|---|---|---|---|---|---|---|
+| flags_k8_s16_s1 (seed 1) | 32.0% (24.8) | 0.47 | 0.28 | 0.033 | - | 2786 | the 51.0% was seed noise: flags K=8 is 51 / 32, the recipe's spread on this tier is ~20 points |
+| flags_k8_wta_s16 | 55.0% (51.6) | 0.83 | 0.13 | 0.053 | 0.084 | 2786 | the wta loss on eight fixed flags matches residual K=4 + wta |
+| residual_k8_wta_s24 | 46.6% (44.2) | 0.72 | 0.31 | 0.101 | 0.096 | 3048 | 16 guided simulations at K=8, train and eval: no better than 8 (51.7%) |
+
+### Phase 6 (2026-10-16 09:40-10:30, N-Queens): `candidate_mode=flags_residual`
+
+Commit `4f4bfb6`: slot k = u_t + its fixed flag + a learned delta from the residual generator, so the slots differ by
+construction and carry learned content (the per-slot conditioning the phase-3 reading asked for).
+
+| run | acc @3000 | argmax_agree | kl_nats | cand_div | cand_ce_gap | reading |
+|---|---|---|---|---|---|---|
+| flagres_k4_wta | 44.9% (43.8) | 0.68 | 0.30 | 0.101 | 0.059 | level with the flags + wta control (44.4%), 10 below residual + wta |
+| flagres_k8_wta_s16 | 46.5% (44.6) | 0.83 | 0.17 | 0.101 | 0.085 | K=8 no better |
+
+**Reading of phases 5-6.** The flags' seed spread (51.0 / 32.0 at K=8, 34.9 / 37.3 at K=4) is as large as the whole
+range of the trained variants, so single runs cannot rank residual (55.2 / 54.1), flags + wta (44.4 at K=4, 55.0 at
+K=8) and flags_residual (44.9 / 46.5). The one robust fact is the loss itself (+14 on average over 20 runs). Phase 7
+adds seeds to the key comparison.
+
+### Phase 7 (queued 2026-10-16 10:40, N-Queens): seeds
+
+`residual_k4_wta_s2`, `flags_k4_wta_s1`, `flags_k8_wta_s16_s1`, `residual_k8_wta_s16_s1`: does the learned
+generator beat the fixed flags under the loss, and does K=8 beat K=4, once each has two or three seeds.
 
 **Reading of phase 1 so far.** The fast tier cannot answer the question. Every variant lands in the recipe's seed band
 (80-89%), and the diagnostics say why: the candidates differ by ~0.02 nats in rollout CE (`cand_ce_gap`, logged 0.007), the search's
