@@ -11,7 +11,7 @@ LOCK=${GPU_LOCK:-$HOME/ARC-agi-testbed/autoresearch_runs/mcts_bench/gpu.lock}
 RUNDIR=$RUNS/$NAME; rm -rf "$RUNDIR"; mkdir -p "$RUNDIR"
 cd "$RUNDIR"
 START=$(date +%s)
-flock "$LOCK" env OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" \
+flock -o "$LOCK" env OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" \
   /usr/bin/time -v "$WT/venv/bin/python" "$WT/pretrain.py" --config-path "$WT/config" --config-name cfg_pretrain \
   dataset.data_path="$WT/data/sudoku-6u" dataset.grid_size=6 dataset.name=Sudoku-6u \
   checkpoint_interval_steps=null heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000 \

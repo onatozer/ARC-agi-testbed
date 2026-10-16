@@ -50,6 +50,10 @@ recipe's seed spread on this tier is about +-4 points. One GPU job at a time (th
 is rolled out once before PUCT, so K and the simulation count are tuned together: "guided" simulations =
 `mcts_simulations - K`.
 
+Harness mishap (2026-10-16 00:41-01:16): the diverged `residual_k4_soft` run segfaulted, but its orphaned dataloader
+worker kept the inherited `gpu.lock` descriptor, so the next run waited 35 min on the lock with the GPU idle. The run
+scripts now use `flock -o` (the lock descriptor is closed before the command runs, so only the flock process holds it).
+
 ## 4. Log
 
 **Reading of phase 1 so far.** The fast tier cannot answer the question. Every variant lands in the recipe's seed band

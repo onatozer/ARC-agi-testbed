@@ -16,7 +16,7 @@ esac
 RUNDIR=$RUNS/$NAME; rm -rf "$RUNDIR"; mkdir -p "$RUNDIR"
 cd "$RUNDIR"
 START=$(date +%s)
-flock "$LOCK" env OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" \
+flock -o "$LOCK" env OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" WANDB_SILENT=true PYTHONPATH="$WT" \
   /usr/bin/time -v "$WT/venv/bin/python" "$WT/pretrain.py" --config-path "$WT/config" --config-name "$CFG" $DATA \
   checkpoint_interval_steps=null heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000 \
   +project_name=ARC-agi-testbed +entity=ozeronatwanb +run_name="cand_${TIER}_$NAME" "$@" > "$RUNDIR/train.log" 2>&1
