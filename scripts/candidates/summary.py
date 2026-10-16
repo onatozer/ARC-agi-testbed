@@ -23,14 +23,22 @@ def summarize(run_dir: str) -> None:
         exit_code = re.findall(r"^exit=(\d+)", text, re.M)
         secs = int(elapsed[-1][0] or 0) * 3600 + int(elapsed[-1][1]) * 60 + float(elapsed[-1][2]) if elapsed else None
         print(f"params {params[-1] if params else '?'} | wall {f'{secs:.0f} s' if secs is not None else '?'} | peak RSS {int(rss[-1]) // 1024 if rss else '?'} MB | exit {exit_code[-1] if exit_code else '?'}")
-    last_train = None
+    train = []
     for row in history(run_dir):
         if "all/exact_accuracy" in row:
             print("eval", json.dumps({k: round(row[k], 4) for k in EVAL_KEYS if k in row} | {"step": row.get("_step")}))
-        elif row.get("train/search/post_entropy", 0) > 0:  # the search metrics are summed over the rows that halted this step: zero most steps
-            last_train = row
-    if last_train:
-        print("last train", json.dumps({k: round(last_train[k], 4) for k in TRAIN_KEYS if k in last_train} | {"step": last_train.get("_step")}))
+        elif "train/lm_loss" in row:
+            train.append(row)
+    # The search metrics are averaged over the rows that halted this step, so they are zero on most steps and a row
+    # does not always carry every key: report each key's mean over its nonzero values in the last 200 train rows
+    if train:
+        tail = train[-200:]
+        means = {}
+        for k in TRAIN_KEYS:
+            vals = [r[k] for r in tail if r.get(k, 0) != 0]
+            if vals:
+                means[k] = round(sum(vals) / len(vals), 4)
+        print("train (mean of last 200 rows)", json.dumps(means | {"last_step": tail[-1].get("_step")}))
 
 
 for run in sys.argv[1:]:
