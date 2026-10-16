@@ -89,11 +89,18 @@ class TreeRMInner(GRAM_Inner):
         del self.prior_head, self.posterior_head
         # The same layers (state-dict keys unchanged) in a block that skips the zero-scale noise draw the search replays
         self.L_level = NoiselessBlocks(layers=list(self.L_level.layers), config=self.config)
-        if self.config.candidate_mode not in ("full", "residual", "flags"):
-            raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
-        if self.config.candidate_mode == "flags":
+        if self.config.candidate_mode not in ("full", "residual", "flags", "flags_residual"):
+            raise ValueError(f"candidate_mode must be 'full', 'residual', 'flags' or 'flags_residual', got {self.config.candidate_mode!r}.")
+        if self.config.candidate_mode in ("flags", "flags_residual"):
             self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
-        else:
+        if self.config.candidate_mode == "flags_residual":
+            # The learned per-slot content on top of the flags: slot k = u_t + flag_k + delta_k(z_L, u_t)
+            self.candidate_residual = CandidateGenerator(
+                hidden_size=self.config.hidden_size,
+                num_candidates=self.config.num_candidates,
+                expansion=self.config.expansion,
+            )
+        if self.config.candidate_mode in ("full", "residual"):
             self.candidate_generator = CandidateGenerator(
                 hidden_size=self.config.hidden_size,
                 num_candidates=self.config.num_candidates,
@@ -165,6 +172,8 @@ class TreeRMInner(GRAM_Inner):
         cand = self.candidate_generator(z_L, u_t)
         if self.config.candidate_mode == "residual":
             cand = cand + u_t.unsqueeze(1)
+        elif self.config.candidate_mode == "flags_residual":
+            cand = cand + self.candidate_residual(z_L, u_t)
         return cand
 
     def _remaining_updates(self, cycle: int, batch_size: int) -> List[int]:

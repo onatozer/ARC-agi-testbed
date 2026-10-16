@@ -15,7 +15,7 @@ loss:
 
 # ---- Candidates: what each z_H update chooses between ----
 num_candidates: 4 # K proposals per z_H update. Every root child is rolled out once before PUCT, so raise mcts_simulations with K (guided simulations = mcts_simulations - K)
-candidate_mode: flags # flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse; the recipe); residual = u_t + generator output; full = the generator outputs K z_H vectors. The learned modes need candidate_loss or candidate_soft_grad: with neither only the picked candidate gets a gradient and the rest collapse
+candidate_mode: flags # flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse; the recipe); residual = u_t + generator output; flags_residual = flags + generator output (slots differ by construction and carry learned content); full = the generator outputs K z_H vectors. The learned modes need candidate_loss or candidate_soft_grad: with neither only the picked candidate gets a gradient and the rest collapse
 candidate_loss: none # a gradient for every candidate on the grad cycles from its own rollout CE (plain TRM updates to the end of the step, then the decode): none; wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution
 candidate_loss_eps: 0.05 # wta only: the share of the candidate loss the non-winning candidates split (0 = pure winner-take-all, 1 = uniform)
 candidate_loss_weight: 1.0 # multiplier on the candidate loss

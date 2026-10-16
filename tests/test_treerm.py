@@ -235,6 +235,26 @@ def test_flag_candidates_are_u_t_plus_orthonormal_directions():
 
 
 @needs_cuda
+def test_flags_residual_candidates_are_flags_plus_a_learned_delta_per_slot():
+    model, batch = _treerm_head(candidate_mode="flags_residual", candidate_loss="wta", batch_size=1)
+    inner = model.model.inner
+    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
+    z_L, u_t = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(2))
+    with torch.no_grad():
+        cand = inner._candidates(z_L, u_t)
+        flags = inner.candidate_generator(z_L, u_t)
+        delta = inner.candidate_residual(z_L, u_t)
+    torch.testing.assert_close(cand, flags + delta)
+    assert delta.shape == cand.shape and (delta[:, 0] != delta[:, 1]).any()
+    # With the wta loss every slot of the learned delta gets a gradient (the flags make the slots differ, the delta carries content)
+    model.train()
+    _, loss, _, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    loss.backward()
+    res = inner.candidate_residual
+    assert (res.head[-1].weight.grad.view(res.num_candidates, -1).norm(dim=-1) > 0).all()
+
+
+@needs_cuda
 def test_treerm_argmax_pick_is_deterministic_at_eval():
     model, batch = _treerm_head(argmax_pick=True)
     model.eval()
