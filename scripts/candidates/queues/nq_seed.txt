@@ -1,0 +1,2 @@
+# second seed of the N-Queens baseline: is 34.9% (seed 0) the band or an outlier?
+flags_k4_s1 arch=treerm seed=1

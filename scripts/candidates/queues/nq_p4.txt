@@ -1,0 +1,4 @@
+# Phase 4 (N-Queens): is the +15-20 point gain of the candidate loss the learned proposals or the K-rollout training signal?
+# flags_k4_wta rolls out all K fixed-direction candidates with the wta loss but has no learned generator; residual_k4_wta_s1 is the seed replicate of the 55.2% run
+flags_k4_wta arch=treerm arch.candidate_loss=wta
+residual_k4_wta_s1 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta seed=1
