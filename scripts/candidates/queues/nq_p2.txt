@@ -1,9 +1,0 @@
-# Phase 2 (8x8 N-Queens, where the search overrides the prior): learned candidates with the candidate loss, and K with the simulations scaled
-flags_k4 arch=treerm
-residual_k4_none arch=treerm arch.candidate_mode=residual
-residual_k4_wta arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta
-residual_k4_post arch=treerm arch.candidate_mode=residual arch.candidate_loss=posterior
-residual_k4_wta_s12 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.mcts_simulations=12
-residual_k8_wta_s16 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.num_candidates=8 arch.mcts_simulations=16
-residual_k8_none_s16 arch=treerm arch.candidate_mode=residual arch.num_candidates=8 arch.mcts_simulations=16
-flags_k8_s16 arch=treerm arch.num_candidates=8 arch.mcts_simulations=16

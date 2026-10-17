@@ -9,18 +9,15 @@ from torch import nn
 from models.losses import IGNORE_LABEL_ID
 from models.losses.base import kl_balanced_logits
 from models.mcts import MCTS_IMPLS, Node
-from ..layers import (
-    CastedLinear,
-    SwiGLU,
-    rms_norm,
-)
-from .merged_arch import Blocks, ModelCarry, LatentCarry, _add_puzzle_emb_positions
+from ..layers import CastedLinear, SwiGLU, rms_norm
+from .merged_arch import Blocks, LatentCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
 from .grampd import CandidateScorer
 
 
 class CandidateGenerator(nn.Module):
-    """Proposes num_candidates full z_H vectors from the new z_H and z_L: [B, S, H] x [B, S, H] -> [B, K, S, H]."""
+    """Proposes num_candidates z_H vectors (or, in residual mode, per-slot deltas on u_t) from the new z_H and z_L:
+    [B, S, H] x [B, S, H] -> [B, K, S, H]. Learned proposals; trained by candidate_loss (REPORTS_CANDIDATES.md)."""
 
     def __init__(self, hidden_size: int, num_candidates: int, expansion: float):
         super().__init__()
@@ -89,23 +86,20 @@ class TreeRMInner(GRAM_Inner):
         del self.prior_head, self.posterior_head
         # The same layers (state-dict keys unchanged) in a block that skips the zero-scale noise draw the search replays
         self.L_level = NoiselessBlocks(layers=list(self.L_level.layers), config=self.config)
-        if self.config.candidate_mode not in ("full", "residual", "flags", "flags_residual"):
-            raise ValueError(f"candidate_mode must be 'full', 'residual', 'flags' or 'flags_residual', got {self.config.candidate_mode!r}.")
-        if self.config.candidate_mode in ("flags", "flags_residual"):
+        if self.config.candidate_mode not in ("full", "residual", "flags"):
+            raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
+        if self.config.candidate_mode == "flags":
             self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
-        if self.config.candidate_mode == "flags_residual":
-            # The learned per-slot content on top of the flags: slot k = u_t + flag_k + delta_k(z_L, u_t)
-            self.candidate_residual = CandidateGenerator(
-                hidden_size=self.config.hidden_size,
-                num_candidates=self.config.num_candidates,
-                expansion=self.config.expansion,
-            )
-        if self.config.candidate_mode in ("full", "residual"):
+        else:
             self.candidate_generator = CandidateGenerator(
                 hidden_size=self.config.hidden_size,
                 num_candidates=self.config.num_candidates,
                 expansion=self.config.expansion,
             )
+        if self.config.candidate_loss not in ("none", "wta", "posterior"):
+            raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
+        if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
+            raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
         self.candidate_scorer = CandidateScorer(
             hidden_size=self.config.hidden_size,
             num_heads=self.config.num_heads,
@@ -122,40 +116,11 @@ class TreeRMInner(GRAM_Inner):
             warnings.warn(f"mcts_impl=cpp could not be built, falling back to mcts_impl=fused (same visit counts, slower eval): {exc}")
             self.mcts = MCTS_IMPLS["fused"](num_simulations=self.config.mcts_simulations, c_puct=self.config.mcts_c_puct)
 
-        if self.config.mcts_horizon not in ("step", "full"):
-            raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
-        if self.config.rollout_policy not in ("trm", "prior"):
-            raise ValueError(f"rollout_policy must be 'trm' or 'prior', got {self.config.rollout_policy!r}.")
-        if self.config.candidate_loss not in ("none", "wta", "posterior"):
-            raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
-        if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
-            raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
-        if self.config.candidate_loss_eps_anneal_steps < 0:
-            raise ValueError("candidate_loss_eps_anneal_steps must be >= 0.")
-        if self.config.candidate_recover_weight > 0:
-            # Slot recoverability (InfoGAN-style): a K-way classifier reads a candidate's decoded distribution and must say
-            # which slot made it; its CE trains the generator, so identical candidates (unrecoverable slots) are penalised
-            decoded_len = self.config.seq_len - (self.config.puzzle_emb_len if self.config.puzzle_emb_ndim != 0 else 0)  # what _decode keeps
-            self.candidate_recover_head = nn.Linear(decoded_len * self.config.vocab_size, self.config.num_candidates)
-        # Training forwards so far (one per optimizer step: a batch is one forward); drives the eps anneal. Not saved,
-        # so a resumed run anneals again from the start
-        self.register_buffer("_train_forwards", torch.zeros((), dtype=torch.long), persistent=False)
         if self.config.search_compile and not getattr(self.mcts, "fused", False):
-            raise ValueError("search_compile needs a fused search (mcts_impl=fused or wu): only its round has fixed shapes.")
-        if self.config.mcts_leaves_per_round != 1:
-            if not hasattr(self.mcts, "leaves_per_round"):
-                raise ValueError("mcts_leaves_per_round > 1 needs the WU-UCT search (mcts_impl=wu).")
-            self.mcts.leaves_per_round = self.config.mcts_leaves_per_round
-        if self.config.search_memo and not getattr(self.mcts, "memo", False):
-            raise ValueError("search_memo needs a search that can continue from a subtree (mcts_impl=cpp).")
-        # (previous search's forest and states, chosen root children) of this step's last eval search, see _search
-        self._memo: Optional[Tuple[Any, List[Any], List[int]]] = None
-        self._pending_memo: Optional[Tuple[Any, List[Any]]] = None
+            raise ValueError("search_compile needs a fused search (mcts_impl=fused or cpp): only its round has fixed shapes.")
 
         # Token-wise CE the training rollouts are valued with; LossHeadTreeRM sets it to the loss head's loss_fn
         self.rollout_loss_fn: Optional[Callable[..., torch.Tensor]] = None
-        # Per-puzzle supervision steps already run, set by TreeRM.forward; the 'full' horizon needs it
-        self.steps_done: Optional[torch.Tensor] = None
         self._bootstrap: List[Tuple[torch.Tensor, torch.Tensor]] = []
 
     def _decode(self, z_H: torch.Tensor) -> torch.Tensor:
@@ -172,17 +137,7 @@ class TreeRMInner(GRAM_Inner):
         cand = self.candidate_generator(z_L, u_t)
         if self.config.candidate_mode == "residual":
             cand = cand + u_t.unsqueeze(1)
-        elif self.config.candidate_mode == "flags_residual":
-            cand = cand + self.candidate_residual(z_L, u_t)
         return cand
-
-    def _remaining_updates(self, cycle: int, batch_size: int) -> List[int]:
-        """z_H updates left from this cycle's on (inclusive), per puzzle: to the end of this supervision step, or with
-        mcts_horizon = 'full' to the end of the last one."""
-        left = self.config.H_cycles - cycle
-        if self.config.mcts_horizon == "step":
-            return [left] * batch_size
-        return [left + self.config.H_cycles * (self.config.halt_max_steps - int(s) - 1) for s in self.steps_done.tolist()]
 
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
@@ -219,22 +174,12 @@ class TreeRMInner(GRAM_Inner):
         token_acc = (mask & (logits.argmax(-1) == y)).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
         return -ce, token_acc.float()
 
-    def _rollout_depths(self, depths: List[int]) -> List[int]:
-        """The number of TRM updates each leaf's rollout runs: its allowed depth, capped at eval by eval_rollout_cap
-        (at least 1, since the transition needs the first update). A cap changes the search's values (the value head
-        scores a state short of the step's end), so it is a measured option, off by default."""
-        cap = self.config.eval_rollout_cap
-        if self.training or cap is None:
-            return depths
-        return [min(depth, max(int(cap), 1)) for depth in depths]
-
     def _rollout_values(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], depths: List[int], x: torch.Tensor, y: torch.Tensor) -> List[float]:
         """The simulation: from each leaf, its allowed depth's worth of plain TRM updates (no candidates), then its value."""
         rows = [row for row, _, _ in states]
         z_H = torch.stack([s[1] for s in states])
         z_L = torch.stack([s[2] for s in states])
         x, y = x[rows], y[rows]
-        depths = self._rollout_depths(depths)
         depths_t = torch.tensor(depths, device=z_H.device)
         values = torch.zeros(len(states), device=z_H.device)
         targets = torch.zeros(len(states), device=z_H.device)
@@ -250,14 +195,7 @@ class TreeRMInner(GRAM_Inner):
                 break
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            u_t = self.L_level(z_H, z_L, **seq_dict)
-            if self.config.rollout_policy == "prior":
-                # Follow the policy being trained: the scorer's argmax candidate, as the no-grad cycles and eval do
-                cand = self._candidates(z_L, u_t)
-                best = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).argmax(dim=-1)
-                z_H = cand[torch.arange(cand.shape[0], device=cand.device), best]
-            else:
-                z_H = u_t
+            z_H = self.L_level(z_H, z_L, **seq_dict)
 
         if self.training and self.config.value_bootstrap_weight > 0:
             self._bootstrap.append((leaf_token, targets))
@@ -283,30 +221,22 @@ class TreeRMInner(GRAM_Inner):
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            if n_updates == 0 or self.config.rollout_policy == "prior":
-                step_cand = self._candidates(z_L, u_t)
-                step_scores = self.candidate_scorer(u_t, step_cand, seq_dict["cos_sin"])
-                if n_updates == 0:
-                    # The transition: the rollout's first update is exactly the expand's u_t
-                    cand, priors, z_L_next = step_cand, step_scores.softmax(dim=-1), z_L
-            if self.config.rollout_policy == "prior":
-                z_H = step_cand[torch.arange(step_cand.shape[0], device=step_cand.device), step_scores.argmax(dim=-1)]
-            else:
-                z_H = u_t
+            if n_updates == 0:
+                # The transition: the rollout's first update is exactly the expand's u_t
+                cand = self._candidates(z_L, u_t)
+                priors, z_L_next = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1), z_L
+            z_H = u_t
         return values, targets, leaf_token, cand, priors, z_L_next
 
     # A fused search's state is (batch row, arena index): the latents of every node of this search live in two
     # preallocated arenas [capacity, S, H], so a round gathers its leaves with one index_select and appends all its
     # children with one copy, instead of stacking per-node views and slicing K views per leaf in Python
 
-    def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int, keep: bool = False) -> None:
-        """Sizes the arenas for this search (root children, then K children per leaf per round: B*K*(sims + 1) nodes,
-        plus a round's worth of slack for a WU-UCT search's wider rounds; reused across searches) and writes the root
-        children in. keep: continue a memoised search (its nodes stay where they are; this step's searches share the
-        arena, hence H_cycles times the capacity)."""
+    def _arena_reset(self, cand: torch.Tensor, z_L: torch.Tensor, num_simulations: int) -> None:
+        """Sizes the arenas for this search (root children, then K children per leaf per round, plus one round of
+        slack: B*K*(sims + 2) nodes; reused across searches) and writes the root children in."""
         B, K, S, H = cand.shape
-        per_search = B * K * (num_simulations + getattr(self.mcts, "leaves_per_round", 1) + 1)
-        capacity = per_search * (self.config.H_cycles if self.config.search_memo else 1)
+        capacity = B * K * (num_simulations + 2)
         arena = getattr(self, "_arena", None)
         # A tensor made under inference_mode (the in-training eval) cannot be written outside it (the next training
         # step) and vice versa, so an arena is only reused on the same side of that boundary
@@ -314,9 +244,6 @@ class TreeRMInner(GRAM_Inner):
                 or arena[0].is_inference() != torch.is_inference_mode_enabled():
             arena = tuple(torch.empty(capacity, S, H, dtype=cand.dtype, device=cand.device) for _ in range(2))
             self._arena = arena
-            keep = False
-        if keep and self._arena_next + per_search <= capacity:
-            return
         arena[0][: B * K].copy_(cand.flatten(0, 1))
         arena[1][: B * K].copy_(z_L.repeat_interleave(K, dim=0))
         self._arena_next = B * K
@@ -336,9 +263,8 @@ class TreeRMInner(GRAM_Inner):
             pad = SEARCH_BATCH_QUANTUM - n % SEARCH_BATCH_QUANTUM
             rows, indices, padded = rows + rows[:1] * pad, indices + indices[:1] * pad, depths + depths[:1] * pad
         ids = torch.tensor(indices, device=arena_H.device)
-        rollout = self._rollout_depths(padded)  # how far each leaf is rolled out (eval_rollout_cap); depths still say what gets expanded
-        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(rollout, device=arena_H.device), max(rollout))
-        outputs = _compiled_step_core(self.config.search_compile_mode)(self, *args) if self.config.search_compile else self._step_core(*args)
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(padded))
+        outputs = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
         values, targets, leaf_token, cand, priors, z_L_next = (t[:n] if t is not None else None for t in outputs)
 
         if self.training and self.config.value_bootstrap_weight > 0:
@@ -372,14 +298,8 @@ class TreeRMInner(GRAM_Inner):
         self.mcts.num_simulations = self.config.mcts_simulations if self.training else (self.config.eval_mcts_simulations or self.config.mcts_simulations)
         fused = getattr(self.mcts, "fused", False)
         B, K = cand.shape[:2]
-        # search_memo (eval): the previous cycle's search of this step chose root child k*; its subtree (children
-        # states in the arena, priors, rollout values at the depths this search needs) is exactly this search's
-        # start, so the search continues from it instead of re-rolling what it already valued
-        memo = self.config.search_memo and not self.training and getattr(self.mcts, "memo", False)  # the bench swaps impls
-        reuse = self._memo if memo else None
-        self._memo = self._pending_memo = None
         if fused:
-            self._arena_reset(cand, z_L, self.mcts.num_simulations, keep=reuse is not None)
+            self._arena_reset(cand, z_L, self.mcts.num_simulations)
         roots = []
         for b in range(B):
             root = Node(latent=None, allowed_depth=remaining[b])
@@ -391,30 +311,19 @@ class TreeRMInner(GRAM_Inner):
             expand_fn=lambda states: self._expand(states, x),
             evaluate_fn=lambda states, depths: self._rollout_values(states, depths, x, y),
             **({"step_fn": lambda states, depths: self._step(states, depths, x, y)} if fused else {}),
-            **({"reuse": reuse} if reuse is not None else {}),
-            **({"cache": True} if memo else {}),
         )
-        if memo:
-            self._pending_memo = self.mcts.last  # completed by _mcts_guidance once the candidate is picked
         visits = torch.tensor(counts, dtype=torch.float32, device=cand.device)
         posterior = visits / visits.sum(dim=-1, keepdim=True)
-        # Mix in the uniform so a one-hot visit distribution can't drive the prior's logits to infinity through the KL
-        eps = self.config.posterior_smoothing
-        posterior = (1 - eps) * posterior + eps / posterior.shape[-1]
         return torch.log(posterior.clamp_min(1e-8))
 
-    def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int], left: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor | int, Dict[str, torch.Tensor]]:
+    def _mcts_guidance(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> Tuple[torch.Tensor, torch.Tensor | int]:
         """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
-        scorer's prior (only when gradients are on). left: z_H updates left in this supervision step, this one included
-        (what the candidate loss rolls out); None = remaining[0], exact for mcts_horizon=step."""
+        scorer's prior (only when gradients are on)."""
         cand = self._candidates(z_L, u_t)
         prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
-        if self.training:
-            # The label-informed search only where its KL is paid (the grad cycles); elsewhere it would steer the
-            # trajectory with label information for free. The prior picks the candidate on the no-grad cycles
-            search = torch.is_grad_enabled()
-        else:
-            search = self.config.eval_search  # eval_search=false: the prior alone picks at eval (diagnostic)
+        # The label-informed search only where its KL is paid (the grad cycles); elsewhere it would steer the
+        # trajectory with label information for free. The prior picks the candidate on the no-grad cycles
+        search = not self.training or torch.is_grad_enabled()
         post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining) if search else prior_logits.detach()
 
         kl_loss = 0
@@ -425,10 +334,6 @@ class TreeRMInner(GRAM_Inner):
                 post_logits=post_logits,
                 alpha=self.config.kl_grad_prior,
             ).sum() * self.config.kl_strength
-            # Diversity penalty (folded into the guidance loss): mean pairwise cosine between a puzzle's candidates,
-            # summed over the batch. Without it the candidates collapse onto one another (see REPORTS.md)
-            if self.config.candidate_diversity_weight > 0:
-                kl_loss = kl_loss + self.config.candidate_diversity_weight * self._pairwise_cosine(cand).sum()
             # Value bootstrapping (AlphaZero-style): the value head predicts each visited leaf's rollout token accuracy.
             # Summed over puzzles, averaged over this search's leaves (one leaf per puzzle per simulation, however the
             # search batches them), so it scales like the loss head's LPRM term
@@ -438,43 +343,20 @@ class TreeRMInner(GRAM_Inner):
                 predicted = torch.sigmoid(self.v_head(leaf_tokens).to(torch.float32)).squeeze(-1)
                 bootstrap = F.mse_loss(predicted, targets, reduction="sum") / self.mcts.num_simulations
                 kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
-            # Every candidate gets a gradient from its own rollout (see _candidate_loss); without this only the picked
-            # one does, and learned candidates collapse (REPORTS.md section 4, REPORTS_CANDIDATES.md)
-            if self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0:
-                cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, left if left is not None else remaining[0])
+            # Every candidate gets a gradient from its own rollout (_candidate_loss); without it only the picked one does
+            # and learned candidates collapse (REPORTS.md section 4, REPORTS_CANDIDATES.md)
+            if self.config.candidate_loss != "none":
+                cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, remaining[0])
                 kl_loss = kl_loss + cand_loss
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
         logits = prior_logits + (post_logits - prior_logits).detach()
-        if self.config.argmax_pick and not torch.is_grad_enabled():
-            weights = F.one_hot(logits.argmax(dim=-1), logits.shape[-1]).float()
-        else:
-            weights = F.gumbel_softmax(logits.float(), tau=self.config.gumbel_temp, hard=True, dim=-1)
+        weights = F.gumbel_softmax(logits.float(), tau=1.0, hard=True, dim=-1)
 
-        if self.config.candidate_soft_grad and torch.is_grad_enabled():
-            # Forward: the sampled candidate, with the straight-through path to the scorer. Backward into the candidates:
-            # the posterior-weighted mixture, so the unpicked ones learn from this pick in proportion to their mass
-            mix = torch.einsum("bk,bksh->bsh", logits.float().softmax(dim=-1).detach(), cand.float())
-            z_H = torch.einsum("bk,bksh->bsh", weights, cand.detach().float()) + (mix - mix.detach())
-        else:
-            z_H = torch.einsum("bk,bksh->bsh", weights, cand.float())
-        z_H = z_H.to(u_t.dtype)
-        if torch.is_grad_enabled() and self.config.candidate_balance_weight > 0:
-            # Load balancing as for a mixture-of-experts router (Switch Transformer): K * sum_k f_k * P_k, with f_k the
-            # fraction of this batch's picks that went to slot k and P_k the scorer's mean prior on k; minimal (1) when
-            # the prior is spread over the slots and the picks follow it, so no slot can take every puzzle
-            picks = weights.detach().mean(dim=0)
-            mean_prior = prior_logits.float().softmax(dim=-1).mean(dim=0)
-            balance = logits.shape[-1] * (picks * mean_prior).sum()
-            kl_loss = kl_loss + self.config.candidate_balance_weight * balance * logits.shape[0]
-            cand_diag = {**(cand_diag if self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0 else {}),
-                         "search/balance": balance.detach().expand(logits.shape[0]), "search/pick_entropy": -(picks * picks.clamp_min(1e-8).log()).sum().expand(logits.shape[0])}
-        if self._pending_memo is not None:
-            self._memo = (*self._pending_memo, weights.argmax(dim=-1).tolist())
-            self._pending_memo = None
+        z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         diag = self._search_diagnostics(cand, prior_logits, post_logits)
-        if torch.is_grad_enabled() and (self.config.candidate_loss != "none" or self.config.candidate_recover_weight > 0 or self.config.candidate_balance_weight > 0):
+        if torch.is_grad_enabled() and self.config.candidate_loss != "none":
             diag.update(cand_diag)
         with torch.no_grad():  # candidate norm relative to the TRM update it replaces
             diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
@@ -490,12 +372,12 @@ class TreeRMInner(GRAM_Inner):
 
     def _candidate_loss(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, post_logits: torch.Tensor, left: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """A gradient for every candidate of a grad cycle, not just the picked one. Each candidate is rolled out with
-        gradient exactly as the search's root-child rollouts are (plain TRM updates to the end of this supervision step,
-        then the decode) and its label CE is weighted per candidate_loss: 'wta' = relaxed winner-take-all (the lowest-CE
-        candidate gets 1 - eps, the others share eps; Rupprecht et al. 2017, the standard cure for a multiple-choice head
-        whose untrained slots never win), 'posterior' = the search's visit distribution. Returns the batch-summed loss and
-        per-puzzle diagnostics: the weighted CE, the CE gap between the best and worst candidate, and whether the search's
-        argmax is the CE-best candidate."""
+        gradient exactly as the search's root-child rollouts are (left - 1 plain TRM updates to the end of this
+        supervision step, then the decode) and its label CE is weighted per candidate_loss: 'wta' = relaxed
+        winner-take-all (the lowest-CE candidate gets 1 - candidate_loss_eps, the others share it; Rupprecht et al. 2017,
+        the standard cure for a multiple-choice head whose untrained slots never win), 'posterior' = the search's visit
+        distribution. Returns the batch-summed loss and per-puzzle diagnostics: the weighted CE, the CE gap between the
+        worst and best candidate, and whether the search's argmax is the CE-best candidate (REPORTS_CANDIDATES.md)."""
         B, K = cand.shape[:2]
         z_H = cand.flatten(0, 1)
         z_L = z_L.repeat_interleave(K, dim=0)
@@ -507,43 +389,20 @@ class TreeRMInner(GRAM_Inner):
             z_H = self.L_level(z_H, z_L, **seq_dict)
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         mask = y != IGNORE_LABEL_ID
-        logits = self._decode(z_H)
-        ce = self.rollout_loss_fn(logits, y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
         ce = ce.float().view(B, K)
+        if self.config.candidate_loss == "wta":
+            eps = self.config.candidate_loss_eps
+            weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K
+        else:
+            weights = post_logits.float().softmax(dim=-1)
+        loss = (weights.detach() * ce).sum(dim=-1)  # [B]
         diag = {
+            "search/cand_loss": loss.detach(),
             "search/cand_ce_gap": (ce.max(dim=-1).values - ce.min(dim=-1).values).detach(),
             "search/cand_best_agree": (ce.argmin(dim=-1) == post_logits.argmax(dim=-1)).float(),
         }
-        total = ce.new_zeros(())
-        if self.config.candidate_loss != "none":
-            if self.config.candidate_loss == "wta":
-                eps = self._candidate_loss_eps()
-                weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K
-                diag["search/cand_eps"] = ce.new_full((B,), eps)
-            else:
-                weights = post_logits.float().softmax(dim=-1)
-            loss = (weights.detach() * ce).sum(dim=-1)  # [B]
-            diag["search/cand_loss"] = loss.detach()
-            total = total + self.config.candidate_loss_weight * loss.sum()
-        if self.config.candidate_recover_weight > 0:
-            # Which slot made this outcome? Trained on every candidate's decoded distribution (gradient into the generator
-            # through the decode); recover_acc is a direct measure of diversity in outcome space
-            slot_logits = self.candidate_recover_head(logits.float().softmax(dim=-1).flatten(1))
-            slots = torch.arange(K, device=ce.device).repeat(B)
-            recover = F.cross_entropy(slot_logits, slots, reduction="none").view(B, K).mean(dim=-1)  # [B]
-            diag["search/recover_loss"] = recover.detach()
-            diag["search/recover_acc"] = (slot_logits.argmax(dim=-1) == slots).float().view(B, K).mean(dim=-1)
-            total = total + self.config.candidate_recover_weight * recover.sum()
-        return total, diag
-
-    def _candidate_loss_eps(self) -> float:
-        """The wta eps in force: annealed linearly from 1 (every candidate trains equally) at the first training forward
-        to candidate_loss_eps at candidate_loss_eps_anneal_steps, so no slot locks in before the others have trained."""
-        steps = self.config.candidate_loss_eps_anneal_steps
-        if steps == 0:
-            return self.config.candidate_loss_eps
-        frac = min(int(self._train_forwards) / steps, 1.0)
-        return 1.0 + (self.config.candidate_loss_eps - 1.0) * frac
+        return loss.sum(), diag
 
     @torch.no_grad()
     def _search_diagnostics(self, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -567,13 +426,10 @@ class TreeRMInner(GRAM_Inner):
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
         counts: Dict[str, int] = {}
-        self._memo = self._pending_memo = None  # a search memo only carries across the cycles of one step
-        if self.training and torch.is_grad_enabled():
-            self._train_forwards += 1
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
             # Each key is averaged over the cycles that report it: the search diagnostics over every cycle, the
-            # candidate-loss ones (cand_loss, cand_ce_gap, ...) over the grad cycles only
+            # candidate-loss ones (cand_loss, cand_ce_gap, cand_best_agree) over the grad cycles only
             for key, value in diag.items():
                 diagnostics[key] = diagnostics.get(key, 0) + value
                 counts[key] = counts.get(key, 0) + 1
@@ -585,7 +441,7 @@ class TreeRMInner(GRAM_Inner):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
                 u_t = self.L_level(z_H, z_L, **seq_dict)
-                z_H, _, diag = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size), left=self.config.H_cycles - cycle)
+                z_H, _, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle] * batch_size)
                 accumulate(diag)
 
         # The last grad_cycles cycles carry the gradient; each pays the KL of its search's posterior from the prior
@@ -595,7 +451,7 @@ class TreeRMInner(GRAM_Inner):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            z_H, guidance_loss, diag = self._mcts_guidance(u_t, z_L, x, y, self._remaining_updates(cycle, batch_size), left=self.config.H_cycles - cycle)
+            z_H, guidance_loss, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle] * batch_size)
             kl_loss += guidance_loss
             accumulate(diag)
 
@@ -618,8 +474,8 @@ _STEP_CORE_COMPILED: Optional[Callable[..., Any]] = None
 SEARCH_BATCH_QUANTUM = 64  # a compiled search round's batch is padded to a multiple of this (see _step)
 
 
-def _compiled_step_core(mode: str = "reduce-overhead") -> Callable[..., Any]:
-    """TreeRMInner._step_core under torch.compile(mode), built once for the process (the first caller's mode). The search is
+def _compiled_step_core() -> Callable[..., Any]:
+    """TreeRMInner._step_core under torch.compile(mode="reduce-overhead"), built once for the process. The search is
     launch-bound and outside the model's compile (data-dependent control flow), but a compiled callee still runs
     compiled from inside it: the fixed-shape round becomes one CUDA graph replay per (batch, depth, mode). The
     unbound function is compiled, with the module as its first argument, so dynamo guards on the module that calls
@@ -631,7 +487,7 @@ def _compiled_step_core(mode: str = "reduce-overhead") -> Callable[..., Any]:
         torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
         # Static shapes: the backbone specialises the batch dimension anyway (mark_dynamic fails inside Blocks.forward),
         # so _step pads a round's batch to a multiple of SEARCH_BATCH_QUANTUM to keep the number of shapes small
-        _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode=mode, dynamic=False)
+        _STEP_CORE_COMPILED = torch.compile(TreeRMInner._step_core, mode="reduce-overhead", dynamic=False)
     return _STEP_CORE_COMPILED
 
 
@@ -639,10 +495,3 @@ class TreeRM(GRAM):
     def __init__(self, config: dict):
         super().__init__(config)
         self.inner = TreeRMInner(_add_puzzle_emb_positions(config))
-
-    def forward(self, carry: ModelCarry, batch: Dict[str, torch.Tensor], **kwargs: Any) -> Tuple[ModelCarry, Dict[str, torch.Tensor]]:
-        """GRAM.forward, after handing the inner each puzzle's supervision steps so far (halted puzzles restart at 0)."""
-        if carry is None:
-            carry = self.initial_carry(batch)
-        self.inner.steps_done = torch.where(carry.halted, 0, carry.steps).cpu()
-        return super().forward(carry, batch, **kwargs)

@@ -73,10 +73,8 @@ def test_load_tasks_reads_a_builds_test_puzzles_without_arc_agi_files(tmp_path):
 
 
 def test_task_ids_file_is_a_cli_option():
-    cfg = _ttt_cfg("checkpoint=ckpt.pth", "task_ids_file=heldout_tasks.json", "train_overrides.freeze_weights=true",
-                   "train_overrides.freeze_param_substrings=[candidate_,v_head]")
+    cfg = _ttt_cfg("checkpoint=ckpt.pth", "task_ids_file=heldout_tasks.json", "train_overrides.freeze_weights=true")
     assert cfg.task_ids_file == "heldout_tasks.json" and cfg.train_overrides["freeze_weights"] is True
-    assert cfg.train_overrides["freeze_param_substrings"] == ["candidate_", "v_head"]
 
 
 def test_aggregate_waits_for_every_task_then_averages_and_merges(tmp_path):

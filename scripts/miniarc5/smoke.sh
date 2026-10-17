@@ -14,5 +14,4 @@ for arch in trm treerm; do
   bash "$HERE/ttt.sh" "$ckpt" smoke_embed max_tasks=2 epochs=2 num_aux_tasks=3 wandb_mode=disabled train_overrides.freeze_weights=true
 done
 ckpt=$(ckpt_of "smoke/smoke_treerm")
-bash "$HERE/ttt.sh" "$ckpt" smoke_heads max_tasks=2 epochs=2 num_aux_tasks=3 wandb_mode=disabled "train_overrides.freeze_param_substrings=[candidate_,v_head]" train_overrides.freeze_alternation_epochs=1
 bash "$HERE/ttt.sh" "$ckpt" smoke_eager max_tasks=2 epochs=2 num_aux_tasks=3 wandb_mode=disabled train_overrides.arch.search_compile=false

@@ -13,38 +13,20 @@ loss:
   name: losses.loss_heads@LossHeadTreeRM # LossHeadGRAM that also gives the search its rollout CE
   inference_name: losses.loss_heads@MaxStepsInferenceLossHeadTreeRM # adds the search diagnostics to the eval metrics
 
-# ---- Candidates: what each z_H update chooses between ----
-num_candidates: 4 # K proposals per z_H update. Every root child is rolled out once before PUCT, so raise mcts_simulations with K (guided simulations = mcts_simulations - K)
-candidate_mode: flags # flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse; the recipe); residual = u_t + generator output; flags_residual = flags + generator output (slots differ by construction and carry learned content); full = the generator outputs K z_H vectors. The learned modes need candidate_loss or candidate_soft_grad: with neither only the picked candidate gets a gradient and the rest collapse
-candidate_loss: none # a gradient for every candidate on the grad cycles from its own rollout CE (plain TRM updates to the end of the step, then the decode): none; wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution
+# ---- Candidates: what each z_H update chooses between (REPORTS_CANDIDATES.md section 0) ----
+num_candidates: 4 # K proposals per z_H update; every root child is rolled out once before PUCT, so raise mcts_simulations with K (K=8 paid on neither tier)
+candidate_mode: residual # residual = u_t + a learned per-slot delta from the generator (with candidate_loss: +6 over flags at K=4 on N-Queens); flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse, needs no loss: the REPORTS.md recipe); full = the generator outputs the K vectors
+candidate_loss: wta # a gradient for every candidate on the grad cycles from its own rollout CE (+14 pts on N-Queens over 20 runs): wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution; none = only the picked candidate trains, and learned candidates collapse
 candidate_loss_eps: 0.05 # wta only: the share of the candidate loss the non-winning candidates split (0 = pure winner-take-all, 1 = uniform)
-candidate_loss_weight: 1.0 # multiplier on the candidate loss
-candidate_loss_eps_anneal_steps: 0 # wta only: anneal eps linearly from 1 (every candidate trains equally) to candidate_loss_eps over this many training steps, so no slot locks in early; 0 = fixed eps
-candidate_balance_weight: 0.0 # load balancing as for a mixture-of-experts router: K * sum_k (fraction of the batch's picks on slot k) * (mean prior on k), per puzzle; keeps the scorer from sending every puzzle to one slot
-candidate_recover_weight: 0.0 # slot recoverability: a K-way classifier must tell which slot made each candidate's decoded distribution; its CE trains the generator, so identical candidates are penalised in outcome space (search/recover_acc measures that diversity)
-candidate_soft_grad: false # the pick's backward reaches every candidate in proportion to its posterior mass (the forward is still exactly one candidate)
-candidate_diversity_weight: 0.0 # penalty on the mean pairwise cosine between a puzzle's candidates (grad cycles only; a patch for the collapse, superseded by flags / candidate_loss)
 param_lr_scales: # lr multipliers for this arch's parameters by name substring; the train config's param_lr_scales override these key by key
   candidate_: 0.1 # the candidate generator and scorer diverge at the backbone lr (REPORTS.md section 6)
 
-# ---- Search: how the candidate is picked ----
+# ---- Search (REPORTS.md section 12) ----
 mcts_simulations: 8 # simulations per puzzle per z_H update in training, K of them the forced root-child rollouts
 eval_mcts_simulations: 16 # simulations per search at eval; null = mcts_simulations. Pays once the value head is bootstrapped
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
-mcts_horizon: step # how far a rollout runs: step = to the end of this supervision step; full = to the end of the last one (about 4x the cost, no gain measured)
-eval_search: true # false = the prior scorer alone picks at eval (diagnostic)
-eval_rollout_cap: null # eval only: cap every rollout at this many TRM updates (>= 1) and let the value head score the truncated state (no gain measured, REPORTS_MCTS.md)
-argmax_pick: false # outside the grad cycle (no-grad cycles, eval) take the argmax candidate instead of a Gumbel sample
-gumbel_temp: 1.0 # straight-through Gumbel-softmax temperature; only shapes the gradient (z_H is always one candidate)
-
-# ---- Training signal (kl_strength, kl_grad_prior and grad_cycles come from gram.yaml; the search runs on the grad cycles only) ----
 value_bootstrap_weight: 0.5 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
-posterior_smoothing: 0.0 # mix this much uniform into the visit distribution before the KL / sampling (bounds the KL target)
-rollout_policy: trm # how a rollout updates z_H after the leaf: trm = the plain TRM update; prior = the scorer's argmax candidate (the policy being trained)
 
 # ---- Runtime: exact, speed and memory only (REPORTS_MCTS.md) ----
-mcts_impl: cpp # models.mcts.MCTS_IMPLS: cpp (the fused search with its tree in C++, fastest; built on first use with g++ + ninja, falls back to fused without them), fused (same search, Python tree), wu (WU-UCT, mcts_leaves_per_round), python (the reference search the tests compare against)
-mcts_leaves_per_round: 1 # WU-UCT (mcts_impl=wu): leaves selected per tree per round before they are all evaluated together; 1 = the baseline search
-search_compile: true # torch.compile the fixed-shape core of each search round (one CUDA graph per round shape; ~1 min of compiles on first use); needs mcts_impl=fused/wu/cpp
-search_compile_mode: reduce-overhead # torch.compile mode for the search round: reduce-overhead (CUDA graphs), default (no graphs) or max-autotune (also autotunes the GEMMs; slow first compile)
-search_memo: false # eval only: continue each cycle's search from the chosen candidate's subtree of the previous cycle's search; exact; 2.3x the search memory for ~3%; needs mcts_impl=cpp
+mcts_impl: cpp # models.mcts.MCTS_IMPLS: cpp (the fused search with its tree in C++, exact, fastest; built on first use with g++ + ninja, falls back to fused without them), fused (same search, Python tree), python (the reference search the tests compare against)
+search_compile: true # torch.compile the fixed-shape core of each search round (one CUDA graph per round shape; ~1 min of compiles on first use); needs mcts_impl=fused/cpp

@@ -96,12 +96,6 @@ class PretrainConfig(BaseModel):
     ema_rate: float = 0.999
     # Alternate every N epochs between training only the puzzle embeddings (first) and only the weights; None trains both
     freeze_alternation_epochs: Optional[int] = None
-    # With freeze_alternation_epochs: alternate instead between everything except the parameters whose name contains one
-    # of these substrings (first) and only those parameters (e.g. TreeRM's heads [candidate_, v_head])
-    freeze_alternation_substrings: List[str] = []
-    # Parameters whose name contains one of these substrings get requires_grad=False and join no optimizer (e.g. TreeRM's
-    # heads: [candidate_, v_head]); composes with freeze_alternation_epochs, param_lr_scales and optimizer=muon
-    freeze_param_substrings: List[str] = []
 
     debug: bool = False
     debug_trace_steps: int = 0

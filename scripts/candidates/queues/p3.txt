@@ -1,5 +1,0 @@
-# Phase 3: diversity mechanisms that work even when one proposal dominates (REPORTS_CANDIDATES.md section 2, items 5-7), on residual candidates with the wta loss
-residual_k4_wta_bal arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_balance_weight=0.1
-residual_k4_wta_rec arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_recover_weight=0.1
-residual_k4_wta_anneal arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_loss_eps_anneal_steps=1000
-residual_k4_wta_all3 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_balance_weight=0.1 arch.candidate_recover_weight=0.1 arch.candidate_loss_eps_anneal_steps=1000
