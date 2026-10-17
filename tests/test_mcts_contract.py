@@ -316,6 +316,11 @@ def test_treerm_trains_and_evals_with_the_impl(impl, compile_):
     with torch.inference_mode():
         _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
     assert torch.isfinite(outputs["logits"]).all()
+    # Training resumes after an in-training eval on the same instance (pretrain.py swaps the EMA weights in place):
+    # the search's arena made under inference_mode must not be written to outside it
+    model.train()
+    _, loss, _, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
 
 
 @needs_cuda

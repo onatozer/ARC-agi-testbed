@@ -10,7 +10,6 @@ hydra:
 
 global_batch_size: 256 # has to be less than 528 for mini arc
 optimizer: muon
-activation_function: conv_swiglu
 eval_interval_steps: 10000
 checkpoint_interval_steps: ${.eval_interval_steps}
 
@@ -18,6 +17,7 @@ max_eval_steps: null
 
 # Ensure that the puzzle embedding is being used 
 arch:
+  activation_function: conv_swiglu # URM's ConvSwiGLU; the model only reads arch.activation_function
   hidden_size: 128
   puzzle_emb_ndim: ${.hidden_size}
   board_height: ${dataset.grid_size}

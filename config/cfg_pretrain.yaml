@@ -48,3 +48,5 @@ ema: True # use Exponential-Moving-Average
 ema_rate: 0.999 # EMA-rate
 freeze_weights: False # If True, freeze weights and only learn the embeddings
 freeze_alternation_epochs: null # If set to N, alternate every N epochs between learning only the embeddings (first) and only the weights
+freeze_alternation_substrings: [] # with freeze_alternation_epochs: alternate between all-but-these parameters (first) and only these, e.g. [candidate_, v_head]
+freeze_param_substrings: [] # parameter-name substrings to freeze (requires_grad False, in no optimizer), e.g. [candidate_, v_head] for TreeRM's heads

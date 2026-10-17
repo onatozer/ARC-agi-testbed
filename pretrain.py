@@ -1,6 +1,7 @@
 from typing import Optional, Any, List, Dict, Sequence, Tuple
 from dataclasses import replace
 import os
+import resource
 import math
 
 # Must be set before CUDA initialises. Lets the allocator grow segments instead of fragmenting across differently
@@ -209,14 +210,24 @@ def create_dataloader(
     return dataloader, dataset.metadata
 
 
-def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float]) -> List[Dict[str, Any]]:
-    """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins).
-    Each group carries `lr_scale`, which the lr schedule multiplies in; unmatched parameters get 1.0."""
-    groups: Dict[float, List[torch.nn.Parameter]] = {}
+def _memory_metrics(prefix: str) -> Dict[str, float]:
+    """Peak memory so far: GPU allocated and reserved (what nvidia-smi shows) in MB, and the process's peak host RSS."""
+    metrics = {f"{prefix}/host_rss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**10}
+    if torch.cuda.is_available():
+        metrics[f"{prefix}/gpu_alloc_mb"] = torch.cuda.max_memory_allocated() / 2**20
+        metrics[f"{prefix}/gpu_reserved_mb"] = torch.cuda.max_memory_reserved() / 2**20
+    return metrics
+
+
+def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float], alternation: List[str] = ()) -> List[Dict[str, Any]]:
+    """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins)
+    and by membership of the freeze-alternation set (`alternation` substrings, see freeze_alternation_substrings).
+    Each group carries `lr_scale`, which the lr schedule multiplies in (unmatched parameters get 1.0), and `alt`."""
+    groups: Dict[Tuple[float, bool], List[torch.nn.Parameter]] = {}
     for name, param in named_params:
         scale = next((s for substring, s in scales.items() if substring in name), 1.0)
-        groups.setdefault(scale, []).append(param)
-    return [{"params": params, "lr_scale": scale} for scale, params in groups.items()]
+        groups.setdefault((scale, any(s in name for s in alternation)), []).append(param)
+    return [{"params": params, "lr_scale": scale, "alt": alt} for (scale, alt), params in groups.items()]
 
 
 def create_model(
@@ -264,15 +275,35 @@ def create_model(
     # In general, AdamATan2 is used as the optimizer, the other optimizers are for the embedding trick thing that Sapient did in their paper,
     # where they created an embedding for each type of puzzle and trained on those. I think this process can be removed, even for the ARC puzzles, but keeping for now
 
+    # freeze_param_substrings: those parameters train nowhere (no gradient, in no optimizer); the puzzle-embedding table is
+    # a buffer with its own optimizer and is not affected (freeze_weights handles the embeddings-only case)
+    frozen = [(n, p) for n, p in model.named_parameters() if any(s in n for s in config.freeze_param_substrings)]
+    if config.freeze_param_substrings and not frozen:
+        raise ValueError(f"freeze_param_substrings {config.freeze_param_substrings} match no parameter of {config.arch.name}.")
+    for _, p in frozen:
+        p.requires_grad_(False)
+    trainable = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    if not trainable:
+        raise ValueError("freeze_param_substrings froze every parameter; use freeze_weights=True to train only the puzzle embeddings.")
+    if frozen:
+        rank_zero_print_info(f"Frozen {len(frozen)} parameter tensors ({sum(p.numel() for _, p in frozen)} values) matching {config.freeze_param_substrings}")
+
+    alternation = list(config.freeze_alternation_substrings)
+    if alternation:
+        if config.freeze_alternation_epochs is None:
+            raise ValueError("freeze_alternation_substrings needs freeze_alternation_epochs (the block length).")
+        if not any(any(s in n for s in alternation) for n, _ in trainable):
+            raise ValueError(f"freeze_alternation_substrings {alternation} match no trainable parameter of {config.arch.name}.")
+
     # With optimizer=muon, the 2D weight matrices of the looped blocks go to Muon and everything else stays on AdamAtan2
     if config.optimizer == "muon":
-        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and ".L_level." in name]
+        muon_params = [p for name, p in trainable if p.ndim == 2 and ".L_level." in name]
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], config.param_lr_scales)
+        adam_params = _lr_scaled_groups([(n, p) for n, p in trainable if id(p) not in muon_ids], config.param_lr_scales, alternation)
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), config.param_lr_scales)
+        muon_params, adam_params = [], _lr_scaled_groups(trainable, config.param_lr_scales, alternation)
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
@@ -508,10 +539,17 @@ def train_batch(
         norms["train/grad_norm/num_tensors"] = float(num_tensors)
 
     # Alternating freezing: even blocks of freeze_alternation_epochs step only the puzzle embedding optimizer (always
-    # optimizers[0]), odd blocks only the weight optimizers. Gradients are still zeroed for all of them
-    train_embeddings = None
+    # optimizers[0]), odd blocks only the weight optimizers. Gradients are still zeroed for all of them.
+    # With freeze_alternation_substrings the two sets are instead: even blocks everything except the matched parameters
+    # (they stay frozen), odd blocks only the matched parameters. A parameter sits out a block by having its gradient
+    # dropped before the step, so its optimizer state does not move either
+    train_embeddings = train_alt = None
     if config.freeze_alternation_epochs is not None:
-        train_embeddings = (current_epoch // config.freeze_alternation_epochs) % 2 == 0
+        phase = (current_epoch // config.freeze_alternation_epochs) % 2
+        if config.freeze_alternation_substrings:
+            train_alt = phase == 1
+        else:
+            train_embeddings = phase == 0
 
     # Backpropogate the loss through the network
     lr_this_step = None
@@ -520,8 +558,15 @@ def train_batch(
 
         for param_group in optim.param_groups:
             param_group["lr"] = lr_this_step * param_group.get("lr_scale", 1.0)
+            if train_alt is not None and i > 0 and param_group.get("alt", False) != train_alt:
+                for p in param_group["params"]:
+                    p.grad = None
 
-        if train_embeddings is None or (i == 0) == train_embeddings:
+        if train_embeddings is None and train_alt is None:
+            optim.step()
+        elif train_embeddings is not None and (i == 0) == train_embeddings:
+            optim.step()
+        elif train_alt is not None and (i > 0 or not train_alt):  # the embeddings belong to the "everything else" set
             optim.step()
         optim.zero_grad()
     
@@ -571,9 +616,12 @@ def train_batch(
                 processed_metrics[f"train/{sk}"] = global_value
 
             processed_metrics["train/lr"] = lr_this_step
+            processed_metrics.update(_memory_metrics("train"))
             processed_metrics["train/epoch"] = current_epoch
             if train_embeddings is not None:
                 processed_metrics["train/freeze_phase"] = 0 if train_embeddings else 1  # 0: embeddings, 1: weights
+            elif train_alt is not None:
+                processed_metrics["train/freeze_phase"] = int(train_alt)  # 0: all but the matched set, 1: matched set only
             if train_state.flops_per_step:
                 processed_metrics["train/flops_per_step"] = train_state.flops_per_step
                 processed_metrics["train/flops_total"] = train_state.flops_total
@@ -956,6 +1004,7 @@ def launch(hydra_config: DictConfig):
 
                 if RANK == 0 and eval_metrics is not None:
                     eval_metrics["step"] = train_state.step
+                    eval_metrics.update(_memory_metrics("eval"))
                     wandb.log(eval_metrics)
 
                 train_state.model.train()

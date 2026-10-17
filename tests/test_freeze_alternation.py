@@ -72,3 +72,36 @@ def test_invalid_combinations_raise(overrides):
 def test_non_positive_rejected():
     with pytest.raises(ValueError, match="freeze_alternation_epochs"):
         _config("freeze_alternation_epochs=0")
+
+
+# --- freeze_alternation_substrings: the two sets are "everything but the matched parameters" and "only them" ---
+
+def _matched_changed_after_step(config, train_state, substrings):
+    named = list(train_state.model.named_parameters())
+    before = [p.detach().clone() for _, p in named]
+    emb = train_state.model.model.puzzle_emb.weights.detach().clone()  # the sparse embedding is not a Parameter
+    metrics = train_batch(config, train_state, BATCH, global_batch_size=4, rank=0, world_size=1)
+    changed = {n: not torch.equal(b, p) for (n, p), b in zip(named, before)}
+    changed["puzzle_emb"] = not torch.equal(emb, train_state.model.model.puzzle_emb.weights)
+    matched = {n: c for n, c in changed.items() if any(s in n for s in substrings)}
+    others = {n: c for n, c in changed.items() if n not in matched}
+    return matched, others, metrics
+
+
+def test_substring_alternation_trains_rest_then_matched():
+    config = _config("freeze_alternation_epochs=1", "freeze_alternation_substrings=[lm_head]")
+    train_state = init_train_state(config, METADATA, rank=0, world_size=1)
+
+    matched, others, metrics = _matched_changed_after_step(config, train_state, ["lm_head"])  # epoch 0: all but lm_head
+    assert matched and not any(matched.values())
+    assert any(others.values()) and others["puzzle_emb"]
+    assert metrics["train/freeze_phase"] == 0
+
+    matched, others, metrics = _matched_changed_after_step(config, train_state, ["lm_head"])  # epoch 1: lm_head only
+    assert all(matched.values()) and not any(others.values())
+    assert metrics["train/freeze_phase"] == 1
+
+
+def test_substring_alternation_unmatched_raises():
+    with pytest.raises(ValueError, match="freeze_alternation_substrings"):
+        create_model(_config("freeze_alternation_epochs=1", "freeze_alternation_substrings=[no_such_param]"), METADATA, rank=0, world_size=1)

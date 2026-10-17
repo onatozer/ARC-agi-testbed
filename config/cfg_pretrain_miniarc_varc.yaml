@@ -18,10 +18,11 @@ max_eval_steps: null
 
 # Ensure that the puzzle embedding is being used 
 arch:
-  image_size: ${dataset.grid_size}
-  hidden_size: 256
-  num_layers: 5
-  mlp_dim: 512
+  image_size: 10 # canvas; patch 2 needs an even side, and 2x the 5x5 board gives the in-model scale/offset augmentation (the paper's 64 for 30)
+  hidden_size: 128 # 606,768 dense params at 4 layers / mlp 256: parity with TRM (528k) and TreeRM (595k) at hidden 128
+  num_layers: 4
+  mlp_dim: 256
+  num_heads: 8
   puzzle_emb_ndim: ${.hidden_size}
   board_height: ${dataset.grid_size}
   board_width: ${dataset.grid_size}
