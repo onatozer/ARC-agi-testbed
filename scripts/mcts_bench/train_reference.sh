@@ -13,10 +13,10 @@ case $ENV in
   nqueens6) CFG=cfg_pretrain_nqueens; DS="dataset.data_path=$WT/data/nqueens-6 dataset.board_size=6"; STEPS=1000; LR=3e-4;;
   *) echo "unknown env $ENV"; exit 2;;
 esac
-# The REPORTS.md recipe (flag candidates, no candidate loss; arch/treerm.yaml holds K=4, 8 / 16 simulations, value
-# bootstrap and the 0.1x head lr): the reference checkpoints of REFERENCE.md were trained with it
+# The REPORTS.md recipe (no candidate loss; arch/treerm.yaml holds K=4, 8 / 16 simulations, value bootstrap and the
+# 0.1x head lr): the reference checkpoints of REFERENCE.md were trained with it
 RECIPE="arch=treerm arch.hidden_size=128 arch.num_heads=4 arch.L_layers=2 arch.H_cycles=3 arch.L_cycles=4 arch.halt_max_steps=8 \
-arch.candidate_mode=flags arch.candidate_loss=none lr=$LR lr_warmup_steps=50 global_batch_size=64 max_steps=$STEPS epochs=100000 train_epochs_per_iter=100000 \
+arch.candidate_loss=none lr=$LR lr_warmup_steps=50 global_batch_size=64 max_steps=$STEPS epochs=100000 train_epochs_per_iter=100000 \
 eval_interval_steps=$STEPS max_eval_steps=16 checkpoint_interval_steps=null heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000"
 cd "$RUNDIR"
 START=$(date +%s)

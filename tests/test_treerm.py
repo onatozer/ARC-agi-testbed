@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_mode": "residual", "candidate_loss": "none", "candidate_loss_eps": 0.05,
+        "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05,
         "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, **overrides,
     })
     with torch.device("cuda"):
@@ -189,7 +189,7 @@ def test_treerm_searches_only_on_grad_cycles():
 
 @needs_cuda
 def test_flag_candidates_are_u_t_plus_orthonormal_directions():
-    model, batch = _treerm_head(candidate_mode="flags")
+    model, batch = _treerm_head()
     inner = model.model.inner
     directions = inner.candidate_generator.directions.float()
     torch.testing.assert_close(directions @ directions.T, torch.eye(directions.shape[0], device=directions.device), atol=1e-5, rtol=0)
@@ -221,9 +221,8 @@ def test_treerm_eval_can_search_with_more_simulations():
 # Candidate training (REPORTS_CANDIDATES.md): without a candidate loss only the picked candidate gets a gradient
 
 def _slot_grad_norms(model):
-    """Gradient norm of the candidate generator's output rows per slot (the last linear is [K*H, H])."""
-    gen = model.model.inner.candidate_generator
-    return gen.head[-1].weight.grad.view(gen.num_candidates, -1).norm(dim=-1)
+    """Gradient norm of each slot's gate (the flag gate is a [K, 2H] linear: one row per candidate)."""
+    return model.model.inner.candidate_generator.gate.weight.grad.norm(dim=-1)
 
 
 def _train_backward(**overrides):
@@ -242,9 +241,8 @@ def _train_backward(**overrides):
 
 
 @needs_cuda
-@pytest.mark.parametrize("mode", ["full", "residual"])
-def test_without_candidate_loss_only_the_picked_candidate_gets_a_gradient(mode):
-    model, metrics = _train_backward(batch_size=1, candidate_mode=mode)
+def test_without_candidate_loss_only_the_picked_candidate_gets_a_gradient():
+    model, metrics = _train_backward(batch_size=1)
     assert (_slot_grad_norms(model) > 0).sum() == 1
     assert "search/cand_loss" not in metrics
 
@@ -269,8 +267,6 @@ def test_candidate_loss_rolls_out_the_updates_left_in_the_step():
 def test_candidate_loss_rejects_unknown_modes():
     with pytest.raises(ValueError):
         _treerm_head(candidate_loss="all")
-    with pytest.raises(ValueError):
-        _treerm_head(candidate_mode="flags_residual")
 
 
 @needs_cuda

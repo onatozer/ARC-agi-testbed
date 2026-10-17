@@ -14,9 +14,8 @@ loss:
   inference_name: losses.loss_heads@MaxStepsInferenceLossHeadTreeRM # adds the search diagnostics to the eval metrics
 
 # ---- Candidates: what each z_H update chooses between (REPORTS_CANDIDATES.md section 0) ----
-num_candidates: 4 # K proposals per z_H update; every root child is rolled out once before PUCT, so raise mcts_simulations with K (K=8 paid on neither tier)
-candidate_mode: residual # residual = u_t + a learned per-slot delta from the generator (with candidate_loss: +6 over flags at K=4 on N-Queens); flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse, needs no loss: the REPORTS.md recipe); full = the generator outputs the K vectors
-candidate_loss: wta # a gradient for every candidate on the grad cycles from its own rollout CE (+14 pts on N-Queens over 20 runs): wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution; none = only the picked candidate trains, and learned candidates collapse
+num_candidates: 4 # K flag candidates per z_H update: u_t + a gated fixed orthonormal direction per slot (REPORTS.md). Every root child is rolled out once before PUCT, so raise mcts_simulations with K (K=8 paid on neither tier)
+candidate_loss: wta # a gradient for every candidate on the grad cycles from its own rollout CE (+14 pts on N-Queens over 20 runs): wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution; none = only the picked candidate trains (the REPORTS.md recipe)
 candidate_loss_eps: 0.05 # wta only: the share of the candidate loss the non-winning candidates split (0 = pure winner-take-all, 1 = uniform)
 param_lr_scales: # lr multipliers for this arch's parameters by name substring; the train config's param_lr_scales override these key by key
   candidate_: 0.1 # the candidate generator and scorer diverge at the backbone lr (REPORTS.md section 6)
