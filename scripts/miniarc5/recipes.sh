@@ -10,8 +10,9 @@ COMMON="global_batch_size=128 optimizer=adam_atan2 lr=1e-3 lr_warmup_steps=100 l
 max_steps=4000 eval_interval_steps=2000 max_eval_steps=null seed=0 +project_name=ARC-agi-testbed +entity=ozeronatwanb"
 # Recurrent backbones (TRM, TreeRM): hidden 128, one puzzle-embedding slot (seq 25 + 1)
 BACKBONE="arch.hidden_size=128 arch.num_heads=4 arch.L_layers=2 arch.H_cycles=3 arch.L_cycles=4 arch.halt_max_steps=8 arch.puzzle_emb_len=1"
-# TreeRM: the autoresearch recipe (K=4, 8/16 simulations, value bootstrap, compiled C++ search are the defaults)
-TREERM="arch=treerm +param_lr_scales.candidate_=0.1"
+# TreeRM: the REPORTS.md recipe (flag candidates, no candidate loss) the MiniARC runs used; K=4, 8/16 simulations,
+# value bootstrap, the 0.1x head lr and the compiled C++ search are the arch defaults
+TREERM="arch=treerm arch.candidate_mode=flags arch.candidate_loss=none"
 
 # run_trm <name> <data_path> <extra overrides...>
 run_trm()    { local name=$1 data=$2; shift 2; bash "$HERE/run.sh" "$name" cfg_pretrain_miniarc dataset.data_path="$data" $COMMON $BACKBONE +run_name="$name" "$@"; }

@@ -9,10 +9,31 @@ from torch import nn
 from models.losses import IGNORE_LABEL_ID
 from models.losses.base import kl_balanced_logits
 from models.mcts import MCTS_IMPLS, Node
-from ..layers import CastedLinear, rms_norm
+from ..layers import CastedLinear, SwiGLU, rms_norm
 from .merged_arch import Blocks, LatentCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
 from .grampd import CandidateScorer
+
+
+class CandidateGenerator(nn.Module):
+    """Proposes num_candidates z_H vectors (or, in residual mode, per-slot deltas on u_t) from the new z_H and z_L:
+    [B, S, H] x [B, S, H] -> [B, K, S, H]. Learned proposals; trained by candidate_loss (REPORTS_CANDIDATES.md)."""
+
+    def __init__(self, hidden_size: int, num_candidates: int, expansion: float):
+        super().__init__()
+
+        self.num_candidates = num_candidates
+
+        # Not zero-initialised: identical candidates would all get the same gradient direction and never separate
+        self.head = nn.Sequential(
+            CastedLinear(hidden_size*2, hidden_size, bias=True),
+            SwiGLU(hidden_size, expansion),
+            CastedLinear(hidden_size, hidden_size*num_candidates, bias=True),
+        )
+
+    def forward(self, z_L: torch.Tensor, z_H: torch.Tensor) -> torch.Tensor:
+        x = self.head(torch.cat([z_L, z_H], dim=-1))
+        return x.unflatten(-1, (self.num_candidates, -1)).transpose(1, 2)
 
 
 class FlagCandidates(nn.Module):
@@ -65,7 +86,20 @@ class TreeRMInner(GRAM_Inner):
         del self.prior_head, self.posterior_head
         # The same layers (state-dict keys unchanged) in a block that skips the zero-scale noise draw the search replays
         self.L_level = NoiselessBlocks(layers=list(self.L_level.layers), config=self.config)
-        self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
+        if self.config.candidate_mode not in ("full", "residual", "flags"):
+            raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
+        if self.config.candidate_mode == "flags":
+            self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
+        else:
+            self.candidate_generator = CandidateGenerator(
+                hidden_size=self.config.hidden_size,
+                num_candidates=self.config.num_candidates,
+                expansion=self.config.expansion,
+            )
+        if self.config.candidate_loss not in ("none", "wta", "posterior"):
+            raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
+        if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
+            raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
         self.candidate_scorer = CandidateScorer(
             hidden_size=self.config.hidden_size,
             num_heads=self.config.num_heads,
@@ -99,8 +133,11 @@ class TreeRMInner(GRAM_Inner):
         return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
 
     def _candidates(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
-        """The K proposals for the new z_H: u_t plus a gated flag per slot."""
-        return self.candidate_generator(z_L, u_t)
+        """The K proposals for the new z_H (see candidate_mode)."""
+        cand = self.candidate_generator(z_L, u_t)
+        if self.config.candidate_mode == "residual":
+            cand = cand + u_t.unsqueeze(1)
+        return cand
 
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
@@ -253,6 +290,8 @@ class TreeRMInner(GRAM_Inner):
     def _search(self, cand: torch.Tensor, prior_logits: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: List[int]) -> torch.Tensor:
         """One MCTS per puzzle from the root candidates, run in lockstep; returns the posterior logits log(visit
         distribution) [B, K]."""
+        if not torch.isfinite(prior_logits).all():  # the C++ tree segfaults on NaN priors; a diverged run should say so
+            raise FloatingPointError("TreeRM search: the candidate scorer's logits are not finite (the run diverged).")
         priors = prior_logits.float().softmax(dim=-1).tolist()
         self._bootstrap = []  # (leaf first-token states, rollout targets) this search's rollouts record for the value head
         # Eval may search deeper than training (test-time compute); the value head is what it relies on
@@ -304,6 +343,11 @@ class TreeRMInner(GRAM_Inner):
                 predicted = torch.sigmoid(self.v_head(leaf_tokens).to(torch.float32)).squeeze(-1)
                 bootstrap = F.mse_loss(predicted, targets, reduction="sum") / self.mcts.num_simulations
                 kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
+            # Every candidate gets a gradient from its own rollout (_candidate_loss); without it only the picked one does
+            # and learned candidates collapse (REPORTS.md section 4, REPORTS_CANDIDATES.md)
+            if self.config.candidate_loss != "none":
+                cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, remaining[0])
+                kl_loss = kl_loss + cand_loss
 
         # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
         # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
@@ -312,6 +356,8 @@ class TreeRMInner(GRAM_Inner):
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         diag = self._search_diagnostics(cand, prior_logits, post_logits)
+        if torch.is_grad_enabled() and self.config.candidate_loss != "none":
+            diag.update(cand_diag)
         with torch.no_grad():  # candidate norm relative to the TRM update it replaces
             diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
         return z_H, kl_loss, diag
@@ -323,6 +369,40 @@ class TreeRMInner(GRAM_Inner):
         cos = unit @ unit.transpose(1, 2)
         num_candidates = cand.shape[1]
         return (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(-1)) / max(num_candidates * (num_candidates - 1), 1)
+
+    def _candidate_loss(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, post_logits: torch.Tensor, left: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """A gradient for every candidate of a grad cycle, not just the picked one. Each candidate is rolled out with
+        gradient exactly as the search's root-child rollouts are (left - 1 plain TRM updates to the end of this
+        supervision step, then the decode) and its label CE is weighted per candidate_loss: 'wta' = relaxed
+        winner-take-all (the lowest-CE candidate gets 1 - candidate_loss_eps, the others share it; Rupprecht et al. 2017,
+        the standard cure for a multiple-choice head whose untrained slots never win), 'posterior' = the search's visit
+        distribution. Returns the batch-summed loss and per-puzzle diagnostics: the weighted CE, the CE gap between the
+        worst and best candidate, and whether the search's argmax is the CE-best candidate (REPORTS_CANDIDATES.md)."""
+        B, K = cand.shape[:2]
+        z_H = cand.flatten(0, 1)
+        z_L = z_L.repeat_interleave(K, dim=0)
+        x, y = x.repeat_interleave(K, dim=0), y.repeat_interleave(K, dim=0)
+        seq_dict = self._seq_dict()
+        for _ in range(left - 1):
+            for _ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            z_H = self.L_level(z_H, z_L, **seq_dict)
+        z_H = rms_norm(z_H, self.config.rms_norm_eps)
+        mask = y != IGNORE_LABEL_ID
+        ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
+        ce = ce.float().view(B, K)
+        if self.config.candidate_loss == "wta":
+            eps = self.config.candidate_loss_eps
+            weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K
+        else:
+            weights = post_logits.float().softmax(dim=-1)
+        loss = (weights.detach() * ce).sum(dim=-1)  # [B]
+        diag = {
+            "search/cand_loss": loss.detach(),
+            "search/cand_ce_gap": (ce.max(dim=-1).values - ce.min(dim=-1).values).detach(),
+            "search/cand_best_agree": (ce.argmin(dim=-1) == post_logits.argmax(dim=-1)).float(),
+        }
+        return loss.sum(), diag
 
     @torch.no_grad()
     def _search_diagnostics(self, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -345,10 +425,14 @@ class TreeRMInner(GRAM_Inner):
         seq_dict = self._seq_dict()
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
+        counts: Dict[str, int] = {}
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
+            # Each key is averaged over the cycles that report it: the search diagnostics over every cycle, the
+            # candidate-loss ones (cand_loss, cand_ce_gap, cand_best_agree) over the grad cycles only
             for key, value in diag.items():
-                diagnostics[key] = diagnostics.get(key, 0) + value / self.config.H_cycles
+                diagnostics[key] = diagnostics.get(key, 0) + value
+                counts[key] = counts.get(key, 0) + 1
 
         # Run the recursion cycle for H_cycles - grad_cycles times without the gradient; every z_H update is searched
         with torch.no_grad():
@@ -380,7 +464,7 @@ class TreeRMInner(GRAM_Inner):
             "q_halt_logits": torch.logit(self._lprm_value(z_H).clamp(1e-6, 1 - 1e-6)),
             "logits": self._decode(z_H),
             "kl_loss": kl_loss,
-            **diagnostics,  # per-puzzle, averaged over the H_cycles searches
+            **{key: value / counts[key] for key, value in diagnostics.items()},  # per-puzzle, averaged over the cycles reporting them
         }
 
         return LatentCarry(z_H, z_L), info

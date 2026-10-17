@@ -1,3 +1,7 @@
+# TreeRM: GRAM whose z_H posterior is a search instead of a network. Every z_H update proposes K candidates; the
+# candidate scorer is the prior over them; a per-puzzle MCTS, valued by the label's rollout CE in training and by the
+# LPRM value head at eval, is the posterior; the KL trains the scorer to predict the search's pick. Write-ups:
+# REPORTS.md (the recipe), REPORTS_MCTS.md (the search runtime), REPORTS_CANDIDATES.md (training the candidates).
 defaults:
   - gram
   - _self_
@@ -9,14 +13,20 @@ loss:
   name: losses.loss_heads@LossHeadTreeRM # LossHeadGRAM that also gives the search its rollout CE
   inference_name: losses.loss_heads@MaxStepsInferenceLossHeadTreeRM # adds the search diagnostics to the eval metrics
 
-# The recipe of REPORTS.md section 12: K=4 flag candidates (u_t + a gated fixed orthonormal direction per slot), 8
-# training simulations, 16 at eval, value bootstrapping 0.5. Train with +param_lr_scales.candidate_=0.1: the
-# candidate heads diverge at the backbone lr (REPORTS.md section 6).
-num_candidates: 4 # number of z_H proposals the prior scorer / MCTS choose between at every z_H update (K=8 was worse)
-mcts_simulations: 8 # MCTS simulations per puzzle per z_H update in training
+# ---- Candidates: what each z_H update chooses between (REPORTS_CANDIDATES.md section 0) ----
+num_candidates: 4 # K proposals per z_H update; every root child is rolled out once before PUCT, so raise mcts_simulations with K (K=8 paid on neither tier)
+candidate_mode: residual # residual = u_t + a learned per-slot delta from the generator (with candidate_loss: +6 over flags at K=4 on N-Queens); flags = u_t + a gated fixed orthonormal direction per slot (cannot collapse, needs no loss: the REPORTS.md recipe); full = the generator outputs the K vectors
+candidate_loss: wta # a gradient for every candidate on the grad cycles from its own rollout CE (+14 pts on N-Queens over 20 runs): wta = relaxed winner-take-all (the lowest-CE candidate gets 1 - eps, the others share eps); posterior = weighted by the search's visit distribution; none = only the picked candidate trains, and learned candidates collapse
+candidate_loss_eps: 0.05 # wta only: the share of the candidate loss the non-winning candidates split (0 = pure winner-take-all, 1 = uniform)
+param_lr_scales: # lr multipliers for this arch's parameters by name substring; the train config's param_lr_scales override these key by key
+  candidate_: 0.1 # the candidate generator and scorer diverge at the backbone lr (REPORTS.md section 6)
+
+# ---- Search (REPORTS.md section 12) ----
+mcts_simulations: 8 # simulations per puzzle per z_H update in training, K of them the forced root-child rollouts
 eval_mcts_simulations: 16 # simulations per search at eval; null = mcts_simulations. Pays once the value head is bootstrapped
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
 value_bootstrap_weight: 0.5 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
 
+# ---- Runtime: exact, speed and memory only (REPORTS_MCTS.md) ----
 mcts_impl: cpp # models.mcts.MCTS_IMPLS: cpp (the fused search with its tree in C++, exact, fastest; built on first use with g++ + ninja, falls back to fused without them), fused (same search, Python tree), python (the reference search the tests compare against)
 search_compile: true # torch.compile the fixed-shape core of each search round (one CUDA graph per round shape; ~1 min of compiles on first use); needs mcts_impl=fused/cpp

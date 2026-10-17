@@ -219,6 +219,12 @@ def _memory_metrics(prefix: str) -> Dict[str, float]:
     return metrics
 
 
+def _param_lr_scales(config: PretrainConfig) -> Dict[str, float]:
+    """The lr multipliers in force: the arch's own (`arch.param_lr_scales`, e.g. TreeRM's candidate heads) under the
+    train config's `param_lr_scales`, which override them key by key."""
+    return {**(getattr(config.arch, "param_lr_scales", None) or {}), **config.param_lr_scales}
+
+
 def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float]) -> List[Dict[str, Any]]:
     """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins).
     Each group carries `lr_scale`, which the lr schedule multiplies in; unmatched parameters get 1.0."""
@@ -280,9 +286,9 @@ def create_model(
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], config.param_lr_scales)
+        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], _param_lr_scales(config))
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), config.param_lr_scales)
+        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), _param_lr_scales(config))
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 

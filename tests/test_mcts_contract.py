@@ -228,7 +228,7 @@ def test_search_posterior_matches_the_baseline_on_the_model(impl, compile_, trai
 @needs_cuda
 def test_compiled_search_runs_in_the_module_copy_that_calls_it():
     # The EMA eval model is a deepcopy of the training model; its search must use the copy's mode and weights
-    model, batch = _treerm_head(mcts_impl="fused", search_compile=True, mcts_simulations=8, num_candidates=3)
+    model, batch = _treerm_head(mcts_impl="fused", search_compile=True, mcts_simulations=8, num_candidates=3, candidate_mode="flags")
     model.train()
     copied = copy.deepcopy(model)
     copied.eval()
@@ -278,7 +278,7 @@ def test_cpp_falls_back_to_fused_without_a_toolchain(monkeypatch):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "cpp",
-        "search_compile": False, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
+        "search_compile": False, "candidate_mode": "flags", "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
     })
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -290,7 +290,7 @@ def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope",
-        "search_compile": False, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
+        "search_compile": False, "candidate_mode": "flags", "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
     })
     with pytest.raises(ValueError, match="mcts_impl"):
         TreeRM(cfg)
