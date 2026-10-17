@@ -307,9 +307,9 @@ def create_model(
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = _lr_scaled_groups([(n, p) for n, p in trainable if id(p) not in muon_ids], _param_lr_scales(config), alternation)
+        adam_params = _lr_scaled_groups([(n, p) for n, p in trainable if id(p) not in muon_ids], config.param_lr_scales, alternation)
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], _lr_scaled_groups(trainable, _param_lr_scales(config), alternation)
+        muon_params, adam_params = [], _lr_scaled_groups(trainable, config.param_lr_scales, alternation)
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
