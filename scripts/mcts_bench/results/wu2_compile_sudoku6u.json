@@ -1,0 +1,288 @@
+{
+  "impl": "wu",
+  "env": "sudoku6u",
+  "label": "wu2_compile",
+  "commit": "5174194",
+  "time": "2026-10-14 21:09:34",
+  "device": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "overrides": [
+    "arch.search_compile=true",
+    "arch.mcts_leaves_per_round=2"
+  ],
+  "config": {
+    "K": 4,
+    "hidden": 128,
+    "H_cycles": 3,
+    "L_cycles": 4,
+    "batch": 64,
+    "train_sims": 8,
+    "eval_sims": 16
+  },
+  "micro": [
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 4.603604000294581,
+      "ms_min": 4.245824999998149,
+      "peak_mem_mb": 66.54541015625,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 3.0950580003263894,
+        "tree": 2.1168429998397187
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 3
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 57.761230999858526,
+      "ms_min": 46.53978900023503,
+      "peak_mem_mb": 75.57763671875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 40.08738300035475,
+        "tree": 5.333854999662435
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 3
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 1.0986123085021973,
+        "argmax_agree": 0.828125
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 12.930360999689583,
+      "ms_min": 10.535784999774478,
+      "peak_mem_mb": 125.99169921875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 10.226662999684777,
+        "tree": 5.113312000048609
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 7
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 84.62072700012868,
+      "ms_min": 79.45477400016898,
+      "peak_mem_mb": 134.99560546875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 72.90162799972677,
+        "tree": 11.56168300030913
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 7
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 1.6094379425048828,
+        "argmax_agree": 0.953125
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 4.839387000174611,
+      "ms_min": 4.554497000299307,
+      "peak_mem_mb": 136.5283203125,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 2.9052930003672373,
+        "tree": 2.987231999668438
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 3
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 45.17657999986113,
+      "ms_min": 43.32013700013704,
+      "peak_mem_mb": 145.55126953125,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 39.72829000031197,
+        "tree": 6.081172999529372
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 3
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 1.0986123085021973,
+        "argmax_agree": 0.921875
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 9.956391000287113,
+      "ms_min": 9.814257000016369,
+      "peak_mem_mb": 161.505859375,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 6.207013000221195,
+        "tree": 4.1232159996980045
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 7
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 85.65571799999816,
+      "ms_min": 80.01469200007705,
+      "peak_mem_mb": 170.50732421875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 71.30817100005515,
+        "tree": 12.14960000015708
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 7
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.6931471824645996,
+        "argmax_agree": 0.984375
+      }
+    }
+  ],
+  "train": {
+    "steps": 50,
+    "warmup": 15,
+    "compiled": true,
+    "batch": 64,
+    "step_ms_median": 87.76086399984706,
+    "step_ms_mean": 93.8057935800316,
+    "it_s": 10.660322372805656,
+    "samples_s": 682.260631859562,
+    "peak_mem_mb": 313.33935546875
+  },
+  "eval": {
+    "checkpoint": "/home/onat_ozer/ARC-agi-testbed/autoresearch_runs/mcts_bench/ref_sudoku6u/outputs/34827415-4f22-4169-83b0-d452bb958280/2026-10-14/20-35-43/checkpoints/step_2000_34827415-4f22-4169-83b0-d452bb958280.pth",
+    "trained": true,
+    "step": 2000,
+    "max_eval_steps": null,
+    "compiled": true,
+    "seconds": 45.49940061569214,
+    "puzzles": null,
+    "metric": "all/exact_accuracy",
+    "accuracy": 0.871,
+    "metrics": {
+      "all/accuracy": 0.9707222900390625,
+      "all/exact_accuracy": 0.871,
+      "all/lm_loss": 0.1380857696533203,
+      "all/search/argmax_agree": 0.4190000305175781,
+      "all/search/cand_div": 0.08349817657470703,
+      "all/search/cand_norm_ratio": 1.0375538330078125,
+      "all/search/kl_nats": 0.33274246215820313,
+      "all/search/post_entropy": 1.2152420654296876
+    },
+    "peak_mem_mb": 274.23779296875
+  }
+}

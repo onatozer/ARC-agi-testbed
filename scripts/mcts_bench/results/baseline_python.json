@@ -1,0 +1,197 @@
+{
+  "impl": "python",
+  "env": "sudoku6u",
+  "label": "baseline",
+  "commit": "029b7d9",
+  "time": "2026-10-14 20:45:08",
+  "device": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "overrides": [],
+  "config": {
+    "K": 4,
+    "hidden": 128,
+    "H_cycles": 3,
+    "L_cycles": 4,
+    "batch": 64,
+    "train_sims": 8,
+    "eval_sims": 16
+  },
+  "micro": [
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 24.699690000034025,
+      "ms_min": 17.706920999899012,
+      "peak_mem_mb": 27.35546875,
+      "breakdown_ms": {
+        "rollout": 21.27361499969993,
+        "expand": 0.0,
+        "tree": 3.5958600003596075
+      },
+      "rollout_calls": 8,
+      "rollout_states": 512,
+      "expand_calls": 0,
+      "expand_states": 0
+    },
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 245.94652099995074,
+      "ms_min": 202.6578210000025,
+      "peak_mem_mb": 116.5087890625,
+      "breakdown_ms": {
+        "rollout": 132.28079300051832,
+        "expand": 118.45918600010918,
+        "tree": 7.514381999271791
+      },
+      "rollout_calls": 8,
+      "rollout_states": 512,
+      "expand_calls": 7,
+      "expand_states": 348
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 35.01401399989845,
+      "ms_min": 34.05573500003811,
+      "peak_mem_mb": 108.32421875,
+      "breakdown_ms": {
+        "rollout": 30.210898999939673,
+        "expand": 0.0,
+        "tree": 5.28797900005884
+      },
+      "rollout_calls": 16,
+      "rollout_states": 1024,
+      "expand_calls": 0,
+      "expand_states": 0
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 435.9306310000193,
+      "ms_min": 401.21964400009347,
+      "peak_mem_mb": 213.1337890625,
+      "breakdown_ms": {
+        "rollout": 242.51890399978038,
+        "expand": 203.66352599967286,
+        "tree": 11.62043300064397
+      },
+      "rollout_calls": 16,
+      "rollout_states": 1024,
+      "expand_calls": 14,
+      "expand_states": 362
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 14.945252999950753,
+      "ms_min": 14.24231099986173,
+      "peak_mem_mb": 73.95166015625,
+      "breakdown_ms": {
+        "rollout": 10.827458999528972,
+        "expand": 0.0,
+        "tree": 3.323133000321832
+      },
+      "rollout_calls": 8,
+      "rollout_states": 512,
+      "expand_calls": 0,
+      "expand_states": 0
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 263.9990850000231,
+      "ms_min": 226.77651699996204,
+      "peak_mem_mb": 210.90087890625,
+      "breakdown_ms": {
+        "rollout": 134.08275300025707,
+        "expand": 92.83022800013896,
+        "tree": 7.886453999617515
+      },
+      "rollout_calls": 8,
+      "rollout_states": 512,
+      "expand_calls": 8,
+      "expand_states": 383
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 27.845657999932882,
+      "ms_min": 25.882095000042682,
+      "peak_mem_mb": 57.07666015625,
+      "breakdown_ms": {
+        "rollout": 25.343122000322182,
+        "expand": 0.0,
+        "tree": 5.227480999565159
+      },
+      "rollout_calls": 16,
+      "rollout_states": 1024,
+      "expand_calls": 0,
+      "expand_states": 0
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 538.5330039998735,
+      "ms_min": 440.57218100010687,
+      "peak_mem_mb": 212.65869140625,
+      "breakdown_ms": {
+        "rollout": 237.91613399976086,
+        "expand": 207.12939700047173,
+        "tree": 13.970070999903328
+      },
+      "rollout_calls": 16,
+      "rollout_states": 1024,
+      "expand_calls": 16,
+      "expand_states": 506
+    }
+  ],
+  "train": {
+    "steps": 50,
+    "warmup": 15,
+    "compiled": true,
+    "batch": 64,
+    "step_ms_median": 109.13227649996315,
+    "step_ms_mean": 110.67090430001372,
+    "it_s": 9.035798580710395,
+    "samples_s": 578.2911091654653,
+    "peak_mem_mb": 281.92822265625
+  },
+  "eval": {
+    "checkpoint": "/home/onat_ozer/ARC-agi-testbed/autoresearch_runs/mcts_bench/ref_sudoku6u/outputs/34827415-4f22-4169-83b0-d452bb958280/2026-10-14/20-35-43/checkpoints/step_2000_34827415-4f22-4169-83b0-d452bb958280.pth",
+    "trained": true,
+    "step": 2000,
+    "max_eval_steps": null,
+    "compiled": true,
+    "seconds": 96.43557596206665,
+    "puzzles": null,
+    "metric": "all/exact_accuracy",
+    "accuracy": 0.865,
+    "metrics": {
+      "all/accuracy": 0.9694166259765625,
+      "all/exact_accuracy": 0.865,
+      "all/lm_loss": 0.1444329833984375,
+      "all/search/argmax_agree": 0.4616667175292969,
+      "all/search/cand_div": 0.08353507995605469,
+      "all/search/cand_norm_ratio": 1.0375970458984376,
+      "all/search/kl_nats": 0.3180242614746094,
+      "all/search/post_entropy": 1.213127197265625
+    },
+    "peak_mem_mb": 354.435546875
+  }
+}

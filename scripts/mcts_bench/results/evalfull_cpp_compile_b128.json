@@ -1,0 +1,48 @@
+{
+  "impl": "cpp",
+  "env": "sudoku6u",
+  "label": "cpp_compile_batch128",
+  "commit": "a2dfa38",
+  "time": "2026-10-14 21:47:15",
+  "device": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "overrides": [
+    "arch.search_compile=true",
+    "global_batch_size=128"
+  ],
+  "config": {
+    "K": 4,
+    "hidden": 128,
+    "H_cycles": 3,
+    "L_cycles": 4,
+    "batch": 128,
+    "train_sims": 8,
+    "eval_sims": 16
+  },
+  "eval": {
+    "checkpoint": "/home/onat_ozer/ARC-agi-testbed/autoresearch_runs/mcts_bench/ref_sudoku6u/outputs/34827415-4f22-4169-83b0-d452bb958280/2026-10-14/20-35-43/checkpoints/step_2000_34827415-4f22-4169-83b0-d452bb958280.pth",
+    "trained": true,
+    "step": 2000,
+    "max_eval_steps": 7,
+    "compiled": true,
+    "seconds": 15.516552686691284,
+    "puzzles": null,
+    "metric": "all/exact_accuracy",
+    "accuracy": 0.8671875,
+    "metrics": {
+      "all/accuracy": 0.9700521060398647,
+      "all/exact_accuracy": 0.8671875,
+      "all/lm_loss": 0.14016927991594588,
+      "all/search/argmax_agree": 0.4609375,
+      "all/search/cand_div": 0.08360185793467931,
+      "all/search/cand_norm_ratio": 1.0376866204398019,
+      "all/search/kl_nats": 0.31908392906188965,
+      "all/search/post_entropy": 1.211890765598842
+    },
+    "peak_mem_mb": 226.927734375,
+    "memory_mb": {
+      "gpu_alloc": 226.927734375,
+      "gpu_reserved": 414.0,
+      "host_rss": 1751.2890625
+    }
+  }
+}

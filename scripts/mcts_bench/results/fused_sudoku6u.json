@@ -1,0 +1,229 @@
+{
+  "impl": "fused",
+  "env": "sudoku6u",
+  "label": "fused",
+  "commit": "029b7d9",
+  "time": "2026-10-14 20:52:44",
+  "device": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "overrides": [],
+  "config": {
+    "K": 4,
+    "hidden": 128,
+    "H_cycles": 3,
+    "L_cycles": 4,
+    "batch": 64,
+    "train_sims": 8,
+    "eval_sims": 16
+  },
+  "micro": [
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 9.187824000036926,
+      "ms_min": 9.030288000076325,
+      "peak_mem_mb": 36.42431640625,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 9.32960699992691
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 112.9902329998913,
+      "ms_min": 109.0879399998812,
+      "peak_mem_mb": 234.919921875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 117.88918599995668
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 27.654946999973617,
+      "ms_min": 22.34892999990734,
+      "peak_mem_mb": 150.15576171875,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 26.320655000063198
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 205.71463299984316,
+      "ms_min": 195.8065759999954,
+      "peak_mem_mb": 399.275390625,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 217.02568199998495
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.15415066480636597,
+        "argmax_agree": 0.984375
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 7.673368000041592,
+      "ms_min": 7.134231000009095,
+      "peak_mem_mb": 237.95849609375,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 8.925033999958032
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 122.91024699993613,
+      "ms_min": 115.66729299988765,
+      "peak_mem_mb": 422.3896484375,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 116.29034399993543
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.40546512603759766,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 14.968805000080465,
+      "ms_min": 13.956653000150254,
+      "peak_mem_mb": 165.75634765625,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 15.983471000026839
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 235.25116099995103,
+      "ms_min": 224.93034000012813,
+      "peak_mem_mb": 400.8564453125,
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "tree": 234.8476390000087
+      },
+      "rollout_calls": 0,
+      "rollout_states": 0,
+      "expand_calls": 0,
+      "expand_states": 0,
+      "parity": {
+        "max_abs_diff": 0.40546512603759766,
+        "argmax_agree": 1.0
+      }
+    }
+  ],
+  "train": {
+    "steps": 50,
+    "warmup": 15,
+    "compiled": true,
+    "batch": 64,
+    "step_ms_median": 86.64591249987552,
+    "step_ms_mean": 92.69116012000723,
+    "it_s": 10.788515309391967,
+    "samples_s": 690.4649798010859,
+    "peak_mem_mb": 281.92724609375
+  },
+  "eval": {
+    "checkpoint": "/home/onat_ozer/ARC-agi-testbed/autoresearch_runs/mcts_bench/ref_sudoku6u/outputs/34827415-4f22-4169-83b0-d452bb958280/2026-10-14/20-35-43/checkpoints/step_2000_34827415-4f22-4169-83b0-d452bb958280.pth",
+    "trained": true,
+    "step": 2000,
+    "max_eval_steps": null,
+    "compiled": true,
+    "seconds": 53.68939781188965,
+    "puzzles": null,
+    "metric": "all/exact_accuracy",
+    "accuracy": 0.868,
+    "metrics": {
+      "all/accuracy": 0.97,
+      "all/exact_accuracy": 0.868,
+      "all/lm_loss": 0.14128411865234375,
+      "all/search/argmax_agree": 0.4636666564941406,
+      "all/search/cand_div": 0.08344670104980469,
+      "all/search/cand_norm_ratio": 1.0376895751953126,
+      "all/search/kl_nats": 0.31868115234375,
+      "all/search/post_entropy": 1.214631591796875
+    },
+    "peak_mem_mb": 564.42919921875
+  }
+}
