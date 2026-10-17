@@ -1,0 +1,295 @@
+{
+  "impl": "cpp",
+  "env": "sudoku6u",
+  "label": "autotune",
+  "commit": "d52fe6b",
+  "time": "2026-10-14 21:24:06",
+  "device": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "overrides": [
+    "arch.search_compile=true",
+    "arch.search_compile_mode=max-autotune"
+  ],
+  "config": {
+    "K": 4,
+    "hidden": 128,
+    "H_cycles": 3,
+    "L_cycles": 4,
+    "batch": 64,
+    "train_sims": 8,
+    "eval_sims": 16
+  },
+  "micro": [
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 7.845203000215406,
+      "ms_min": 7.252989999869897,
+      "peak_mem_mb": 59.78125,
+      "memory_mb": {
+        "gpu_alloc": 59.78125,
+        "gpu_reserved": 90.0,
+        "host_rss": 1429.015625
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 5.626588999803062,
+        "tree": 1.5640790002180438
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 5
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 58.467687999836926,
+      "ms_min": 52.09947100001955,
+      "peak_mem_mb": 68.8134765625,
+      "memory_mb": {
+        "gpu_alloc": 68.8134765625,
+        "gpu_reserved": 176.0,
+        "host_rss": 1713.72265625
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 46.17651200078399,
+        "tree": 2.2215409990167245
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 5
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.6931471824645996,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 14.934721999907197,
+      "ms_min": 13.192039000387012,
+      "peak_mem_mb": 122.5234375,
+      "memory_mb": {
+        "gpu_alloc": 122.5234375,
+        "gpu_reserved": 268.0,
+        "host_rss": 1718.2421875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 11.914040999272402,
+        "tree": 1.7756130005182058
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 13
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "train",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 91.33304300030431,
+      "ms_min": 87.1876869996413,
+      "peak_mem_mb": 131.52734375,
+      "memory_mb": {
+        "gpu_alloc": 131.52734375,
+        "gpu_reserved": 268.0,
+        "host_rss": 1718.9921875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 86.65993999966304,
+        "tree": 2.9522350005208864
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 13
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.40546512603759766,
+        "argmax_agree": 0.984375
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 5.4781640001237975,
+      "ms_min": 5.394559999785997,
+      "peak_mem_mb": 143.21142578125,
+      "memory_mb": {
+        "gpu_alloc": 143.21142578125,
+        "gpu_reserved": 276.0,
+        "host_rss": 1773.88671875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 4.447448000064469,
+        "tree": 1.1839550002150645
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 5
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 8,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 49.643274000118254,
+      "ms_min": 46.22086300014416,
+      "peak_mem_mb": 152.234375,
+      "memory_mb": {
+        "gpu_alloc": 152.234375,
+        "gpu_reserved": 276.0,
+        "host_rss": 1773.88671875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 53.38979299995117,
+        "tree": 2.198792999934085
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 5
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 512
+      },
+      "parity": {
+        "max_abs_diff": 0.6931471824645996,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 1,
+      "batch": 64,
+      "ms_median": 12.77668199963955,
+      "ms_min": 12.187469999844325,
+      "peak_mem_mb": 168.49658203125,
+      "memory_mb": {
+        "gpu_alloc": 168.49658203125,
+        "gpu_reserved": 300.0,
+        "host_rss": 1773.88671875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 13.123810001161473,
+        "tree": 314.8776899988661
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 13
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.0,
+        "argmax_agree": 1.0
+      }
+    },
+    {
+      "mode": "eval",
+      "sims": 16,
+      "depth": 3,
+      "batch": 64,
+      "ms_median": 86.73075299975608,
+      "ms_min": 83.54848199996923,
+      "peak_mem_mb": 112.8984375,
+      "memory_mb": {
+        "gpu_alloc": 112.8984375,
+        "gpu_reserved": 300.0,
+        "host_rss": 1773.88671875
+      },
+      "breakdown_ms": {
+        "rollout": 0.0,
+        "expand": 0.0,
+        "step": 81.24339999858421,
+        "tree": 2.7403890012465126
+      },
+      "calls": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 13
+      },
+      "states": {
+        "rollout": 0,
+        "expand": 0,
+        "step": 1024
+      },
+      "parity": {
+        "max_abs_diff": 0.6931471824645996,
+        "argmax_agree": 0.984375
+      }
+    }
+  ]
+}

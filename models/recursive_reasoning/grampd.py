@@ -56,16 +56,19 @@ class CandidateScorer(nn.Module):
     def forward(self, ctx: torch.Tensor, cand: torch.Tensor, cos_sin: CosSin) -> torch.Tensor:
         batch_size, num_candidates, seq_len, hidden_size = cand.shape
 
-        # One attention problem per (puzzle, candidate): the same context queries against each candidate's tokens
-        query = self.q_proj(rms_norm(ctx, variance_epsilon=self.norm_eps)).view(batch_size, 1, seq_len, self.num_heads, self.head_dim)
-        query = query.expand(-1, num_candidates, -1, -1, -1).reshape(batch_size * num_candidates, seq_len, self.num_heads, self.head_dim)
+        query = self.q_proj(rms_norm(ctx, variance_epsilon=self.norm_eps)).view(batch_size, seq_len, self.num_heads, self.head_dim)
         kv = self.kv_proj(rms_norm(cand, variance_epsilon=self.norm_eps)).view(batch_size * num_candidates, seq_len, 2, self.num_heads, self.head_dim)
         key, value = kv.unbind(2)
 
-        # Context token s and candidate token s are the same cell, so both get that cell's RoPE position
+        # Context token s and candidate token s are the same cell, so both get that cell's RoPE position. The query is
+        # rotated before it's repeated per candidate, so RoPE's fp32 intermediates are [B, S, H], not [B * K, S, H]
+        # (apply_rotary_pos_emb rotates its two arguments independently, so they needn't share a batch size)
         if cos_sin is not None:
             cos, sin = cos_sin
             query, key = apply_rotary_pos_emb(query, key, cos, sin)
+
+        # One attention problem per (puzzle, candidate): the same context queries against each candidate's tokens
+        query = query.unsqueeze(1).expand(-1, num_candidates, -1, -1, -1).reshape(batch_size * num_candidates, seq_len, self.num_heads, self.head_dim)
 
         # [B*K, S, heads, head_dim] -> [B*K, heads, S, head_dim] for SDPA, then back
         attended = F.scaled_dot_product_attention(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))

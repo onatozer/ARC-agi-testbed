@@ -20,6 +20,8 @@ num_train: 10000
 num_test: 1000
 # Fraction of cells revealed as clues (0.0-1.0)
 clue_ratio: 0.3
+# Reveal extra cells until each generated puzzle has exactly one solution (grid_size != 9 only)
+unique_solution: false
 
 # Number of augmentations per puzzle (train set only)
 num_aug: 1000

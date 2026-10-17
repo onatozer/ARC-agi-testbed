@@ -118,6 +118,8 @@ class GRAM_Inner(InnerNetwork):
 
             return eps, kl_loss
 
+        if self.config.eval_prior_mean:
+            return mu_prior, 0
         eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
         return eps, 0
 

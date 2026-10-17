@@ -463,3 +463,30 @@ class LossHeadGRAM(MaxStepsLossHead):
 
         total_loss = lm_loss + kl_loss + 0.5 * lprm_loss
         return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}
+
+
+class LossHeadTreeRM(LossHeadGRAM):
+    """LossHeadGRAM that hands its loss_fn to TreeRM, whose training search values rollouts by the same token-wise CE."""
+
+    def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
+        super().__init__(model, loss_type, **kwargs)
+        self.model.inner.rollout_loss_fn = self.loss_fn
+
+    def _build_step_metrics(self, *, outputs: Dict[str, torch.Tensor], valid_metrics: torch.Tensor, **kwargs: Any) -> Dict[str, torch.Tensor]:
+        metrics = super()._build_step_metrics(outputs=outputs, valid_metrics=valid_metrics, **kwargs)
+        metrics.update(_search_metrics(outputs, valid_metrics))
+        return metrics
+
+
+class MaxStepsInferenceLossHeadTreeRM(MaxStepsInferenceLossHead):
+    """MaxStepsInferenceLossHead plus TreeRM's search diagnostics (the eval search is valued by the LPRM head)."""
+
+    def _build_eval_metrics(self, *, outputs: Dict[str, torch.Tensor], valid_metrics: torch.Tensor, **kwargs: Any) -> Dict[str, torch.Tensor]:
+        metrics = super()._build_eval_metrics(outputs=outputs, valid_metrics=valid_metrics, **kwargs)
+        metrics.update(_search_metrics(outputs, valid_metrics))
+        return metrics
+
+
+def _search_metrics(outputs: Dict[str, torch.Tensor], valid: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """TreeRM's per-puzzle search/* diagnostics, summed over `valid` rows (the caller divides by count)."""
+    return {key: torch.where(valid, value.to(torch.float32), 0).sum() for key, value in outputs.items() if key.startswith("search/")}

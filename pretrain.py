@@ -1,4 +1,4 @@
-from typing import Optional, Any, List, Dict, Sequence
+from typing import Optional, Any, List, Dict, Sequence, Tuple
 from dataclasses import replace
 import os
 import math
@@ -209,6 +209,16 @@ def create_dataloader(
     return dataloader, dataset.metadata
 
 
+def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float]) -> List[Dict[str, Any]]:
+    """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins).
+    Each group carries `lr_scale`, which the lr schedule multiplies in; unmatched parameters get 1.0."""
+    groups: Dict[float, List[torch.nn.Parameter]] = {}
+    for name, param in named_params:
+        scale = next((s for substring, s in scales.items() if substring in name), 1.0)
+        groups.setdefault(scale, []).append(param)
+    return [{"params": params, "lr_scale": scale} for scale, params in groups.items()]
+
+
 def create_model(
     config: PretrainConfig,
     train_metadata: PuzzleDatasetMetadata,
@@ -260,9 +270,9 @@ def create_model(
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = [p for p in model.parameters() if id(p) not in muon_ids]
+        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], config.param_lr_scales)
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], list(model.parameters())
+        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), config.param_lr_scales)
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
@@ -509,7 +519,7 @@ def train_batch(
         lr_this_step = compute_lr(base_lr, config, train_state)
 
         for param_group in optim.param_groups:
-            param_group["lr"] = lr_this_step
+            param_group["lr"] = lr_this_step * param_group.get("lr_scale", 1.0)
 
         if train_embeddings is None or (i == 0) == train_embeddings:
             optim.step()
