@@ -19,7 +19,8 @@ class FlagCandidates(nn.Module):
     """Candidates that can't collapse onto one another: u_t plus, per slot k, a fixed random unit direction e_k scaled by
     a learned per-token gate, cand_k = u_t + g_k(z_L, u_t) * sqrt(H) * e_k. The directions are orthonormal and frozen,
     so the slots differ by construction; the network downstream can learn what each "flag" means, and the gates can
-    only shrink the flags (collapse point: plain TRM). [B, S, H] x [B, S, H] -> [B, K, S, H]."""
+    only shrink the flags (collapse point: plain TRM). Slot 0 is the identity (e_0 = 0): the plain update is always
+    among the candidates, so a larger K only adds options, and K=1 is plain TRM. [B, S, H] x [B, S, H] -> [B, K, S, H]."""
 
     def __init__(self, hidden_size: int, num_candidates: int):
         super().__init__()
@@ -27,7 +28,9 @@ class FlagCandidates(nn.Module):
         # Drawn on the CPU with a fixed seed so every instance gets the same directions, whatever device the model is built on
         self.gate = CastedLinear(2 * hidden_size, num_candidates, bias=True)
         directions, _ = torch.linalg.qr(torch.randn(hidden_size, num_candidates, generator=torch.Generator().manual_seed(0), device="cpu"))
-        self.register_buffer("directions", directions.T.contiguous().to(self.gate.weight.device), persistent=True)  # [K, H], orthonormal rows
+        directions = directions.T.contiguous()  # [K, H], orthonormal rows
+        directions[0].zero_()  # slot 0 = u_t itself (its gate row is dead weight)
+        self.register_buffer("directions", directions.to(self.gate.weight.device), persistent=True)
         # Start with every flag at full strength (gate = 1) and no input dependence
         with torch.no_grad():
             self.gate.weight.zero_()

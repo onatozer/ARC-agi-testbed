@@ -1,7 +1,8 @@
 #!/bin/bash
 # One training run of a tier under the shared GPU lock. usage: run.sh <sudoku6|nqueens8> <name> <hydra overrides...>
 # Logs to $RUNS/<tier>/<name>/train.log (W&B online to the user's project as cand_<tier>_<name> unless +wandb_mode=...
-# is among the overrides; the local .wandb copy is what summary.py reads), appends the wall-clock, drops checkpoints.
+# is among the overrides; the local .wandb copy is what summary.py reads), appends the wall-clock, drops checkpoints
+# unless KEEP_CKPT is set.
 set -u
 TIER=$1; NAME=$2; shift 2
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -21,6 +22,6 @@ flock -o "$LOCK" env OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OUTPUT_ROOT="$RUNDIR" W
   checkpoint_interval_steps=null heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000 \
   +project_name=ARC-agi-testbed +entity=ozeronatwanb +run_name="cand_${TIER}_$NAME" "$@" > "$RUNDIR/train.log" 2>&1
 echo "exit=$? seconds=$(( $(date +%s) - START ))" >> "$RUNDIR/train.log"
-find "$RUNDIR" -name "*.pth" -delete
+[ -n "${KEEP_CKPT:-}" ] || find "$RUNDIR" -name "*.pth" -delete
 find "$RUNDIR" -type d -name code -prune -exec rm -rf {} +
 "$WT/venv/bin/python" "$HERE/summary.py" "$RUNDIR"
