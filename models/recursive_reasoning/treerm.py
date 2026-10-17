@@ -9,31 +9,10 @@ from torch import nn
 from models.losses import IGNORE_LABEL_ID
 from models.losses.base import kl_balanced_logits
 from models.mcts import MCTS_IMPLS, Node
-from ..layers import CastedLinear, SwiGLU, rms_norm
+from ..layers import CastedLinear, rms_norm
 from .merged_arch import Blocks, LatentCarry, _add_puzzle_emb_positions
 from .gram import GRAM, GRAM_Inner
 from .grampd import CandidateScorer
-
-
-class CandidateGenerator(nn.Module):
-    """Proposes num_candidates z_H vectors (or, in residual mode, per-slot deltas on u_t) from the new z_H and z_L:
-    [B, S, H] x [B, S, H] -> [B, K, S, H]. Learned proposals; trained by candidate_loss (REPORTS_CANDIDATES.md)."""
-
-    def __init__(self, hidden_size: int, num_candidates: int, expansion: float):
-        super().__init__()
-
-        self.num_candidates = num_candidates
-
-        # Not zero-initialised: identical candidates would all get the same gradient direction and never separate
-        self.head = nn.Sequential(
-            CastedLinear(hidden_size*2, hidden_size, bias=True),
-            SwiGLU(hidden_size, expansion),
-            CastedLinear(hidden_size, hidden_size*num_candidates, bias=True),
-        )
-
-    def forward(self, z_L: torch.Tensor, z_H: torch.Tensor) -> torch.Tensor:
-        x = self.head(torch.cat([z_L, z_H], dim=-1))
-        return x.unflatten(-1, (self.num_candidates, -1)).transpose(1, 2)
 
 
 class FlagCandidates(nn.Module):
@@ -86,16 +65,7 @@ class TreeRMInner(GRAM_Inner):
         del self.prior_head, self.posterior_head
         # The same layers (state-dict keys unchanged) in a block that skips the zero-scale noise draw the search replays
         self.L_level = NoiselessBlocks(layers=list(self.L_level.layers), config=self.config)
-        if self.config.candidate_mode not in ("full", "residual", "flags"):
-            raise ValueError(f"candidate_mode must be 'full', 'residual' or 'flags', got {self.config.candidate_mode!r}.")
-        if self.config.candidate_mode == "flags":
-            self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
-        else:
-            self.candidate_generator = CandidateGenerator(
-                hidden_size=self.config.hidden_size,
-                num_candidates=self.config.num_candidates,
-                expansion=self.config.expansion,
-            )
+        self.candidate_generator = FlagCandidates(hidden_size=self.config.hidden_size, num_candidates=self.config.num_candidates)
         if self.config.candidate_loss not in ("none", "wta", "posterior"):
             raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
         if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
@@ -133,11 +103,8 @@ class TreeRMInner(GRAM_Inner):
         return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
 
     def _candidates(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
-        """The K proposals for the new z_H (see candidate_mode)."""
-        cand = self.candidate_generator(z_L, u_t)
-        if self.config.candidate_mode == "residual":
-            cand = cand + u_t.unsqueeze(1)
-        return cand
+        """The K proposals for the new z_H: u_t plus a gated flag per slot."""
+        return self.candidate_generator(z_L, u_t)
 
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
@@ -343,8 +310,8 @@ class TreeRMInner(GRAM_Inner):
                 predicted = torch.sigmoid(self.v_head(leaf_tokens).to(torch.float32)).squeeze(-1)
                 bootstrap = F.mse_loss(predicted, targets, reduction="sum") / self.mcts.num_simulations
                 kl_loss = kl_loss + self.config.value_bootstrap_weight * bootstrap
-            # Every candidate gets a gradient from its own rollout (_candidate_loss); without it only the picked one does
-            # and learned candidates collapse (REPORTS.md section 4, REPORTS_CANDIDATES.md)
+            # Every candidate (its gate) gets a gradient from its own rollout (_candidate_loss); without it only the picked
+            # one does: +14 points on N-Queens (REPORTS_CANDIDATES.md section 0)
             if self.config.candidate_loss != "none":
                 cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, remaining[0])
                 kl_loss = kl_loss + cand_loss

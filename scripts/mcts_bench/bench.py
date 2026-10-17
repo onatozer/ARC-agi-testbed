@@ -48,7 +48,7 @@ ENVS = {
 # The autoresearch recipe (REPORTS.md section 0); keep in sync with train_reference.sh
 RECIPE = [
     "arch=treerm", "arch.hidden_size=128", "arch.num_heads=4", "arch.L_layers=2", "arch.H_cycles=3", "arch.L_cycles=4",
-    "arch.halt_max_steps=8", "arch.candidate_mode=flags", "arch.candidate_loss=none", "lr=1e-3",
+    "arch.halt_max_steps=8", "arch.candidate_loss=none", "lr=1e-3",
     "lr_warmup_steps=50", "global_batch_size=64", "epochs=100000", "train_epochs_per_iter=100000",
     "checkpoint_interval_steps=null", "heavy_metrics_log_interval=100000", "steps_hist_log_interval_steps=100000",
     "flops_log_interval_steps=100000", "grad_norm_log_interval_steps=100000", "seed=0", "+wandb_mode=disabled",
