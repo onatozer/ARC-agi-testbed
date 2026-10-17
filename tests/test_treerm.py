@@ -17,7 +17,7 @@ def _treerm_head(**overrides):
     torch.manual_seed(0)
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
-        "mcts_c_puct": 1.25, "mcts_impl": "python", "mcts_leaves_per_round": 1, "search_compile": False, "search_compile_mode": "reduce-overhead", "search_memo": False, "eval_rollout_cap": None, "mcts_horizon": "step", "gumbel_temp": 1.0, "candidate_mode": "full", "eval_search": True, "posterior_smoothing": 0.0, "candidate_diversity_weight": 0.0, "value_bootstrap_weight": 0.0, "rollout_policy": "trm", "argmax_pick": False, "eval_mcts_simulations": None, **overrides,
+        "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -118,18 +118,13 @@ def test_treerm_next_z_H_is_exactly_one_candidate(training):
 
 
 @needs_cuda
-@pytest.mark.parametrize("horizon", ["step", "full"])
-def test_treerm_runs_every_supervision_step_and_infers(horizon):
-    model, batch = _treerm_head(mcts_horizon=horizon)
+def test_treerm_runs_every_supervision_step_and_infers():
+    model, batch = _treerm_head()
     model.train()
-    inner = model.model.inner
     carry = model.initial_carry(batch)
     for step in range(1, 5):  # halt_max_steps = 4, H_cycles = 2
         carry, loss, _, _, _ = model(return_keys=[], carry=carry, batch=batch)
         assert bool(carry.halted.all()) == (step == 4) and torch.isfinite(loss)
-        # Updates left from the first cycle of the step just run
-        expected = 2 if horizon == "step" else 2 + 2 * (4 - step)
-        assert inner._remaining_updates(0, batch["inputs"].shape[0]) == [expected] * batch["inputs"].shape[0]
 
     head = MaxStepsInferenceLossHead(model.model, loss_type="stablemax_cross_entropy")
     head.eval()
@@ -148,17 +143,6 @@ def test_treerm_reports_the_lprm_value_as_its_halt_confidence():
     with torch.inference_mode():
         _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
     torch.testing.assert_close(outputs["q_halt_logits"].sigmoid(), outputs["lprm_value"], atol=1e-5, rtol=1e-4)
-
-
-@needs_cuda
-def test_treerm_eval_without_search_never_searches():
-    model, batch = _treerm_head(eval_search=False)
-    model.eval()
-    inner = model.model.inner
-    inner._search = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("searched at eval"))
-    with torch.inference_mode():
-        _, outputs = model.model(carry=model.initial_carry(batch), batch=batch)
-    assert torch.isfinite(outputs["logits"]).all()
 
 
 @needs_cuda
@@ -203,24 +187,8 @@ def test_treerm_searches_only_on_grad_cycles():
 
 
 @needs_cuda
-def test_treerm_prior_rollouts_pick_candidates_inside_rollouts():
-    model, batch = _treerm_head(rollout_policy="prior")
-    model.train()
-    inner = model.model.inner
-    calls = []
-    original = inner.candidate_scorer.forward
-    inner.candidate_scorer.forward = lambda *args, **kwargs: calls.append(1) or original(*args, **kwargs)
-    with torch.no_grad():
-        shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
-        z_H, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
-        states = [(b, z_H[b], z_L[b]) for b in range(shape[0])]
-        values = inner._rollout_values(states, [2] * shape[0], x, batch["labels"])
-    assert len(values) == shape[0] and len(calls) == 2  # one scorer call per rollout update
-
-
-@needs_cuda
 def test_flag_candidates_are_u_t_plus_orthonormal_directions():
-    model, batch = _treerm_head(candidate_mode="flags")
+    model, batch = _treerm_head()
     inner = model.model.inner
     directions = inner.candidate_generator.directions.float()
     torch.testing.assert_close(directions @ directions.T, torch.eye(directions.shape[0], device=directions.device), atol=1e-5, rtol=0)
@@ -232,19 +200,6 @@ def test_flag_candidates_are_u_t_plus_orthonormal_directions():
     # At init the gate is 1, so each slot's offset is sqrt(H) * e_k at every token
     expected = (math.sqrt(inner.config.hidden_size) * directions)[None, :, None, :].expand_as(delta)
     torch.testing.assert_close(delta, expected, atol=0.1, rtol=0.02)
-
-
-@needs_cuda
-def test_treerm_argmax_pick_is_deterministic_at_eval():
-    model, batch = _treerm_head(argmax_pick=True)
-    model.eval()
-    inner = model.model.inner
-    shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
-    u_t, z_L, x = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(3))
-    with torch.inference_mode():
-        a, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
-        b, _, _ = inner._mcts_guidance(u_t, z_L, x, batch["labels"], [1] * shape[0])
-    torch.testing.assert_close(a, b)
 
 
 @needs_cuda

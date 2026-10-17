@@ -5,7 +5,6 @@
 # Variants (arXiv 2609.21181), all through train_overrides on the CLI:
 #   Embed-TTT        train_overrides.freeze_weights=true
 #   Embed-Full-TTT   train_overrides.freeze_alternation_epochs=10   (embeddings for 10 epochs, then weights only)
-#   heads frozen     train_overrides.freeze_param_substrings=[candidate_,v_head]
 suffix: ttt_mini
 
 num_aux_tasks: 16
