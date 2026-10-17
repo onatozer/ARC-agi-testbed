@@ -1,0 +1,3 @@
+# Phase 6 (N-Queens): flags_residual = a fixed flag per slot (differ by construction) + a learned delta (content), trained with wta
+flagres_k4_wta arch=treerm arch.candidate_mode=flags_residual arch.candidate_loss=wta
+flagres_k8_wta_s16 arch=treerm arch.candidate_mode=flags_residual arch.candidate_loss=wta arch.num_candidates=8 arch.mcts_simulations=16

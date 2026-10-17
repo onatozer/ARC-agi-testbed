@@ -1,0 +1,5 @@
+# Phase 3 on 8x8 N-Queens: the three diversity mechanisms (anneal over half the 3000 steps)
+residual_k4_wta_bal arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_balance_weight=0.1
+residual_k4_wta_rec arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_recover_weight=0.1
+residual_k4_wta_anneal arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_loss_eps_anneal_steps=1500
+residual_k4_wta_all3 arch=treerm arch.candidate_mode=residual arch.candidate_loss=wta arch.candidate_balance_weight=0.1 arch.candidate_recover_weight=0.1 arch.candidate_loss_eps_anneal_steps=1500

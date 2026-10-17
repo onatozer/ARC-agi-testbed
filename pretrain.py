@@ -219,6 +219,12 @@ def _memory_metrics(prefix: str) -> Dict[str, float]:
     return metrics
 
 
+def _param_lr_scales(config: PretrainConfig) -> Dict[str, float]:
+    """The lr multipliers in force: the arch's own (`arch.param_lr_scales`, e.g. TreeRM's candidate heads) under the
+    train config's `param_lr_scales`, which override them key by key."""
+    return {**(getattr(config.arch, "param_lr_scales", None) or {}), **config.param_lr_scales}
+
+
 def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales: Dict[str, float], alternation: List[str] = ()) -> List[Dict[str, Any]]:
     """Splits the parameters into optimizer param groups by `scales` (name substring -> lr multiplier; first match wins)
     and by membership of the freeze-alternation set (`alternation` substrings, see freeze_alternation_substrings).
