@@ -109,6 +109,10 @@ class TreeRMInner(GRAM_Inner):
         """The K proposals for the new z_H: u_t plus a gated flag per slot."""
         return self.candidate_generator(z_L, u_t)
 
+    def _prior_logits(self, u_t: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
+        """The search prior over the candidates, as logits [B, K]: the scorer's."""
+        return self.candidate_scorer(u_t, cand, self._cos_sin())
+
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
     def _expand(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], x: torch.Tensor) -> Tuple[List[List[Tuple[int, torch.Tensor, torch.Tensor]]], List[List[float]]]:
@@ -124,7 +128,7 @@ class TreeRMInner(GRAM_Inner):
         u_t = self.L_level(z_H, z_L, **seq_dict)
 
         cand = self._candidates(z_L, u_t)
-        priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1).tolist()
+        priors = self._prior_logits(u_t, cand).softmax(dim=-1).tolist()
         children = [[(row, cand[i, k], z_L[i]) for k in range(cand.shape[1])] for i, row in enumerate(rows)]
         return children, priors
 
@@ -194,7 +198,7 @@ class TreeRMInner(GRAM_Inner):
             if n_updates == 0:
                 # The transition: the rollout's first update is exactly the expand's u_t
                 cand = self._candidates(z_L, u_t)
-                priors, z_L_next = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1), z_L
+                priors, z_L_next = self._prior_logits(u_t, cand).softmax(dim=-1), z_L
             z_H = u_t
         return values, targets, leaf_token, cand, priors, z_L_next
 
@@ -290,7 +294,7 @@ class TreeRMInner(GRAM_Inner):
         """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
         scorer's prior (only when gradients are on)."""
         cand = self._candidates(z_L, u_t)
-        prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
+        prior_logits = self._prior_logits(u_t, cand)
         # The label-informed search only where its KL is paid (the grad cycles); elsewhere it would steer the
         # trajectory with label information for free. The prior picks the candidate on the no-grad cycles
         search = not self.training or torch.is_grad_enabled()

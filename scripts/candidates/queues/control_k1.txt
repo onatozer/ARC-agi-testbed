@@ -1,0 +1,2 @@
+# K=1 without the candidate loss (at K=1 it is a second copy of the lm loss): the TreeRM recipe with no search, no candidates, one lm loss
+id_k1_none  arch=treerm arch.num_candidates=1 arch.mcts_simulations=2 arch.eval_mcts_simulations=1 arch.candidate_loss=none
