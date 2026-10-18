@@ -29,16 +29,16 @@ class TreeGRAMInner(TreeRMInner):
         return torch.zeros(cand.shape[:2], device=cand.device, dtype=torch.float32)
 
     def _prior_loss(self, u_t: torch.Tensor, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> torch.Tensor:
-        """prior_target=visits: pull the prior toward the samples the search favoured, weighted by their visit share
-        (Sampled MuZero's policy target for a sampled continuous action space): mu by the weighted squared distance to
-        the (detached) samples, var by the Gaussian likelihood of the residuals with the residuals detached, so var
-        tracks the favoured samples' spread. Only slots 1..K-1 are draws (slot 0 is the mean). The plain weighted
-        Gaussian NLL was tried first and diverged twice: its 1/var factor on mu's gradient explodes once var shrinks.
-        Summed over the hidden dim, averaged over tokens, summed over the batch, weighted by kl_strength like GRAM's KL."""
+        """prior_target=visits: pull the prior toward the draws the search favoured, weighted by their visit share
+        (Sampled MuZero's policy target for a sampled continuous action space). A draw is the offset eps_k = cand_k -
+        u_t (slots 1..K-1; slot 0 is the mean): mu by the weighted squared distance to the (detached) draws, var by the
+        Gaussian likelihood of the residuals with the residuals detached (so mu's gradient has no 1/var factor), summed
+        over the hidden dim, averaged over tokens, summed over the batch and weighted by kl_strength like GRAM's KL."""
         if self.config.prior_target == "none" or cand.shape[1] == 1:
             return prior_logits.new_zeros(())
         mu, var = (t.float() for t in self.prior_head(u_t))
-        diff = cand[:, 1:].detach().float() - mu.unsqueeze(1)  # [B, K-1, S, H]
+        eps = (cand[:, 1:] - u_t.unsqueeze(1)).detach().float()  # [B, K-1, S, H]
+        diff = eps - mu.unsqueeze(1)
         mu_term = 0.5 * diff.pow(2)
         var_term = 0.5 * (diff.detach().pow(2) / var.unsqueeze(1) + var.log().unsqueeze(1))
         loss = (mu_term + var_term).sum(-1).mean(-1)  # [B, K-1]
