@@ -123,6 +123,23 @@ class GRAM_Inner(InnerNetwork):
         eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
         return eps, 0
 
+    def _lprm_rollout_loss(self, u_t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Value bootstrapping for the LPRM head (TreeRM's, with the prior's draws as the rollouts): K draws of eps from
+        the prior at u_t, each decoded without gradient, and the head trained to predict each draw's token accuracy
+        from the draw's first token. The loss head only ever shows the head posterior-guided states, which is not
+        what best-of-N or a search over prior draws asks it to rank. Batch-summed, averaged over the K draws, weighted
+        by value_bootstrap_weight."""
+        K = self.config.lprm_prior_rollouts
+        with torch.no_grad():
+            mu, var = self.prior_head(u_t)
+            noise = torch.randn((u_t.shape[0], K) + u_t.shape[1:], device=u_t.device, dtype=u_t.dtype)
+            z = rms_norm(u_t.unsqueeze(1) + mu.unsqueeze(1) + var.sqrt().unsqueeze(1) * noise, self.config.rms_norm_eps)  # [B, K, S, H]
+            logits = self.lm_head(z[:, :, self.config.puzzle_emb_len :] if self.config.puzzle_emb_ndim != 0 else z)
+            mask = y != IGNORE_LABEL_ID
+            acc = ((logits.argmax(-1) == y.unsqueeze(1)) & mask.unsqueeze(1)).sum(-1) / mask.sum(-1, keepdim=True).clamp_min(1)  # [B, K]
+        predicted = torch.sigmoid(self.v_head(z[:, :, 0]).to(torch.float32)).squeeze(-1)
+        return F.mse_loss(predicted, acc.float(), reduction="sum") / K * self.config.value_bootstrap_weight
+
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
         x = self._input_embeddings(batch["inputs"], batch["puzzle_identifiers"], batch.get("object_ids"))
@@ -161,6 +178,8 @@ class GRAM_Inner(InnerNetwork):
             u_t = self.L_level(z_H, z_L, **seq_dict)
             eps, guidance_loss = self._guidance(u_t, y, use_posterior=self.training, prior_rows=prior_rows)
             kl_loss += guidance_loss
+            if self.training and torch.is_grad_enabled() and self.config.lprm_prior_rollouts:
+                kl_loss = kl_loss + self._lprm_rollout_loss(u_t, y)
 
             z_H = u_t + eps
 

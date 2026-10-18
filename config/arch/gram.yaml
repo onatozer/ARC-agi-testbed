@@ -18,3 +18,5 @@ grad_cycles: 1 # how many of the H_cycles carry the gradient (and the posterior 
 posterior_nograd_cycles: False # also sample the posterior in the no-grad cycles while training (they pay no KL, so y leaks into z_H for free)
 prior_sample_frac: 0.0 # fraction of puzzles whose grad cycle takes the prior's guidance instead of the posterior's (lm loss on the inference trajectory)
 prior_sample_per_puzzle: False # draw the prior_sample_frac choice once per puzzle (its whole trajectory) instead of at every supervision step
+lprm_prior_rollouts: 0 # value bootstrapping for the LPRM head (REPORTS_GRAM_TTS.md): K prior draws per grad cycle, decoded without gradient, the head trained to predict each draw's token accuracy; 0 = the loss head's target only (posterior-guided states)
+value_bootstrap_weight: 0.5 # weight of that loss (TreeRM's key)

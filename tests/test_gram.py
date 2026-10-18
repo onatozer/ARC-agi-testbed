@@ -33,10 +33,29 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "value_bootstrap_weight": 0.5, **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lprm_prior_rollouts_train_only_the_value_head_on_prior_draws():
+    model, batch = _gram_head(lprm_prior_rollouts=3)
+    model.train()
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
+    inner = model.model.inner
+    # The bootstrap's contribution reaches the value head only: it is the extra kl_loss, and the backbone's gradient
+    # from it is zero (the draws are decoded without gradient), so the lm/KL gradients alone are left when it is off
+    loss.backward()
+    v_grad = inner.v_head.weight.grad.clone()
+    model_off, batch = _gram_head(lprm_prior_rollouts=0)
+    model_off.train()
+    _, loss_off, metrics_off, _, _ = model_off(return_keys=[], carry=model_off.initial_carry(batch), batch=batch)
+    loss_off.backward()
+    assert metrics["kl_loss"] > metrics_off["kl_loss"]
+    assert not torch.equal(v_grad, model_off.model.inner.v_head.weight.grad)
 
 
 def _count_posterior_calls(model):
