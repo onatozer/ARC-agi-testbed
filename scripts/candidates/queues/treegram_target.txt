@@ -1,0 +1,2 @@
+# TreeGRAM with the visit-weighted prior target (the treegram.yaml default now); tg_k4 in queues/treegram.txt is the pathwise-only run
+tgv_k4   arch=treegram

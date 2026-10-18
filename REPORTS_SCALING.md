@@ -175,6 +175,28 @@ Q-based pick before K or the budget could pay. Memory and wall are at TreeRM's l
    differences under ~6 are not differences); the TRM-with-ACT-head control inside this harness (the 20-21 / 66-74
    baselines are the earlier reports'); depth as an axis (it is not a config knob after the strip).
 
+## 8. Round 2 (user, 2026-10-17 evening): deterministic pick, measured value head, proposal target, MiniARC 5x5
+
+Built (commit a558245), per the user's choice of the two companions in section 7 and the point that Sudoku may be too
+easy to show a search gain while MiniARC 5x5's low accuracy says the latent's basin is often wrong:
+- `arch.eval_pick: argmax` (default; `sample` = the old draw). At eval the search takes its most-visited candidate.
+  Training keeps the straight-through draw (the scorer's gradient).
+- The value head measured: at eval every candidate is rolled out to the end of the step and scored with the label
+  (the eval loss head now hands the inner its loss_fn like the training head), giving `search/pick_ce_regret`
+  (the picked candidate's CE above the CE-best one), `search/pick_is_best`, `search/cand_ce_gap` and
+  `search/value_rank_corr` (Spearman of the LPRM values with -CE over the K candidates: 1 = the value head ranks
+  the candidates as the label would, 0 = no information).
+- `TreeRMInner._prior_loss` hook (the balanced KL) and TreeGRAM's `arch.prior_target: visits` (default): the
+  search's visit-weighted Gaussian NLL of its own samples under the prior, Sampled MuZero's target, so mu follows
+  the samples the search favoured and var their spread instead of collapsing (section 6). `none` = section 6.
+- `treerm_sims.yaml` sweeps pick x sims from one checkpoint; `scripts/miniarc5/queue_scaling.sh` runs the MiniARC
+  tier (standard build `miniarc5-aug-31`, rebuilt: 149 tasks, 4768 test rows; recipes.sh plus `puzzle_emb_lr=3e-2`).
+
+Runs, in order on the one GPU: (a) the section 3 / 6 N-Queens checkpoints under both picks at 2K / 4K / 8K sims
+with the new diagnostics; (b) TreeGRAM K=4 with the target on Sudoku and N-Queens against section 6; (c) MiniARC
+5x5: TreeRM identity K=4, its K=1 control, TreeGRAM K=4 with the target (4000 steps each), then both picks from
+the K=4 checkpoints.
+
 Harness for whoever continues: `queues/id_k.txt`, `queues/control_k1.txt`, `queues/treegram.txt` with
 `KEEP_CKPT=1 bash scripts/candidates/queue.sh <tier> <queue>`; `sims_sweep.sh <ckpt> '[sims]' [seed] [batch] [data]`
 and `sims_table.py <run dir>`; results under `~/ARC-agi-testbed/autoresearch_runs/candidates/{sudoku6,nqueens8,sims_ref,sims_nq}/`.
