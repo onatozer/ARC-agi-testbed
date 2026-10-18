@@ -479,7 +479,12 @@ class LossHeadTreeRM(LossHeadGRAM):
 
 
 class MaxStepsInferenceLossHeadTreeRM(MaxStepsInferenceLossHead):
-    """MaxStepsInferenceLossHead plus TreeRM's search diagnostics (the eval search is valued by the LPRM head)."""
+    """MaxStepsInferenceLossHead plus TreeRM's search diagnostics (the eval search is valued by the LPRM head; the
+    pick diagnostics roll every candidate out and score it with this head's loss_fn)."""
+
+    def __init__(self, model: nn.Module, **kwargs: Any) -> None:
+        super().__init__(model, **kwargs)
+        self.model.inner.rollout_loss_fn = self.loss_fn
 
     def _build_eval_metrics(self, *, outputs: Dict[str, torch.Tensor], valid_metrics: torch.Tensor, **kwargs: Any) -> Dict[str, torch.Tensor]:
         metrics = super()._build_eval_metrics(outputs=outputs, valid_metrics=valid_metrics, **kwargs)

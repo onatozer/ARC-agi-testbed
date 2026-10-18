@@ -278,7 +278,7 @@ def test_cpp_falls_back_to_fused_without_a_toolchain(monkeypatch):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "cpp",
-        "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
+        "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax",
     })
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -290,7 +290,7 @@ def test_unknown_impl_is_rejected():
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0,
         "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6, "mcts_c_puct": 1.25, "mcts_impl": "nope",
-        "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None,
+        "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05, "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax",
     })
     with pytest.raises(ValueError, match="mcts_impl"):
         TreeRM(cfg)

@@ -23,6 +23,7 @@ param_lr_scales: # lr multipliers for this arch's parameters by name substring; 
 # ---- Search (REPORTS.md section 12) ----
 mcts_simulations: 8 # simulations per puzzle per z_H update in training, K of them the forced root-child rollouts
 eval_mcts_simulations: 16 # simulations per search at eval; null = mcts_simulations. Pays once the value head is bootstrapped
+eval_pick: argmax # which candidate a search picks at eval: argmax = the most visited; sample = a draw from the visit distribution, as in training (its K/sims uniform floor made a larger K a more random pick: REPORTS_SCALING.md)
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
 value_bootstrap_weight: 0.5 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
 

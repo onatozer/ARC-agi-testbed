@@ -73,6 +73,8 @@ class TreeRMInner(GRAM_Inner):
             raise ValueError(f"candidate_loss must be 'none', 'wta' or 'posterior', got {self.config.candidate_loss!r}.")
         if not 0.0 <= self.config.candidate_loss_eps <= 1.0:
             raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
+        if self.config.eval_pick not in ("argmax", "sample"):
+            raise ValueError(f"eval_pick must be 'argmax' or 'sample', got {self.config.eval_pick!r}.")
         self.candidate_scorer = CandidateScorer(
             hidden_size=self.config.hidden_size,
             num_heads=self.config.num_heads,
@@ -301,13 +303,9 @@ class TreeRMInner(GRAM_Inner):
         post_logits = self._search(cand.detach(), prior_logits.detach(), z_L.detach(), x.detach(), y, remaining) if search else prior_logits.detach()
 
         kl_loss = 0
-        # Only the grad cycles pay the KL; the posterior has no parameters, so only the prior-update term trains anything
+        # Only the grad cycles pay the prior's loss; the posterior has no parameters, so only the prior trains from it
         if torch.is_grad_enabled():
-            kl_loss = kl_balanced_logits(
-                prior_logits=prior_logits,
-                post_logits=post_logits,
-                alpha=self.config.kl_grad_prior,
-            ).sum() * self.config.kl_strength
+            kl_loss = self._prior_loss(u_t, cand, prior_logits, post_logits)
             # Value bootstrapping (AlphaZero-style): the value head predicts each visited leaf's rollout token accuracy.
             # Summed over puzzles, averaged over this search's leaves (one leaf per puzzle per simulation, however the
             # search batches them), so it scales like the loss head's LPRM term
@@ -323,15 +321,22 @@ class TreeRMInner(GRAM_Inner):
                 cand_loss, cand_diag = self._candidate_loss(cand, z_L, x, y, post_logits, remaining[0])
                 kl_loss = kl_loss + cand_loss
 
-        # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
-        # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
-        logits = prior_logits + (post_logits - prior_logits).detach()
-        weights = F.gumbel_softmax(logits.float(), tau=1.0, hard=True, dim=-1)
+        if self.training or self.config.eval_pick == "sample":
+            # Straight-through Gumbel-softmax as in GRAMDP: the forward value of the logits is the posterior, so the one-hot
+            # sample is an exact draw from the visit distribution, while the backward pass reaches the scorer's prior logits
+            logits = prior_logits + (post_logits - prior_logits).detach()
+            weights = F.gumbel_softmax(logits.float(), tau=1.0, hard=True, dim=-1)
+        else:
+            # The most-visited candidate (ties to the first): the draw's K/sims uniform floor made a larger K a more
+            # random pick (REPORTS_SCALING.md section 1)
+            weights = F.one_hot(post_logits.argmax(dim=-1), cand.shape[1]).float()
 
         z_H = torch.einsum("bk,bksh->bsh", weights, cand.float()).to(u_t.dtype)
         diag = self._search_diagnostics(cand, prior_logits, post_logits)
         if torch.is_grad_enabled() and self.config.candidate_loss != "none":
             diag.update(cand_diag)
+        if not self.training and cand.shape[1] > 1 and self.rollout_loss_fn is not None:  # a bare model has no CE to score with
+            diag.update(self._pick_diagnostics(cand, z_L, x, y, weights, remaining[0]))
         with torch.no_grad():  # candidate norm relative to the TRM update it replaces
             diag["search/cand_norm_ratio"] = cand.float().flatten(2).norm(dim=-1).mean(-1) / u_t.float().flatten(1).norm(dim=-1).clamp_min(1e-6)
         return z_H, kl_loss, diag
@@ -344,14 +349,14 @@ class TreeRMInner(GRAM_Inner):
         num_candidates = cand.shape[1]
         return (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(-1)) / max(num_candidates * (num_candidates - 1), 1)
 
-    def _candidate_loss(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, post_logits: torch.Tensor, left: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """A gradient for every candidate of a grad cycle, not just the picked one. Each candidate is rolled out with
-        gradient exactly as the search's root-child rollouts are (left - 1 plain TRM updates to the end of this
-        supervision step, then the decode) and its label CE is weighted per candidate_loss: 'wta' = relaxed
-        winner-take-all (the lowest-CE candidate gets 1 - candidate_loss_eps, the others share it; Rupprecht et al. 2017,
-        the standard cure for a multiple-choice head whose untrained slots never win), 'posterior' = the search's visit
-        distribution. Returns the batch-summed loss and per-puzzle diagnostics: the weighted CE, the CE gap between the
-        worst and best candidate, and whether the search's argmax is the CE-best candidate (REPORTS_CANDIDATES.md)."""
+    def _prior_loss(self, u_t: torch.Tensor, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> torch.Tensor:
+        """What a grad cycle pays to pull the prior toward the search: the beta-weighted balanced KL of the search's
+        posterior from the scorer's prior over the candidates."""
+        return kl_balanced_logits(prior_logits=prior_logits, post_logits=post_logits, alpha=self.config.kl_grad_prior).sum() * self.config.kl_strength
+
+    def _candidate_rollout(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, left: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Every candidate rolled out exactly as the search's root-child rollouts are (left - 1 plain TRM updates to the
+        end of this supervision step, then the decode): its label CE and its LPRM value, both [B, K]."""
         B, K = cand.shape[:2]
         z_H = cand.flatten(0, 1)
         z_L = z_L.repeat_interleave(K, dim=0)
@@ -364,7 +369,34 @@ class TreeRMInner(GRAM_Inner):
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         mask = y != IGNORE_LABEL_ID
         ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
-        ce = ce.float().view(B, K)
+        return ce.float().view(B, K), self._lprm_value(z_H).view(B, K)
+
+    @torch.no_grad()
+    def _pick_diagnostics(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, weights: torch.Tensor, left: int) -> Dict[str, torch.Tensor]:
+        """Per-puzzle [B] eval diagnostics of the pick against the label: the picked candidate's CE above the CE-best
+        candidate, whether it is the CE-best, the CE gap between the worst and best candidate, and how well the LPRM
+        value head ranks the candidates (Spearman correlation of its values with -CE over the K candidates)."""
+        ce, value = self._candidate_rollout(cand, z_L, x, y, left)
+        picked = weights.argmax(dim=-1, keepdim=True)
+        ranks = lambda t: t.argsort(dim=-1).argsort(dim=-1).float()
+        r_value, r_ce = ranks(value), ranks(-ce)
+        r_value, r_ce = r_value - r_value.mean(-1, keepdim=True), r_ce - r_ce.mean(-1, keepdim=True)
+        return {
+            "search/pick_ce_regret": ce.gather(1, picked).squeeze(1) - ce.min(dim=-1).values,
+            "search/pick_is_best": (picked.squeeze(1) == ce.argmin(dim=-1)).float(),
+            "search/cand_ce_gap": ce.max(dim=-1).values - ce.min(dim=-1).values,
+            "search/value_rank_corr": (r_value * r_ce).sum(-1) / (r_value.norm(dim=-1) * r_ce.norm(dim=-1)).clamp_min(1e-6),
+        }
+
+    def _candidate_loss(self, cand: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, post_logits: torch.Tensor, left: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """A gradient for every candidate of a grad cycle, not just the picked one. Each candidate is rolled out with
+        gradient (_candidate_rollout) and its label CE is weighted per candidate_loss: 'wta' = relaxed
+        winner-take-all (the lowest-CE candidate gets 1 - candidate_loss_eps, the others share it; Rupprecht et al. 2017,
+        the standard cure for a multiple-choice head whose untrained slots never win), 'posterior' = the search's visit
+        distribution. Returns the batch-summed loss and per-puzzle diagnostics: the weighted CE, the CE gap between the
+        worst and best candidate, and whether the search's argmax is the CE-best candidate (REPORTS_CANDIDATES.md)."""
+        B, K = cand.shape[:2]
+        ce, _ = self._candidate_rollout(cand, z_L, x, y, left)
         if self.config.candidate_loss == "wta":
             eps = self.config.candidate_loss_eps
             weights = (1 - eps) * F.one_hot(ce.argmin(dim=-1), K).float() + eps / K

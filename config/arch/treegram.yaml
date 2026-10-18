@@ -7,3 +7,5 @@ defaults:
 
 name: recursive_reasoning.treegram@TreeGRAM
 short_name: TreeGRAM
+
+prior_target: visits # what trains the prior head on the grad cycles besides the pathwise lm / candidate losses: visits = the search's visit-weighted Gaussian NLL of its samples, weighted by kl_strength (Sampled MuZero's target); none = pathwise only (REPORTS_SCALING.md section 6: the variance collapses)

@@ -16,11 +16,28 @@ def _treegram_head(**overrides):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
         "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_loss": "wta", "candidate_loss_eps": 0.05,
-        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, **overrides,
+        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax", "prior_target": "visits", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeGRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg), cfg
+
+
+@needs_cuda
+@pytest.mark.parametrize("target", ["visits", "none"])
+def test_treegram_prior_target_trains_the_variance(target):
+    model, batch, _ = _treegram_head(prior_target=target, candidate_loss="none")
+    model.train()
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
+    loss.backward()
+    # to_stats' second half of rows is the raw variance; only the visits target reaches it through the NLL (pathwise,
+    # var only trains through a picked noise sample, which a 3-candidate search with the mean first may never pick)
+    var_rows = model.model.inner.prior_head.to_stats.weight.grad[model.model.inner.config.hidden_size:]
+    if target == "visits":
+        assert metrics["kl_loss"] != 0 and var_rows.abs().sum() > 0
+    else:
+        assert metrics["kl_loss"] == 0
 
 
 @needs_cuda

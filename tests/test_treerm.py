@@ -18,7 +18,7 @@ def _treerm_head(**overrides):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
         "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05,
-        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, **overrides,
+        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -220,6 +220,31 @@ def test_treerm_eval_can_search_with_more_simulations():
     with torch.inference_mode():
         model.model(carry=model.initial_carry(batch), batch=batch)
     assert seen[0] == 6 and seen[-1] == 16
+
+
+@needs_cuda
+@pytest.mark.parametrize("pick", ["argmax", "sample"])
+def test_eval_pick_is_one_hot_and_argmax_takes_the_most_visited(pick):
+    model, batch = _treerm_head(eval_pick=pick)
+    inner = model.model.inner
+    seen = []
+    original = inner._search
+    inner._search = lambda *args, **kwargs: seen.append(original(*args, **kwargs)) or seen[-1]
+    picks = []
+    einsum = torch.einsum
+    torch.einsum = lambda eq, w, c: picks.append(w) or einsum(eq, w, c)
+    try:
+        model.eval()
+        with torch.inference_mode():
+            _, info = model.model(carry=model.initial_carry(batch), batch=batch)
+    finally:
+        torch.einsum = einsum
+    assert picks and all(((w == 0) | (w == 1)).all() and (w.sum(-1) == 1).all() for w in picks)
+    if pick == "argmax":
+        assert all((w.argmax(-1) == post.argmax(-1)).all() for w, post in zip(picks, seen))
+    for key in ("search/pick_ce_regret", "search/pick_is_best", "search/cand_ce_gap", "search/value_rank_corr"):
+        assert key in info and torch.isfinite(info[key]).all()
+    assert (info["search/pick_ce_regret"] >= 0).all() and (info["search/value_rank_corr"].abs() <= 1 + 1e-5).all()
 
 
 # Candidate training (REPORTS_CANDIDATES.md): without a candidate loss only the picked candidate gets a gradient
