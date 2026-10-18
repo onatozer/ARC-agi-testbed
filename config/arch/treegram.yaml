@@ -1,0 +1,9 @@
+# TreeGRAM: TreeRM whose candidates are samples of GRAM's learned prior over z_H instead of flag candidates: slot 0 is
+# the prior mean (K=1 is GRAM's eval_prior_mean inference), the others are noise draws; the search prior is uniform
+# (no scorer), so the prior head trains through the samples (REPORTS_SCALING.md). All TreeRM search keys apply.
+defaults:
+  - treerm
+  - _self_
+
+name: recursive_reasoning.treegram@TreeGRAM
+short_name: TreeGRAM

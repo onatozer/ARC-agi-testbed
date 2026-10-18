@@ -171,6 +171,10 @@ def _apply_runtime_arch_overrides(model: Any, overrides: Dict[str, Any], rank: i
     inner = _unwrap_inner(model)
     if inner is None:
         return
+    # Some models (GRAM, TreeRM) build the inner from a dict, so it has its own config object: the search settings
+    # (eval_mcts_simulations, ...) are read from there, not from loss_head.model.config
+    if getattr(inner, "config", None) is not None:
+        _apply_overrides(inner.config, arch_overrides, rank=rank)
 
     if "noise_scale" in arch_overrides:
         value = float(arch_overrides["noise_scale"])

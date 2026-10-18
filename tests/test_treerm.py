@@ -192,11 +192,15 @@ def test_flag_candidates_are_u_t_plus_orthonormal_directions():
     model, batch = _treerm_head()
     inner = model.model.inner
     directions = inner.candidate_generator.directions.float()
-    torch.testing.assert_close(directions @ directions.T, torch.eye(directions.shape[0], device=directions.device), atol=1e-5, rtol=0)
+    # Slot 0 is the identity; the other slots' directions are orthonormal
+    assert not directions[0].any()
+    flags = directions[1:]
+    torch.testing.assert_close(flags @ flags.T, torch.eye(flags.shape[0], device=flags.device), atol=1e-5, rtol=0)
     shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
     z_L, u_t = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(2))
     with torch.no_grad():
         cand = inner._candidates(z_L, u_t)
+    torch.testing.assert_close(cand[:, 0], u_t, atol=0, rtol=0)  # bit-exact: K=1 is plain TRM
     delta = (cand.float() - u_t.float().unsqueeze(1))  # [B, K, S, H]
     # At init the gate is 1, so each slot's offset is sqrt(H) * e_k at every token
     expected = (math.sqrt(inner.config.hidden_size) * directions)[None, :, None, :].expand_as(delta)
@@ -221,8 +225,9 @@ def test_treerm_eval_can_search_with_more_simulations():
 # Candidate training (REPORTS_CANDIDATES.md): without a candidate loss only the picked candidate gets a gradient
 
 def _slot_grad_norms(model):
-    """Gradient norm of each slot's gate (the flag gate is a [K, 2H] linear: one row per candidate)."""
-    return model.model.inner.candidate_generator.gate.weight.grad.norm(dim=-1)
+    """Gradient norm of each flag slot's gate (the gate is a [K, 2H] linear: one row per candidate; row 0 is the
+    identity slot, whose flag is zero, so it never gets a gradient and is left out)."""
+    return model.model.inner.candidate_generator.gate.weight.grad.norm(dim=-1)[1:]
 
 
 def _train_backward(**overrides):
@@ -243,7 +248,7 @@ def _train_backward(**overrides):
 @needs_cuda
 def test_without_candidate_loss_only_the_picked_candidate_gets_a_gradient():
     model, metrics = _train_backward(batch_size=1)
-    assert (_slot_grad_norms(model) > 0).sum() == 1
+    assert (_slot_grad_norms(model) > 0).sum() <= 1  # 0 when the pick was the identity slot
     assert "search/cand_loss" not in metrics
 
 

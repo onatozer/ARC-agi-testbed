@@ -19,7 +19,8 @@ class FlagCandidates(nn.Module):
     """Candidates that can't collapse onto one another: u_t plus, per slot k, a fixed random unit direction e_k scaled by
     a learned per-token gate, cand_k = u_t + g_k(z_L, u_t) * sqrt(H) * e_k. The directions are orthonormal and frozen,
     so the slots differ by construction; the network downstream can learn what each "flag" means, and the gates can
-    only shrink the flags (collapse point: plain TRM). [B, S, H] x [B, S, H] -> [B, K, S, H]."""
+    only shrink the flags (collapse point: plain TRM). Slot 0 is the identity (e_0 = 0): the plain update is always
+    among the candidates, so a larger K only adds options, and K=1 is plain TRM. [B, S, H] x [B, S, H] -> [B, K, S, H]."""
 
     def __init__(self, hidden_size: int, num_candidates: int):
         super().__init__()
@@ -27,7 +28,9 @@ class FlagCandidates(nn.Module):
         # Drawn on the CPU with a fixed seed so every instance gets the same directions, whatever device the model is built on
         self.gate = CastedLinear(2 * hidden_size, num_candidates, bias=True)
         directions, _ = torch.linalg.qr(torch.randn(hidden_size, num_candidates, generator=torch.Generator().manual_seed(0), device="cpu"))
-        self.register_buffer("directions", directions.T.contiguous().to(self.gate.weight.device), persistent=True)  # [K, H], orthonormal rows
+        directions = directions.T.contiguous()  # [K, H], orthonormal rows
+        directions[0].zero_()  # slot 0 = u_t itself (its gate row is dead weight)
+        self.register_buffer("directions", directions.to(self.gate.weight.device), persistent=True)
         # Start with every flag at full strength (gate = 1) and no input dependence
         with torch.no_grad():
             self.gate.weight.zero_()
@@ -106,6 +109,10 @@ class TreeRMInner(GRAM_Inner):
         """The K proposals for the new z_H: u_t plus a gated flag per slot."""
         return self.candidate_generator(z_L, u_t)
 
+    def _prior_logits(self, u_t: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
+        """The search prior over the candidates, as logits [B, K]: the scorer's."""
+        return self.candidate_scorer(u_t, cand, self._cos_sin())
+
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
     def _expand(self, states: List[Tuple[int, torch.Tensor, torch.Tensor]], x: torch.Tensor) -> Tuple[List[List[Tuple[int, torch.Tensor, torch.Tensor]]], List[List[float]]]:
@@ -121,7 +128,7 @@ class TreeRMInner(GRAM_Inner):
         u_t = self.L_level(z_H, z_L, **seq_dict)
 
         cand = self._candidates(z_L, u_t)
-        priors = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1).tolist()
+        priors = self._prior_logits(u_t, cand).softmax(dim=-1).tolist()
         children = [[(row, cand[i, k], z_L[i]) for k in range(cand.shape[1])] for i, row in enumerate(rows)]
         return children, priors
 
@@ -191,7 +198,7 @@ class TreeRMInner(GRAM_Inner):
             if n_updates == 0:
                 # The transition: the rollout's first update is exactly the expand's u_t
                 cand = self._candidates(z_L, u_t)
-                priors, z_L_next = self.candidate_scorer(u_t, cand, seq_dict["cos_sin"]).softmax(dim=-1), z_L
+                priors, z_L_next = self._prior_logits(u_t, cand).softmax(dim=-1), z_L
             z_H = u_t
         return values, targets, leaf_token, cand, priors, z_L_next
 
@@ -287,7 +294,7 @@ class TreeRMInner(GRAM_Inner):
         """Picks the next z_H as one candidate sampled from the MCTS posterior, with its beta-weighted balanced KL to the
         scorer's prior (only when gradients are on)."""
         cand = self._candidates(z_L, u_t)
-        prior_logits = self.candidate_scorer(u_t, cand, self._cos_sin())
+        prior_logits = self._prior_logits(u_t, cand)
         # The label-informed search only where its KL is paid (the grad cycles); elsewhere it would steer the
         # trajectory with label information for free. The prior picks the candidate on the no-grad cycles
         search = not self.training or torch.is_grad_enabled()

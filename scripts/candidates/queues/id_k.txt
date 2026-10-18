@@ -1,0 +1,5 @@
+# Identity-candidate K sweep (train sims = 2K, so guided sims = K). Same lines for sudoku6 and nqueens8.
+id_k1_s2   arch=treerm arch.num_candidates=1 arch.mcts_simulations=2 arch.eval_mcts_simulations=1
+id_k8_s16  arch=treerm arch.num_candidates=8 arch.mcts_simulations=16 arch.eval_mcts_simulations=16
+id_k2_s4   arch=treerm arch.num_candidates=2 arch.mcts_simulations=4 arch.eval_mcts_simulations=16
+id_k4_s8   arch=treerm arch.num_candidates=4 arch.mcts_simulations=8 arch.eval_mcts_simulations=16

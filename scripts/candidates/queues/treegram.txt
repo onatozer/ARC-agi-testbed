@@ -1,0 +1,3 @@
+# TreeGRAM (search over GRAM's prior): the treerm.yaml defaults (K=4, 8 train sims, 16 eval sims, wta, vb 0.5)
+tg_k4   arch=treegram
+tg_k1   arch=treegram arch.num_candidates=1 arch.mcts_simulations=2 arch.eval_mcts_simulations=1

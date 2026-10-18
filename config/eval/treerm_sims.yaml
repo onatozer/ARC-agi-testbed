@@ -1,0 +1,22 @@
+# @package _global_
+# TreeRM test-time search budget from one checkpoint:
+#   evaluate.py eval=treerm_sims ckpt=<.pth> sims=[8,16,32] seed=0
+ckpt: ???
+sims: [8, 16, 32]
+seed: 0
+checkpoint: null
+checkpoint_list:
+  - checkpoint: ${ckpt}
+    init_override: # keys older checkpoints lack (the first two are training-only)
+      arch.candidate_loss: none
+      arch.candidate_loss_eps: 0.05
+      arch.search_compile: true
+      arch.mcts_impl: cpp # every impl makes the same search decisions (tests/test_mcts_contract.py)
+param_iter:
+  arch.eval_mcts_simulations: ${sims}
+suffix: sims_s${seed}
+global_batch_size: 250
+max_eval_steps: null
+force_rerun: true
+different_init: 1
+wandb_mode: disabled
