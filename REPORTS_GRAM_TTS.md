@@ -16,6 +16,7 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 2 | GRAM re-tune sweep on N-Queens (prior_sample_frac 0.1-0.5, per-puzzle draw, beta 0.07) | 5.5-14.0% mean guidance, 0-1% sampled, train exact 94-100%: the tier cannot test GRAM |
 | 3 | anchor on held-out 4x4 Sudoku (the earlier branch's testbed), 5000 steps | multi-solution: GRAM 25.8 vs TRM 10.3 exact; unique-solution (clue 0.4): GRAM 89.2 vs TRM 99.5 |
 | 4 | the ladder from the unique-solution GRAM checkpoint | draws-only width: vote +3.3 at N=16 over N=1 (94.2 vs 91); MCTS over draws 91 -> 89 with budget, 3-5 pts under the vote at matched passes; LPRM best-of-N level with one sample: the value head cannot rank draws |
+| 5 | value bootstrapping of the LPRM head on prior draws (`lprm_prior_rollouts: 4`), same ladder | rank correlation 0.05 -> 0.12; LPRM best-of-N still level with one sample (86-88), MCTS still 89 -> 86 with budget, vote +3.3 (91.5-91.8 at N=16); single sample 88 vs 89-91 |
 
 ## 1. Baseline (seed 0)
 
@@ -174,3 +175,35 @@ Reading:
   spend the same passes.
 - Single seed, one checkpoint, two tiers. Not run: augmentation and 10k steps (the earlier branch's 80% regime), the
   multi-solution ladder (needs validity-scored vote / best-of-N), more seeds.
+
+## 8. Value bootstrapping of the LPRM head on prior draws (user, 2026-10-18 evening)
+
+In TreeRM the bootstrap trained the value head on the training search's rollout leaves (REPORTS.md); it never
+touched the backbone (the leaves are detached), and REPORTS_SCALING.md's K=1 control had it on with nothing to pick
+between, so its old "+8/+14" is confounded. GRAM has no training search, and its LPRM is trained by the loss head
+on the grad cycle's posterior-guided state, which is label-informed: the head never sees the prior's draws it is
+asked to rank at test (except on the prior-sample puzzles). The analogue, `arch.lprm_prior_rollouts: K` (commit
+0207646, `GRAM_Inner._lprm_rollout_loss`): at each grad cycle K draws of eps from the prior at u_t, each decoded
+without gradient, and the head trained by `value_bootstrap_weight` x MSE to predict each draw's token accuracy
+from its first token. Run `gram_u_vb` (section 5 recipe plus K=4, 427 s) and the ladder from its checkpoint:
+
+| method | matched width | depth 8 | depth 16 |
+|---|---|---|---|
+| width 1, sampled guidance | 1 | 87.9 | 88.5 |
+| width 4: per copy / vote / LPRM best-of-4 / any | 4 | 86.7 / 89.3 / 86.7 / 95.3 | 86.9 / 89.3 / 87.6 / 95.2 |
+| width 8: per copy / vote / LPRM best-of-8 / any | 8 | 87.4 / 91.3 / 88.4 / 97.7 | 86.8 / 89.7 / 86.3 / 97.6 |
+| width 16: per copy / vote / LPRM best-of-16 / any | 16 | 86.8 / 91.5 / 85.8 / 98.7 | 87.2 / 91.8 / 87.4 / 98.4 |
+| MCTS K=4, S=4 / 8 / 16 | 5 / 9 / 17 | 89.1 / 85.8 / 86.7 | 89.1 / 85.8 / 85.6 |
+| MCTS K=8, S=8 / 16 / 32 | 9 / 17 / 33 | 89.0 / 86.1 / 86.0 | 89.1 / 86.1 / 86.1 |
+
+value_rank_corr 0.11-0.13 at K=4 and 0.08-0.10 at K=8 (0.05 / 0.00 without the bootstrap); pick_is_best 0.70 at
+S=K (K=4) falling to 0.37-0.39; cand_ce_gap 0.009-0.017.
+
+Reading: the bootstrap gives the head a real but weak ranking signal (the correlation doubles to ~0.12), not enough
+to make any selection pay: LPRM best-of-N stays level with a single sample and the search still loses ~3 pts as its
+budget grows, while the vote gains its usual +3.3 at N=16. The single-sample accuracy is ~2 pts lower than the run
+without the bootstrap (87.9-88.5 vs 89.2-91.1), inside one seed's noise but to be checked with a second seed before
+reading it as a cost. A head that ranks draws needs more than this target: the draw's first token after one
+rms-norm is a thin view of a 16-token state, and token accuracy of the draw itself is a noisy label for a 4-step
+trajectory's outcome; the paper's target (final correctness from every intermediate state) or a head over the
+whole state are the next things to try, neither built.
