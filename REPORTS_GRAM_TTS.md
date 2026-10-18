@@ -97,3 +97,15 @@ Rebuilt here as `data/sudoku-4ho` (`build_sudoku_dataset grid_size=4 source_repo
 num_aug=0 clue_ratio=0.3 seed=0`; the held-out split is in the merged builder) with a `sudoku4` tier in
 `scripts/candidates/{run,queue}.sh`. Queue `queues/gram_anchor.txt`: `arch=trm` and `arch=gram
 +arch.eval_prior_mean=false arch.prior_sample_frac=0.25` (sampled guidance, the paper's N=1).
+
+Result (seed 0, 5000 steps, held-out 1000, exact match; `queues/gram_anchor.txt`):
+
+| run | exact by 1000 steps | params | wall |
+|---|---|---|---|
+| TRM | 0 / 0.5 / 9.3 / 9.1 / **10.3** | 526k | 397 s |
+| GRAM, frac 0.25, sampled guidance | 0 / 0 / 1.0 / 12.9 / **25.8** | 1.02 M | 443 s |
+
+GRAM works here as the earlier branch found (its validity metric gave 15.4 vs 52.9; exact match undercounts valid
+answers on multi-solution puzzles, and the harness's vote / best-of-N also score against the label). For the ladder
+a held-out *unique-solution* build (`data/sudoku-4hu`: clue_ratio 0.4, `unique_solution=true`) makes exact match the
+validity for every rung.

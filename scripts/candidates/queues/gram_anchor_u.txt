@@ -1,0 +1,3 @@
+# The anchor pair on the held-out unique-solution 4x4 build (data/sudoku-4hu), where exact match is validity
+trm_u   arch=trm
+gram_u  arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25

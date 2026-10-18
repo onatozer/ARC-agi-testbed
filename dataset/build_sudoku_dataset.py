@@ -176,7 +176,7 @@ def _generate_subset(set_name: str, config: DictConfig, exclude: frozenset = fro
     inputs, labels = [], []
     progress = tqdm(total=n, desc=f"Generating {config.grid_size}x{config.grid_size} {set_name}")
     while len(inputs) < n:
-        puzzle, solution = generate_puzzle(config.grid_size, config.clue_ratio)
+        puzzle, solution = generate_puzzle(config.grid_size, config.clue_ratio, config.unique_solution)
         if puzzle.tobytes() in exclude:
             continue
         inputs.append(puzzle)
