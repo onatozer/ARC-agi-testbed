@@ -17,6 +17,9 @@ untracked). One GPU job at a time (4 GB laptop GPU, `gpu.lock`).
 | 4 | control: K=1 with candidate_loss=none, seed 0 | Sudoku 87.9, N-Queens 40.8: the candidate loss at K=1 (a doubled lm loss) is +3.5 / +11; the max-steps loss head is the other +20 over TRM |
 | 5 | eval-sims sweeps from the N-Queens K=8 and K=4 checkpoints | K=8: 51.9 / 53.1 / 53.6 at 8 / 16 / 32 sims; K=4: 49.9 / 49.4 / 49.8 / 49.6 at 4-32: the search is worth at most ~2 pts over a random pick among its candidates |
 | 6 | TreeGRAM (search over GRAM's prior), K=4 and K=1, seed 0 | Sudoku 81.3 / 88.7, N-Queens 30.7 / 41.6: searching prior samples is worse than the prior mean; the mean is below TreeRM K=1 |
+| 9 | round 2: argmax eval pick + pick diagnostics on the saved N-Queens checkpoints | +1 pt at K=8, 0 at K=4: the candidates' CEs differ by 0.01-0.02 nats and the value head ranks them at 0.2-0.3 (0 for TreeGRAM) |
+| 10 | round 2: MiniARC 5x5, TreeRM identity K=4 vs K=1, pick x sims from the K=4 checkpoint | pass@2 4.7 vs 4.7; candidates differ more (CE gap 0.067) but the value head is blind (0.04-0.07) and the pick is at chance; sims inert |
+| 11 | round 2: TreeGRAM K=4 with the visit-weighted prior target (after fixing it) | worse everywhere: Sudoku 59.2, N-Queens 13.6, MiniARC pass@2 2.7-4.0; pick sweeps flat, value head 0.06-0.09 / negative |
 
 ## 1. Diagnosis from the existing runs and code (no GPU)
 
@@ -215,10 +218,16 @@ candidates' final CEs differ by 0.01-0.02 nats (the best and the worst candidate
 value head ranks them at 0.2-0.3 correlation (0 for TreeGRAM). The pick does pick better than chance (0.33 vs
 0.125 at K=8), it just has nothing to gain from. Order of business confirmed: proposals that differ first.
 
-Round 2 (b), first attempt: the visit-weighted Gaussian NLL over all K slots diverged on both tiers (Sudoku NaN by
-step 500, then the C++ search segfaulted on it; N-Queens loss 199 and rising at step 300). Cause: slot 0 is the
-prior mean, not a draw, so its term is log var with a zero residual, which drives var to its floor, and the mean's
-gradient scales with 1/var. Fixed by fitting only slots 1..K-1 with their visit share; both runs re-queued.
+Round 2 (b), the divergences: every TreeGRAM run with the target went NaN within ~100 steps (Sudoku, N-Queens,
+MiniARC; the C++ search then segfaults on the NaN values at the first eval, exit 139, and each crash left an
+orphaned python holding GPU memory, one of them the lock, which stalled the queue for 11 hours overnight). Two
+reformulations (draws only; mean by MSE, variance by the likelihood with detached residuals) did not help. A
+per-step trace on the test model (`debug_tgv.py`: loss components, var, |mu| every 10 steps) showed |mu| at 20x its
+normal value by step 20 and var growing 700x by step 100. The bug: a candidate is `u_t + mu + sqrt(var) * noise`,
+and the target compared the candidate itself to mu instead of the draw's offset `cand - u_t`, so the mean chased
+u_t plus its own output, which runs away at any variance. With the offset the trace is as stable as the run without
+the target (var 0.60 vs 0.53, cand_div 0.11 vs 0.09 at step 150). Lesson for the harness: the lock must be
+`flock -o` everywhere (`scripts/miniarc5/run.sh` is not), and a NaN loss should stop a run before the search sees it.
 
 ## 10. Round 2 (c): MiniARC 5x5 (standard build, 4000 steps, puzzle_emb_lr 3e-2, seed 0)
 
@@ -228,8 +237,62 @@ references at this recipe: TreeRM (flags, no candidate loss) pass@2 7.4 / 4.7 ov
 | run | pass@1 | pass@2 | pass@5 | exact acc | wall | eval GPU |
 |---|---|---|---|---|---|---|
 | TreeRM identity K=4 (wta, argmax pick) | 2.7 | 4.7 | 6.7 | 1.5 | 1298 s | 550 MB |
-| TreeRM identity K=1 (control) | pending | | | | | |
-| TreeGRAM K=4, prior target | pending | | | | | |
+| TreeRM identity K=1 (control) | 3.4 | 4.7 | 7.4 | 1.2 | 764 s | 364 MB |
+| TreeGRAM K=4, prior target (fixed, section 11) | 1.3 | 2.7 | 6.0 | 0.6 | 1326 s | 544 MB |
+
+Pick x sims sweep of the K=4 checkpoint (4768 test rows, batch 149, eval seed 0):
+
+| pick | sims | pass@1 | pass@2 | pick_is_best (chance 0.25) | value_rank_corr | cand_ce_gap | argmax_agree |
+|---|---|---|---|---|---|---|---|
+| argmax | 8 / 16 / 32 | 2.7 / 2.7 / 2.7 | 4.7 / 4.7 / 4.0 | 0.31-0.32 | 0.04-0.05 | 0.067 | 0.31-0.35 |
+| sample | 8 / 16 / 32 | 2.7 / 2.7 / 2.7 | 3.4 / 3.4 / 3.4 | 0.29-0.31 | 0.06-0.07 | 0.068 | 0.33-0.36 |
+
+Reading: K=1 equals K=4 on MiniARC as on the other tiers (pass@2 4.7 both; pass@1 and pass@5 higher at K=1).
+The candidates do differ more here (cand_ce_gap 0.067 nats, 3-6x the N-Queens gap: the user's point about wrong
+basins holds), and the search overrides the prior two times in three, but the value head cannot rank them
+(0.04-0.07) and the pick is at chance (0.31 vs 0.25), so the argmax pick's +1.3 pass@2 over the sample pick (two
+tasks of 149) is within noise. More search budget changes nothing. Diverse candidates plus a blind value head is
+the MiniARC failure mode; the sims/pick axis cannot pay until the value head does.
+
+## 11. Round 2 (b): TreeGRAM with the visit-weighted prior target (fixed; seed 0)
+
+`arch=treegram` with `prior_target: visits` (commit d942e1c), otherwise the section 6 recipe; MiniARC per section 10.
+
+| tier | TreeGRAM K=4 + target | TreeGRAM K=4, no target (s. 6) | TreeGRAM K=1 (prior mean) | TreeRM identity K=4 (s. 3/10) |
+|---|---|---|---|---|
+| Sudoku-6u, 2000 steps | 59.2 | 81.3 | 88.7 | 92.4 |
+| N-Queens 8x8, 3000 steps | 13.6 | 30.7 | 41.6 | 50.4 |
+| MiniARC 5x5, 4000 steps (pass@2) | 2.7 (in-training eval) / 2.7-4.0 (sweep) | - | - | 4.7 |
+
+Training was finite throughout (no NaN in any log; the loss goes negative because of the log-variance term). Eval
+diagnostics at the end: N-Queens cand_div 0.05 (0.03 at step 3000 in-training), cand_ce_gap 0.013, pick_is_best
+0.27-0.29 (chance 0.25), value_rank_corr 0.06-0.09, argmax vs sample pick 14.5-14.9 vs 13.8-14.8 at 8-32 sims;
+MiniARC cand_ce_gap 0.050, pick_is_best 0.19-0.25, value_rank_corr -0.02 to -0.04, both picks 2.7-4.0 pass@2.
+Sudoku kept its draws apart (cand_div 0.18) and still lost 22 pts.
+
+Reading: pulling the prior toward the draws the label-valued training search favoured is the same thing GRAM's
+posterior KL does, and REPORTS.md found that label-informed guidance is what GRAM's prior fails to learn (it fits
+the training set and does not transfer). Here it is worse than GRAM's version because the "posterior" is a handful of
+visit counts over 3 random draws, so the mean is dragged by sampling noise that happened to score well on the label,
+and the lm loss then has to undo it. Candidate diversity does not rise where it matters (N-Queens 0.03-0.05), the
+value head stays blind, and the pick and budget axes stay flat.
+
+## 12. Where round 2 leaves the question
+
+- Both companion mechanisms the user chose are built, tested and measured: the deterministic pick is worth at most
+  1 pt and only where the candidates already differ a little (K=8 N-Queens); the proposal target, once its bug was
+  fixed, lowers accuracy on all three tiers. Neither makes K or the search budget pay.
+- The diagnostics are the lasting result: `pick_is_best`, `cand_ce_gap` and `value_rank_corr` say, per checkpoint,
+  whether there is anything to choose between and whether the value head can see it. Today: TreeRM's flag candidates
+  are the same answer (gap 0.01-0.02 nats, head at 0.2-0.3); MiniARC's candidates differ (0.05-0.07) but the head is
+  at 0 (its single-token, short-rollout view does not predict which perturbation lands in the right basin); TreeGRAM's
+  draws are both near-duplicates and unrankable.
+- What a working search would need, in the order the evidence suggests: (1) a value head that can rank candidates
+  on MiniARC (train it on the eval-time question, i.e. on rolled-out candidates' correctness with the label, and read
+  more than token 0 of the state); only then (2) proposals that differ in outcome and are not label-steered (a
+  diversity objective on the rollouts' predictions rather than a visit-count target); then the pick and budget axes.
+  None of this is built. Single seeds throughout; the N-Queens trained-run spread is 4-6 pts, so nothing here
+  under ~6 pts is a difference, but the target's -17 to -22 and the K=1 equivalences are well outside it.
 
 Harness for whoever continues: `queues/id_k.txt`, `queues/control_k1.txt`, `queues/treegram.txt` with
 `KEEP_CKPT=1 bash scripts/candidates/queue.sh <tier> <queue>`; `sims_sweep.sh <ckpt> '[sims]' [seed] [batch] [data]`
