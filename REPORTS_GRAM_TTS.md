@@ -13,6 +13,9 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 |---|---|---|
 | 1 | plain GRAM baseline, N-Queens 8x8 fast tier (128 x 3000, lr 3e-4), current gram.yaml, mean guidance at eval | 12.5% test at 3000 steps, train lm loss 0.003: the memorisation gap (TRM-192 20-21%, max-steps TRM control 40.8%) |
 | 1b | ladder rung 0 on that checkpoint | TreeGRAM K=1 / 1 sim = 12.5% (the harness reproduces the mean inference); width 1 with sampled guidance (the paper's N=1) = 0.1%: the prior's draws are unusable |
+| 2 | GRAM re-tune sweep on N-Queens (prior_sample_frac 0.1-0.5, per-puzzle draw, beta 0.07) | 5.5-14.0% mean guidance, 0-1% sampled, train exact 94-100%: the tier cannot test GRAM |
+| 3 | anchor on held-out 4x4 Sudoku (the earlier branch's testbed), 5000 steps | multi-solution: GRAM 25.8 vs TRM 10.3 exact; unique-solution (clue 0.4): GRAM 89.2 vs TRM 99.5 |
+| 4 | the ladder from the unique-solution GRAM checkpoint | vote +3 at N=16 over N=1 (93.8-94.5 vs 91); MCTS over draws 91 -> 89 with budget, 4-5 pts under the vote at matched passes; LPRM best-of-N 81-84: the value head cannot rank draws |
 
 ## 1. Baseline (seed 0)
 
@@ -109,3 +112,65 @@ GRAM works here as the earlier branch found (its validity metric gave 15.4 vs 52
 answers on multi-solution puzzles, and the harness's vote / best-of-N also score against the label). For the ladder
 a held-out *unique-solution* build (`data/sudoku-4hu`: clue_ratio 0.4, `unique_solution=true`) makes exact match the
 validity for every rung.
+
+## 5. The testbed for the ladder: held-out unique-solution 4x4 Sudoku (`data/sudoku-4hu`)
+
+`build_sudoku_dataset grid_size=4 source_repo=null num_train=20000 num_test=1000 num_aug=0 clue_ratio=0.4
+unique_solution=true seed=0` (the generated splits had ignored `unique_solution`: fixed in 7594eb5). Tier
+`sudoku4u`, the section 4 recipe, 5000 steps, seed 0, exact match = validity:
+
+| run | exact by 1000 steps | wall |
+|---|---|---|
+| TRM | 2.1 / 61.5 / 94.5 / 97.1 / **99.5** | 377 s |
+| GRAM, frac 0.25, sampled guidance | 0.6 / 27.5 / 65.5 / 82.7 / **89.2** | 413 s |
+
+With 6-7 clues and one solution the task is near TRM's ceiling, so GRAM is the weaker model here (the earlier
+branch's GRAM advantage was on 4-clue multi-solution puzzles); it still leaves 9-11 pts of headroom for test-time
+scaling, which is what the ladder measures.
+
+## 6. The ladder, from the GRAM checkpoint (no retraining; `ladder.sh <ckpt> s|1|2`, eval seed 0)
+
+Compute: `all/nfe` counts the plain passes only (96 at depth 8, 192 at depth 16); the search's extra passes per
+step are P x (1 + S), independent of K, so S simulations match width N = S + 1 (section 2). Width N runs N copies
+per puzzle with independent prior draws and random latent inits (the harness cannot share the init), scored per
+copy, by majority vote and by LPRM best-of-N; the search picks the most-visited of K draws (slot 0 = the mean) with
+LPRM-valued rollouts.
+
+| method | matched width | depth 8 | depth 16 |
+|---|---|---|---|
+| width 1, sampled guidance (the paper's N=1) | 1 | 90.8 | 91.1 |
+| width 4: per copy / vote / LPRM best-of-4 / any | 4 | 82.4 / 89.9 / 81.3 / 96.0 | 82.8 / 90.2 / 83.1 / 95.7 |
+| width 8: per copy / vote / LPRM best-of-8 / any | 8 | 83.3 / 93.3 / 83.9 / 98.2 | 83.8 / 92.8 / 83.3 / 98.5 |
+| width 16: per copy / vote / LPRM best-of-16 / any | 16 | 82.5 / 93.8 / 81.4 / 99.4 | 83.8 / 94.5 / 82.4 / 99.0 |
+| MCTS K=4, S=4 / 8 / 16 | 5 / 9 / 17 | 91.1 / 89.5 / 89.2 | 91.1 / 89.9 / 89.1 |
+| MCTS K=8, S=8 / 16 / 32 | 9 / 17 / 33 | 91.2 / 89.2 / 89.1 | 91.2 / 88.9 / 89.1 |
+
+Search diagnostics: pick_is_best 0.64 at S=K (K=4; the pick is then the first child, the mean) falling to 0.36-0.39
+at 2K-4K; K=8 0.51 -> 0.22; value_rank_corr 0.05 (K=4) and -0.01 to 0.00 (K=8); cand_ce_gap 0.008-0.015 nats.
+Eval wall 7-33 s per setting after the first compile (60-88 s).
+
+Reading:
+1. **Majority vote is the method that scales**: +2.5 at N=8 and +3.0 at N=16 over a single sample (depth 16:
+   +3.4), with 98-99% of puzzles solved by at least one copy. Per-copy accuracy is 7-8 pts below the single run
+   because the copies also get random latent inits; the vote more than recovers it.
+2. **The search does not beat width at matched compute and gets worse with budget**: 91.1-91.2 at S=K, where the
+   argmax pick is the prior mean, down to 89 at 2K-4K, i.e. 4-5 pts below the vote at the same forward passes and
+   below the paper's N=1. **LPRM best-of-N fails the same way** (81-84, below a single sample): GRAM's LPRM value
+   head, trained as the paper trains it, cannot rank the prior's draws (rank correlation at most 0.05), so any
+   selection that follows it moves away from the mean toward draws that score well on a blind value. The draws
+   themselves are not the problem: the vote over the same draws works.
+3. **Depth is flat** (depth 16 = depth 8 everywhere): the model halts at the 4 supervision steps it was trained for.
+
+## 7. Where this leaves the pivot
+
+- GRAM re-tuned: on the N-Queens 8x8 tier nothing works (the posterior memorises, the prior's draws score 0-1%;
+  sections 3); on held-out 4x4 Sudoku the earlier branch's recipe (frac 0.25, beta 0.05, no posterior on the
+  no-grad cycles) reproduces: 25.8 vs TRM 10.3 exact on multi-solution puzzles, 89.2 vs 99.5 on unique ones.
+- The test-time search over prior draws, as a plug-in for the paper's width scaling, loses to the paper's own
+  majority vote by 4-5 pts at matched compute and does not improve with budget, for the same reason LPRM best-of-N
+  loses: the value head is blind to which draw is better. Until a value head ranks draws (the same gap REPORTS_SCALING
+  section 12 found on MiniARC), width + vote is the test-time scaling to use, and the search is a worse way to
+  spend the same passes.
+- Single seed, one checkpoint, two tiers; the width baseline carries a random-init confound that works against it,
+  which only strengthens the conclusion. Not run: augmentation and 10k steps (the earlier branch's 80% regime), the
+  multi-solution ladder (needs validity-scored vote / best-of-N), more seeds.
