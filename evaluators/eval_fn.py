@@ -122,11 +122,14 @@ def _di_state(device: torch.device) -> Dict[str, torch.Tensor]:
         "majority_exact": torch.zeros((), dtype=torch.float64, device=device),
         "majority_token_ok": torch.zeros((), dtype=torch.float64, device=device),
         "majority_token_total": torch.zeros((), dtype=torch.float64, device=device),
+        "lprm_best": torch.zeros((), dtype=torch.float64, device=device),
         **{f"pass@{k}": torch.zeros((), dtype=torch.float64, device=device) for k in (1, 2, 4, 8, 16, 32, 64, 128)},
     }
 
 
-def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torch.Tensor, n: int) -> None:
+def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torch.Tensor, n: int, scores: Optional[torch.Tensor] = None) -> None:
+    """scores [bsz * n]: a per-copy value (the LPRM head's) for best-of-N selection, the GRAM paper's alternative to
+    the vote (App. A.4); None leaves different_init/lprm_best_acc at 0."""
     bsz = labels.shape[0]
     pred = preds.view(bsz, n, -1)
     flat_labels = labels.view(bsz, -1)
@@ -135,6 +138,9 @@ def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torc
     correct_counts = exact.sum(dim=1)
     state["samples"] += bsz
     state["any"] += correct_counts.gt(0).sum()
+    if scores is not None:
+        best = scores.view(bsz, n).float().argmax(dim=1)
+        state["lprm_best"] += exact.gather(1, best[:, None]).sum()
     state["pass_sum"] += correct_counts.to(torch.float64).sum() / float(n)
     for k in (1, 2, 4, 8, 16, 32, 64, 128):
         if k < n:
@@ -173,6 +179,7 @@ def _finish_di(
         "different_init/avg_pass_rate": vals["pass_sum"] / total if total else 0.0,
         "different_init/any_correct": vals["any"] / total if total else 0.0,
         "different_init/majority_vote_acc": vals["majority_exact"] / total if total else 0.0,
+        "different_init/lprm_best_acc": vals["lprm_best"] / total if total else 0.0,
         "different_init/total_samples": total,
         "different_init/n": float(n),
         "majority_vote/exact_accuracy": vals["majority_exact"] / total if total else 0.0,
@@ -370,7 +377,7 @@ def evaluate(
 
             preds = preds or {}
             if n_init > 1 and "preds" in preds:
-                _update_di(di, preds["preds"], original_batch["labels"], n_init)  # type: ignore[arg-type]
+                _update_di(di, preds["preds"], original_batch["labels"], n_init, preds.get("lprm_value"))  # type: ignore[arg-type]
                 if conv is not None and len(trajectory) > 1:
                     deltas = torch.stack(trajectory)[1:] - torch.stack(trajectory)[:-1]
                     window = int(getattr(config, "convergence_window", 0) or 0)

@@ -1,0 +1,24 @@
+# @package _global_
+# GRAM depth x width from one checkpoint, the paper's Algorithm 2: N prior-sampled trajectories per puzzle, combined
+# by majority vote (different_init/majority_vote_acc), plus LPRM best-of-N (different_init/lprm_best_acc); width 1
+# with sampled guidance is the paper's N=1. One process per width (different_init is not a param_iter axis):
+#   evaluate.py eval=gram_width ckpt=<gram.pth> width=8 depth=[8,16] seed=0
+ckpt: ???
+width: 1
+depth: [8, 16]
+seed: 0
+checkpoint: null
+checkpoint_list:
+  - checkpoint: ${ckpt}
+    init_override:
+      arch.eval_prior_mean: false # the training runs save true (the deterministic mean); the paper samples
+param_iter:
+  arch.halt_max_steps: ${depth}
+suffix: width${width}_s${seed}
+different_init: ${width} # N copies per puzzle (the copies also get random latent inits of this std)
+different_init_reset_std: 1.0
+save_outputs: [lprm_value]
+global_batch_size: 250
+max_eval_steps: null
+force_rerun: true
+wandb_mode: disabled

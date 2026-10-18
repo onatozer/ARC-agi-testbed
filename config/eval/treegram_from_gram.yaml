@@ -1,0 +1,38 @@
+# @package _global_
+# TreeGRAM's MCTS over K draws of GRAM's prior (slot 0 = the mean, equal mass, LPRM-valued rollouts, most-visited
+# draw picked), run on a plain GRAM checkpoint with no retraining; the search's forward passes match width N = sims + 1:
+#   evaluate.py eval=treegram_from_gram ckpt=<gram.pth> k=4 sims=[4,8,16] depth=[8,16] seed=0
+ckpt: ???
+k: 4
+sims: [4, 8, 16]
+depth: [8, 16]
+seed: 0
+checkpoint: null
+# arch.loss.name is resolved from the checkpoint's inference_name before init_override runs (evaluate.py
+# _base_config), so the TreeRM eval head (search + pick diagnostics) is named here
+loss_head_name: losses.loss_heads@MaxStepsInferenceLossHeadTreeRM
+checkpoint_list:
+  - checkpoint: ${ckpt}
+    init_override:
+      arch.name: recursive_reasoning.treegram@TreeGRAM
+      arch.num_candidates: ${k}
+      arch.eval_mcts_simulations: 8 # swept by param_iter
+      arch.eval_pick: argmax
+      arch.mcts_c_puct: 1.25
+      arch.mcts_impl: cpp
+      arch.search_compile: true
+      # training-only keys TreeRMInner / TreeGRAMInner read or validate at construction
+      arch.mcts_simulations: 8
+      arch.value_bootstrap_weight: 0.0
+      arch.candidate_loss: none
+      arch.candidate_loss_eps: 0.05
+      arch.prior_target: none
+param_iter:
+  arch.halt_max_steps: ${depth}
+  arch.eval_mcts_simulations: ${sims}
+suffix: tg_k${k}_s${seed}
+global_batch_size: 250
+max_eval_steps: null
+force_rerun: true
+different_init: 1
+wandb_mode: disabled
