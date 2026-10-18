@@ -12,6 +12,11 @@ untracked). One GPU job at a time (4 GB laptop GPU, `gpu.lock`).
 | stage | what | result |
 |---|---|---|
 | 1 | eval-sims sweep, reference Sudoku-6u checkpoint (old K=4 flags, 1000 puzzles), 2 eval seeds | flat: 86.5-87.1% at 4/8/16/32 sims; sims=K (uniform random pick) is as good as 32 |
+| 2 | Sudoku fast tier, identity candidate, K = 1/2/4/8 (train sims 2K), seed 0 | 91.4 / 92.2 / 92.4 / 85.7%; K=1 (plain TRM, no search) is already at the recipe's level |
+| 3 | N-Queens 8x8, identity candidate, K = 1/2/4/8, seed 0 | 51.9 / 54.2 / 50.4 / 55.9%; non-monotone, all within the seed spread; K=1 = the old recipe's best (44-55%) |
+| 4 | control: K=1 with candidate_loss=none, seed 0 | Sudoku 87.9, N-Queens 40.8: the candidate loss at K=1 (a doubled lm loss) is +3.5 / +11; the max-steps loss head is the other +20 over TRM |
+| 5 | eval-sims sweeps from the N-Queens K=8 and K=4 checkpoints | K=8: 51.9 / 53.1 / 53.6 at 8 / 16 / 32 sims; K=4: 49.9 / 49.4 / 49.8 / 49.6 at 4-32: the search is worth at most ~2 pts over a random pick among its candidates |
+| 6 | TreeGRAM (search over GRAM's prior), K=4 and K=1, seed 0 | Sudoku 81.3 / 88.7, N-Queens 30.7 / 41.6: searching prior samples is worse than the prior mean; the mean is below TreeRM K=1 |
 
 ## 1. Diagnosis from the existing runs and code (no GPU)
 
@@ -61,3 +66,115 @@ prior in about half the puzzles at 8+ sims. At sims = K the pick is uniform over
 the same, so the four candidates lead to the same answer: finding 3 above (near-duplicate candidates) measured
 directly. The Sudoku fast tier cannot show search scaling; the search question has to be asked on N-Queens, where
 the override rate is 0.2-0.6 and tracks accuracy.
+
+## 3. Stages 2-3: the identity candidate, K = 1 / 2 / 4 / 8 (seed 0)
+
+Code (commit b5c8fed): slot 0 of the flag candidates is `u_t` itself (`directions[0] = 0`), so the plain update is
+always among the K proposals, candidate sets are nested in K, and K=1 is plain TRM bit-exactly (asserted in
+`tests/test_treerm.py`). Training sims = 2K (guided sims = K, the convention of every earlier run), in-training eval
+sims 16 (1 at K=1), `candidate_loss=wta`, `value_bootstrap_weight=0.5`, the tiers' COMMON settings
+(`scripts/candidates/queue.sh`, queue `queues/id_k.txt`, `KEEP_CKPT=1`).
+
+| tier | K=1 (sims 2) | K=2 (4) | K=4 (8) | K=8 (16) | wall K=1 / K=8 | eval GPU K=1 / K=8 |
+|---|---|---|---|---|---|---|
+| Sudoku-6u, 2000 steps, 512 puzzles | 91.4 | 92.2 | 92.4 | 85.7 | 256 / 387 s | 213 / 644 MB |
+| N-Queens 8x8, 3000 steps, 1000 puzzles | 51.9 | 54.2 | 50.4 | 55.9 | 665 / 1294 s | 678 / 2226 MB |
+
+Search diagnostics at the end (N-Queens): argmax_agree 0.77 / 0.64 / 0.76 at K=2/4/8, post_entropy 0.36 / 0.85 / 1.61
+(the K/sims floor of the sampled pick: ln 8 = 2.08), cand_div 0.04 / 0.11 / 0.05.
+
+Reading:
+- **K=1 is the recipe's level.** With no candidates and no search, the TreeRM wrapper scores 51.9% on N-Queens,
+  where TRM-192 scored 20-21% and every TreeRM recipe 44-55% (REPORTS.md, REPORTS_CANDIDATES.md), and 91.4% on Sudoku
+  against the 66-74% TRM band. What differs from TRM at K=1 is the recipe around the search: GRAM's max-steps loss
+  head (no halting), the value head, and the candidate loss, which at K=1 is a second copy of the lm loss. The gains
+  credited to the search and to the candidate loss were mostly this. Control queued: K=1 with `candidate_loss=none`.
+- **K does not pay, in either direction.** The four K points span 5.5 pts on N-Queens and 6.7 on Sudoku, in no
+  order, with one seed; the trained-run seed spread is 4-6 pts. The identity candidate removes the "more flags are
+  worse" failure (K=8 is the best N-Queens point) but, as predicted in section 1, it cannot make K monotone while the
+  pick is a sample over visit counts.
+
+## 4. Control: K=1 without the candidate loss (seed 0)
+
+At K=1 `candidate_loss=wta` rolls out the single candidate to the end of the step and adds its CE: a second copy of
+the lm loss. `queues/control_k1.txt` drops it (`candidate_loss=none`); everything else as in section 3.
+
+| tier | K=1, wta | K=1, none | TRM baseline (REPORTS.md) |
+|---|---|---|---|
+| Sudoku-6u | 91.4 | 87.9 | 66-74 (TRM-128, ACT head) |
+| N-Queens 8x8 | 51.9 | 40.8 | 20-21 (TRM-192, ACT head) |
+
+Reading (one seed each): the doubled lm term is worth ~3.5 pts on Sudoku and ~11 on N-Queens, which is most of the
+"+14 from candidate_loss" of REPORTS_CANDIDATES.md; the max-steps GRAM loss head without halting (plus the value
+head, inert at K=1) is worth the other ~20 pts over TRM on N-Queens. Neither has anything to do with the search. The
+search's own contribution, K=8 vs K=1 at equal recipe, is +4 on N-Queens and -6 on Sudoku at one seed: noise.
+
+## 5. Eval-time simulations on the N-Queens checkpoints (seed 0 weights, eval seed 0)
+
+`sims_sweep.sh` on the section 3 checkpoints (1000 test puzzles, one model build per checkpoint). At sims = K every
+simulation is a forced root visit, so the visit distribution is uniform and the pick is a uniform random candidate.
+
+| checkpoint | sims = K (random pick) | 2K | 4K | 8K | in-training eval (16 sims) |
+|---|---|---|---|---|---|
+| K=8 (train sims 16) | 51.9 | 53.1 | 53.6 | - | 55.9 |
+| K=4 (train sims 8) | 49.9 | 49.4 | 49.8 | 49.6 | 50.4 |
+
+Reading: flat at K=4 (0.5 pt span); a weak upward trend of 1.7 pts from 8 to 32 sims at K=8, inside the eval-seed
+noise (the same weights scored 55.9 in the in-training eval at 16 sims). The search is worth at most ~2 pts over a
+random pick among its own candidates, which agrees with section 2 (Sudoku, 0 pts) and with the candidates being
+near-duplicates (cand_div 0.05-0.11): there is little for a better pick to choose between. Eval cost: 21-86 s per
+budget on 1000 puzzles (the first budget includes the compile).
+
+## 6. TreeGRAM: the search over GRAM's learned prior (seed 0)
+
+Idea 1: candidates from GRAM's prior p(eps | u_t) instead of a candidate head, MCTS as the test-time procedure.
+Code (commit 49422d0): `TreeRMInner._prior_logits` hook (the scorer's logits; TreeRM unchanged, 22 tests),
+`models/recursive_reasoning/treegram.py`: `TreeGRAMInner` overrides `_candidates` with slot 0 = `u_t + mu` and
+slots 1..K-1 = `u_t + mu + sqrt(var) * noise`, and `_prior_logits` with a uniform prior (Sampled MuZero: the
+samples carry the prior), so there is no scorer and no generator; `config/arch/treegram.yaml` inherits every
+TreeRM key. K=1 is GRAM's `eval_prior_mean` inference bit-exactly (`tests/test_treegram.py`). The prior head
+trains pathwise through the picked sample, the candidate loss (every sample) and the lm loss; nothing else was
+added (the visit-weighted Gaussian NLL target of the design notes is the next option, not built). 756k params vs
+TreeRM's 593k (the Gaussian head's SwiGLU). Same recipe as section 3 (`queues/treegram.txt`).
+
+| tier | TreeGRAM K=4 (8 sims) | TreeGRAM K=1 (prior mean) | TreeRM identity K=4 | TreeRM identity K=1 |
+|---|---|---|---|---|
+| Sudoku-6u | 81.3 | 88.7 | 92.4 | 91.4 |
+| N-Queens 8x8 | 30.7 | 41.6 | 50.4 | 51.9 |
+
+Diagnostics at the end (N-Queens K=4): eval cand_div 0.025 (the prior's variance collapses, so the samples are
+near-duplicates too), post_entropy 1.07, argmax_agree 0.41 (the search picks a noise sample over the mean 59% of
+the time); train cand_div 0.21 on Sudoku. Wall / eval GPU: Sudoku 252-387 s, 220 MB; N-Queens 687-933 s, 1.1 GB.
+Eval-sims sweep of the N-Queens K=4 checkpoint (eval seed 0): 31.7 / 30.8 / 31.4 / 31.5 at 4 / 8 / 16 / 32 sims,
+the random pick (sims = K) best of all: the budget is as inert here as for the flag candidates.
+
+Reading: searching over prior samples is worse than taking the prior mean by 7-11 pts at one seed, and the prior
+mean itself is below TreeRM's K=1 by 3-10 pts. With the pick a sample over visit counts and the value head unable
+to rank near-duplicates, each noise sample that is picked is a small random perturbation of z_H that the lm loss
+then has to absorb; more candidates mean more such picks. Not a test-time scaling procedure as built: the prior
+would need a target that uses the search (the Gaussian NLL of the search-weighted samples) or a deterministic
+Q-based pick before K or the budget could pay. Memory and wall are at TreeRM's level, as designed.
+
+## 7. Where this leaves the question
+
+1. **The non-monotonicity is not noise around a working search; the search is inert.** On every checkpoint, picking
+   a candidate uniformly at random (sims = K) scores the same as the full search, to within 2 pts. More K, more
+   simulations or more depth cannot help a search that has nothing to choose between (cand_div 0.03-0.11) and picks
+   by sampling. The identity candidate (idea 2) removes the "more flags are worse" failure mode and makes K=1 an
+   exact TRM control, which is what exposed the rest; it does not, and cannot by itself, make K pay.
+2. **TreeRM's gains over TRM are the recipe.** K=1 with no search reproduces the old recipe's best numbers; the
+   max-steps loss head and the doubled lm loss (the candidate loss at K=1) account for the gap to the TRM baselines
+   on both tiers. Any future TreeRM claim needs the K=1 identity run as its control, not TRM with the ACT head.
+3. **MCTS over the GRAM prior (idea 1) as built does not scale either**: noise samples are worse than the mean and
+   the prior's variance collapses. What would be needed, in order of cost: (a) a deterministic, Q-informed root pick
+   at eval (Gumbel MuZero's argmax of logits + sigma(Q); `argmax_pick` was stripped in #64), (b) a training target for
+   the proposals that uses the search (the visit-weighted Gaussian NLL for TreeGRAM; completed-Q / sequential halving
+   for the visit targets), (c) a measured value head (eval `lprm_loss`, rank correlation with the true CE), since the
+   whole chain rests on it. None of these was asked for; they are the companions the research notes rank first.
+4. **Not measured here:** more than one training seed per cell (the trained-run spread is 4-6 pts, so single-seed
+   differences under ~6 are not differences); the TRM-with-ACT-head control inside this harness (the 20-21 / 66-74
+   baselines are the earlier reports'); depth as an axis (it is not a config knob after the strip).
+
+Harness for whoever continues: `queues/id_k.txt`, `queues/control_k1.txt`, `queues/treegram.txt` with
+`KEEP_CKPT=1 bash scripts/candidates/queue.sh <tier> <queue>`; `sims_sweep.sh <ckpt> '[sims]' [seed] [batch] [data]`
+and `sims_table.py <run dir>`; results under `~/ARC-agi-testbed/autoresearch_runs/candidates/{sudoku6,nqueens8,sims_ref,sims_nq}/`.

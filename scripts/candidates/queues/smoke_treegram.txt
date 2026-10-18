@@ -1,0 +1,4 @@
+# 60-step smokes of TreeGRAM (run with CANDIDATES_RUNS pointing outside the results tree)
+smoke_tg_k4      arch=treegram max_steps=60 eval_interval_steps=60 max_eval_steps=2 +wandb_mode=disabled
+smoke_tg_k1      arch=treegram arch.num_candidates=1 arch.mcts_simulations=2 arch.eval_mcts_simulations=1 max_steps=60 eval_interval_steps=60 max_eval_steps=2 +wandb_mode=disabled
+smoke_tg_nocomp  arch=treegram arch.search_compile=false arch.mcts_impl=python max_steps=60 eval_interval_steps=60 max_eval_steps=2 +wandb_mode=disabled
