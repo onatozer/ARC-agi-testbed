@@ -38,7 +38,7 @@ class EvalConfig(pydantic.BaseModel):
     wandb_tags: Optional[List[str]] = None
     loss_head_name: Optional[str] = None  # None: the checkpoint's arch.loss.inference_name
     different_init: Optional[int] = None
-    different_init_reset_std: float = 1.0
+    different_init_reset_std: Optional[float] = 1.0  # None: the copies keep the model's own initial carry (they differ only by their draws)
     convergence_top_k: Optional[int] = None
     convergence_window: int = 3
     convergence_vis_plots: List[str] = Field(default_factory=list)

@@ -286,7 +286,7 @@ def _run_checkpoint(eval_cfg: EvalConfig, ckpt_cfg: CheckpointEvalConfig, rank: 
         _apply_overrides(loss_head.model.config, {k.removeprefix("arch."): v for k, v in combo.items() if k.startswith("arch.")}, rank=rank)
         _apply_runtime_arch_overrides(train_state_eval.model, combo, rank)
         _seed(run_config.seed, rank)
-        if eval_cfg.different_init and eval_cfg.different_init > 1:
+        if eval_cfg.different_init and eval_cfg.different_init > 1 and eval_cfg.different_init_reset_std is not None:
             _setup_random_reset_carry(train_state_eval.model, eval_cfg.different_init_reset_std, rank)
 
         suffix = ckpt_cfg.suffix or eval_cfg.suffix or "eval"
