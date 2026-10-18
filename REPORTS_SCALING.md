@@ -220,6 +220,17 @@ step 500, then the C++ search segfaulted on it; N-Queens loss 199 and rising at 
 prior mean, not a draw, so its term is log var with a zero residual, which drives var to its floor, and the mean's
 gradient scales with 1/var. Fixed by fitting only slots 1..K-1 with their visit share; both runs re-queued.
 
+## 10. Round 2 (c): MiniARC 5x5 (standard build, 4000 steps, puzzle_emb_lr 3e-2, seed 0)
+
+`scripts/miniarc5/queue_scaling.sh`; metrics from `scripts/miniarc5/summarize.py <run dir>`; REPORTS_ARC.md's
+references at this recipe: TreeRM (flags, no candidate loss) pass@2 7.4 / 4.7 over 2 seeds, TRM 8.1.
+
+| run | pass@1 | pass@2 | pass@5 | exact acc | wall | eval GPU |
+|---|---|---|---|---|---|---|
+| TreeRM identity K=4 (wta, argmax pick) | 2.7 | 4.7 | 6.7 | 1.5 | 1298 s | 550 MB |
+| TreeRM identity K=1 (control) | pending | | | | | |
+| TreeGRAM K=4, prior target | pending | | | | | |
+
 Harness for whoever continues: `queues/id_k.txt`, `queues/control_k1.txt`, `queues/treegram.txt` with
 `KEEP_CKPT=1 bash scripts/candidates/queue.sh <tier> <queue>`; `sims_sweep.sh <ckpt> '[sims]' [seed] [batch] [data]`
 and `sims_table.py <run dir>`; results under `~/ARC-agi-testbed/autoresearch_runs/candidates/{sudoku6,nqueens8,sims_ref,sims_nq}/`.
