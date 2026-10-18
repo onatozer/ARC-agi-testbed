@@ -197,6 +197,29 @@ with the new diagnostics; (b) TreeGRAM K=4 with the target on Sudoku and N-Queen
 5x5: TreeRM identity K=4, its K=1 control, TreeGRAM K=4 with the target (4000 steps each), then both picks from
 the K=4 checkpoints.
 
+## 9. Round 2 (a): the deterministic pick and the value head, on the saved N-Queens checkpoints (seed 0 weights)
+
+`sims_sweep.sh` with `pick=[argmax,sample]`; the sample rows reproduce section 5 within eval noise. The pick
+diagnostics roll every candidate out to the end of the step: `pick_is_best` = the picked candidate is the CE-best
+(chance 1/K), `cand_ce_gap` = CE of the worst minus the best candidate, `value_rank_corr` = Spearman of the LPRM
+value head's ranking of the K candidates with the label's (1 = perfect, 0 = none).
+
+| checkpoint | sims | sample pick | argmax pick | pick_is_best (argmax) | value_rank_corr | cand_ce_gap (nats) |
+|---|---|---|---|---|---|---|
+| TreeRM identity K=8 | 16 / 32 | 53.0 / 53.9 | 54.0 / 54.1 | 0.33 (chance 0.125) | 0.22 | 0.019 |
+| TreeRM identity K=4 | 8 / 16 / 32 | 49.3 / 49.8 / 49.4 | 49.0 / 48.8 / 48.8 | 0.47-0.49 (chance 0.25) | 0.26-0.27 | 0.011 |
+| TreeGRAM K=4 (no target) | 8 / 16 / 32 | 27.3 / 27.9 / 27.7 | 28.2 / 28.5 / 29.0 | 0.26-0.27 | 0.03-0.06 | 0.018 |
+
+Reading: the deterministic pick is worth about 1 pt at K=8 and nothing at K=4, as the diagnostics predict: the K
+candidates' final CEs differ by 0.01-0.02 nats (the best and the worst candidate are the same answer), and the
+value head ranks them at 0.2-0.3 correlation (0 for TreeGRAM). The pick does pick better than chance (0.33 vs
+0.125 at K=8), it just has nothing to gain from. Order of business confirmed: proposals that differ first.
+
+Round 2 (b), first attempt: the visit-weighted Gaussian NLL over all K slots diverged on both tiers (Sudoku NaN by
+step 500, then the C++ search segfaulted on it; N-Queens loss 199 and rising at step 300). Cause: slot 0 is the
+prior mean, not a draw, so its term is log var with a zero residual, which drives var to its floor, and the mean's
+gradient scales with 1/var. Fixed by fitting only slots 1..K-1 with their visit share; both runs re-queued.
+
 Harness for whoever continues: `queues/id_k.txt`, `queues/control_k1.txt`, `queues/treegram.txt` with
 `KEEP_CKPT=1 bash scripts/candidates/queue.sh <tier> <queue>`; `sims_sweep.sh <ckpt> '[sims]' [seed] [batch] [data]`
 and `sims_table.py <run dir>`; results under `~/ARC-agi-testbed/autoresearch_runs/candidates/{sudoku6,nqueens8,sims_ref,sims_nq}/`.

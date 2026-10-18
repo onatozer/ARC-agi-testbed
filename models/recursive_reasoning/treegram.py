@@ -31,14 +31,17 @@ class TreeGRAMInner(TreeRMInner):
     def _prior_loss(self, u_t: torch.Tensor, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> torch.Tensor:
         """prior_target=visits: the search's visit-weighted Gaussian NLL of the (detached) samples under the prior, so
         mu moves toward the samples the search favoured and var toward their spread (Sampled MuZero's policy target
-        for a sampled continuous action space); 'none' = pathwise only. Summed over the hidden dim, averaged over
-        tokens, summed over the batch and weighted by kl_strength like GRAM's KL."""
-        if self.config.prior_target == "none":
+        for a sampled continuous action space); 'none' = pathwise only. Only slots 1..K-1 are draws: slot 0 is the
+        mean, whose zero residual would drive var to its floor and the mean's 1/var gradient to infinity (it did).
+        Summed over the hidden dim, averaged over tokens, summed over the batch and weighted by kl_strength like
+        GRAM's KL."""
+        if self.config.prior_target == "none" or cand.shape[1] == 1:
             return prior_logits.new_zeros(())
         mu, var = (t.float() for t in self.prior_head(u_t))
-        diff = cand.detach().float() - mu.unsqueeze(1)  # [B, K, S, H]
-        nll = 0.5 * (diff.pow(2) / var.unsqueeze(1) + var.log().unsqueeze(1)).sum(-1).mean(-1)  # [B, K]
-        return (post_logits.float().softmax(dim=-1) * nll).sum() * self.config.kl_strength
+        diff = cand[:, 1:].detach().float() - mu.unsqueeze(1)  # [B, K-1, S, H]
+        nll = 0.5 * (diff.pow(2) / var.unsqueeze(1) + var.log().unsqueeze(1)).sum(-1).mean(-1)  # [B, K-1]
+        weights = post_logits[:, 1:].float().softmax(dim=-1) * (1 - post_logits.float().softmax(dim=-1)[:, :1])  # the draws' visit share
+        return (weights * nll).sum() * self.config.kl_strength
 
 
 class TreeGRAM(GRAM):

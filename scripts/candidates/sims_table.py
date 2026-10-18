@@ -20,7 +20,7 @@ def main() -> None:
             rows.append((seed, pick, sims, {"eval_time_sec": data.get("eval_time_sec"), **data.get("metrics", {})}))
         print(run)
         print("seed  pick    sims  " + "  ".join(k.split("/")[-1] for k in KEYS))
-        for seed, pick, sims, flat in sorted(rows):
+        for seed, pick, sims, flat in sorted(rows, key=lambda row: row[:3]):
             print(f"{seed:4d}  {pick:6s}  {sims:4d}  " + "  ".join(f"{flat[k]:.4g}" if isinstance(flat.get(k), (int, float)) else "-" for k in KEYS))
 
 
