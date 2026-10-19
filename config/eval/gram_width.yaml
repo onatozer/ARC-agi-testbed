@@ -13,6 +13,8 @@ checkpoint_list:
   - checkpoint: ${ckpt}
     init_override:
       arch.eval_prior_mean: ${mean}
+      arch.carry_norm: true # checkpoints from before the key carried the normed state
+      arch.lprm_weight: 0.5
 param_iter:
   arch.halt_max_steps: ${depth}
 suffix: width${width}_mean${mean}_s${seed}

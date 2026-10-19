@@ -23,4 +23,6 @@ lprm_prior_rollouts: 0 # value bootstrapping for the LPRM head (REPORTS_GRAM_TTS
 lprm_rollout_cycles: grad # which cycles draw them: grad = the grad cycle (depth 0, the draw itself); all = every cycle, as the search draws at eval
 value_bootstrap_weight: 0.5 # weight of that loss (TreeRM's key)
 lprm_pool: first # what the LPRM head reads of a state: first = its first token (the paper); mean = the mean over tokens (a draw's noise on the other tokens is invisible to the first until an update mixes them)
+lprm_weight: 0.5 # weight of the LPRM loss in the loss head (ad3002/gram 1.0; pixeli99/GRAM trains no LPRM: 0)
+carry_norm: true # carry the rms-normed z_H between supervision steps (ad3002/gram) or the raw one (pixeli99/GRAM norms only in the decode)
 lprm_target: step # the loss head's LPRM target: step = this step's exact match (ad3002/gram); final = the trajectory's final correctness (the paper, App. A.4), each row's remaining supervision steps rolled out without gradient as inference runs them

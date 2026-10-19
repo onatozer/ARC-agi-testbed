@@ -140,7 +140,7 @@ class GRAM_Inner(InnerNetwork):
 
             return eps, kl_loss
 
-        if self.config.eval_prior_mean:
+        if self.config.eval_prior_mean and not self.training:  # training's no-grad cycles keep their draws
             return mu_prior, 0
         eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
         return eps, 0
@@ -225,15 +225,19 @@ class GRAM_Inner(InnerNetwork):
             targets = torch.cat([v for _, v in lprm_pairs])
             kl_loss = kl_loss + F.mse_loss(predicted, targets, reduction="sum") / self.config.lprm_prior_rollouts * self.config.value_bootstrap_weight
 
-        z_H = rms_norm(z_H, self.config.rms_norm_eps)
-        
+        # The decoder and the value head read the rms-normed state; the carry keeps it normed (carry_norm) or raw, as
+        # pixeli99/GRAM does (it norms only in the decode)
+        z_out = rms_norm(z_H, self.config.rms_norm_eps)
+        if self.config.carry_norm:
+            z_H = z_out
+
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:
-            logits = self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
+            logits = self.lm_head(z_out[:, self.config.puzzle_emb_len :]).contiguous()
         else:
-            logits = self.lm_head(z_H).contiguous()
+            logits = self.lm_head(z_out).contiguous()
 
-        lprm_value = self._lprm_value(z_H)
+        lprm_value = self._lprm_value(z_out)
         info = {
             "lprm_value": lprm_value,
             # No halt head: the LPRM value stands in for ACT's halt logit where the evaluators want a confidence (the

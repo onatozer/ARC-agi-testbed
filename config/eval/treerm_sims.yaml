@@ -18,6 +18,8 @@ checkpoint_list:
       arch.lprm_pool: first
       arch.mcts_horizon: step
       arch.posterior_y_pool: position
+      arch.lprm_weight: 0.5
+      arch.carry_norm: true
 param_iter:
   arch.eval_mcts_simulations: ${sims}
   arch.eval_pick: ${pick}

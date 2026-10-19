@@ -33,7 +33,7 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "lprm_weight": 0.5, "carry_norm": True, "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)

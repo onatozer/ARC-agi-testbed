@@ -463,7 +463,7 @@ class LossHeadGRAM(MaxStepsLossHead):
         target = outputs["lprm_target"] if "lprm_target" in outputs else seq_is_correct
         lprm_loss = F.mse_loss(outputs["lprm_value"], target.to(outputs["lprm_value"].dtype), reduction="sum")
 
-        total_loss = lm_loss + kl_loss + 0.5 * lprm_loss
+        total_loss = lm_loss + kl_loss + self.model.config.lprm_weight * lprm_loss
         return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}
 
 
