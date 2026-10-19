@@ -519,9 +519,9 @@ posterior on every transition, no value head), on the paper's build:
 
 | run | steps | accuracy (valid board keeping the givens) | train exact |
 |---|---|---|---|
-| TRM | 10k | pending | |
-| GRAM, official objective | 10k | pending | |
-| GRAM, official objective | 30k | pending (the crossover with budget alone: at 10k on the random build GRAM was still rising, TRM flat) | |
-| + vote over 8 / 20 draws | | pending | |
+| TRM | 10k | cancelled by the user (the chain was stopped 15 min in) | |
+| GRAM, official objective | 10k | cancelled | |
+| GRAM, official objective | 30k | cancelled (the crossover with budget alone was the question: at 10k on the random build GRAM was still rising, TRM flat) | |
+| + vote over 8 / 20 draws | | cancelled | |
 
 The paper: TRM 66.8 +- 5.6, GRAM 99.5 +- 0.3 (N=1), 100 (N=20).
