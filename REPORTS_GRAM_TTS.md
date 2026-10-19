@@ -445,6 +445,13 @@ Test (plain objective: `lprm_weight=0`, no prior-sample fraction, no bootstrap, 
 | run | kl_strength | posterior on no-grad cycles | accuracy by 500 steps | train exact |
 |---|---|---|---|---|
 | gram_plain (section 15) | 0.05 | no | 0 at every eval | 96.7 |
-| gram_kl56 | 5.6 (0.07 x 80 tokens) | no | pending | |
-| gram_kl45 | 4.48 (0.07 x 64 content tokens) | no | pending | |
-| gram_kl56_pnc | 5.6 | yes (the official training) | pending | |
+| gram_kl56 | 5.6 (0.07 x 80 tokens) | no | 0 / 0 / 0 / 0 / 0.3 / **2.6** (807 s) | 12.9 (KL 0.015) |
+| gram_kl45 | 4.48 (0.07 x 64 content tokens) | no | 0 / 0 / 0 / 0 / 0.1 / **3.0** (1182 s) | 12.7 (KL 0.030) |
+| gram_kl56_pnc | 5.6 | yes (the official training) | 0 / 0 / 0 / 0 / 0 / **0.6** (1479 s) | 11.8 (KL 0.014) |
+
+Reading: at the official KL strength the shortcut is gone (train exact 97 -> 12-13%, TRM's range; KL 0.015-0.03)
+and the faithful posterior's prior path produces valid boards for the first time (2.6-3.0% at 3000 steps, taking
+off between 2500 and 3000; TRM 23.7). Sampling the posterior on the no-grad cycles too, as the official training
+does, is slightly behind at this budget (0.6). The 110x KL weighting is the difference between our GRAM and the
+paper's; whether the prior path then catches TRM and passes it (the paper: 99.5 vs 66.8) is a question of budget,
+tested next at 10k steps (TRM 68.9).
