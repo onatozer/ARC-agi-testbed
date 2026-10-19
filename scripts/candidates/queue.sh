@@ -17,6 +17,8 @@ case "$TIER" in
   nqueens8ho10k) COMMON="$BACKBONE global_batch_size=128 max_steps=10000 eval_interval_steps=2000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
   # The paper's enumerated build (data/nqueens-8off) at our size, 10k steps: the reference for the replication
   nqueens8off10k) COMMON="$BACKBONE global_batch_size=128 max_steps=10000 eval_interval_steps=2000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
+  # The same at 30k steps: the crossover with budget alone (GRAM's curve had not flattened at 10k, TRM's had)
+  nqueens8off30k) COMMON="$BACKBONE global_batch_size=128 max_steps=30000 eval_interval_steps=5000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
   # The official gram-release recipe (REPORTS_GRAM_TTS.md section 18): hidden 512, 8 heads, H 3 / L 6, 16 supervision
   # steps, batch 768, lr 1e-4 with 2000 warm-up, 45k steps (the user's 2026-10-10 W&B run matched it); eval every 5000
   nqueens8off) COMMON="arch.hidden_size=512 arch.num_heads=8 arch.L_layers=2 arch.H_cycles=3 arch.L_cycles=6 arch.halt_max_steps=16 epochs=100000 train_epochs_per_iter=100000 seed=0 global_batch_size=768 max_steps=45000 eval_interval_steps=5000 max_eval_steps=null lr_warmup_steps=2000 lr=1e-4";;

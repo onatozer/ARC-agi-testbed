@@ -502,3 +502,26 @@ Reading: on the restored GRAM the paper's width scaling works on N-Queens as it 
 boards by voting 8 / 16 prior draws, with 75-77% of puzzles solved by at least one draw (the paper: 99.5 -> 100 at
 N=20 with coverage 89.7). The 9-10 pt gap between the vote and any-valid is what a trained selector (LPRM best-of-N
 with the pooled head, or the full-horizon search) would have to close; this run trained no value head.
+
+## 18. Replication attempt (user, 2026-10-19): the paper's N-Queens construction and recipe
+
+Data: `build_nqueens_dataset ... enumerate_all=true heldout_frac=0.15 min_given_queens=1 max_given_queens=3`
+(`data/nqueens-8off`): every one of the 92 solutions x every 1-3-queen subset is an input, every consistent solution
+a row, 15% of the unique inputs held out: 7,164 train rows over 4,376 inputs, 1,300 test rows over 772 inputs
+(8,464 pairs, 5,148 inputs, the paper's counts), 1-3 givens in the test split, no overlap.
+
+Recipe: the official one (hidden 512, 8 heads, H 3 / L 6, 16 supervision steps, batch 768, lr 1e-4, 2000 warm-up,
+45k steps; the user's 2026-10-10 W&B run `GRAM-Nqueens-8x8` matched it on another machine) is **out of memory on
+the 4 GB laptop GPU** at the first step (13.1 M params; `pretrain.py` has no gradient accumulation), and at its
+cost (~100x a hidden-128 / batch-128 step) 45k steps would take days here. The attempt is therefore at the
+laptop's scale: our backbone (hidden 128, 1.0 M params), the official objective (`kl_reduction: sum`, beta 0.07,
+posterior on every transition, no value head), on the paper's build:
+
+| run | steps | accuracy (valid board keeping the givens) | train exact |
+|---|---|---|---|
+| TRM | 10k | pending | |
+| GRAM, official objective | 10k | pending | |
+| GRAM, official objective | 30k | pending (the crossover with budget alone: at 10k on the random build GRAM was still rising, TRM flat) | |
+| + vote over 8 / 20 draws | | pending | |
+
+The paper: TRM 66.8 +- 5.6, GRAM 99.5 +- 0.3 (N=1), 100 (N=20).
