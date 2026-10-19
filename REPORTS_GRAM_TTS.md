@@ -402,8 +402,16 @@ pool+final 0 at this budget):
 
 | run | what | accuracy at 3000 | train exact |
 |---|---|---|---|
-| gram_ypool | label-blind posterior, otherwise plain | pending | |
-| gram_ypool_pf | label-blind posterior + pooled head, final target, frac 0.25, bootstrap | pending | |
-| gram_plain | pixeli99's objective (no LPRM loss), bf16 | pending | |
-| gram_fp32 | the same in fp32 | pending | |
-| gram_raw | the same with the raw carry | pending | |
+| gram_ypool | label-blind posterior, otherwise plain | 0 / 0 / 0 / 0 / 0.5 / **4.4** (624 s) | 10.2 (KL 0.003 nats: posterior = prior) |
+| gram_ypool_pf | label-blind posterior + pooled head, final target, frac 0.25, bootstrap | 0 at every eval (3008 s) | 0.0 |
+| gram_plain | pixeli99 objective (no LPRM loss), bf16 | 0 at every eval (1138 s) | 96.7 (KL 0.058) |
+| gram_fp32 | the same in fp32 | 0 at every eval (1347 s) | 96.4 (KL 0.056) |
+| gram_raw | the same with the raw carry | 0 at every eval (1189 s) | 99.3 (KL 0.031) |
+
+Reading: the label-blind posterior removes the shortcut (train exact 10%, KL ~0) and the prior path starts to
+learn (4.4% at 3000 steps, behind TRM's 23.7), which is the mechanism behind ad3002's numbers: their GRAM is TRM
+plus learned noise. None of pixeli99's recipe differences matters at our budget: without the LPRM loss and the
+prior-sample fraction, in bf16 or fp32, with the normed or the raw carry, the faithful posterior memorises 96-99% of
+the training puzzles and the prior produces no valid board. What separates pixeli99's 98% from our 0% is therefore
+not in the objective, precision or carry but in scale and budget (10.5 M params, ~33x the puzzle-steps) or in the
+data (all consistent solutions as rows), neither affordable here; the official release is diffed next.
