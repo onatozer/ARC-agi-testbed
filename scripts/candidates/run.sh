@@ -12,7 +12,7 @@ LOCK=${GPU_LOCK:-$HOME/ARC-agi-testbed/autoresearch_runs/mcts_bench/gpu.lock}
 case "$TIER" in
   sudoku6)  CFG=cfg_pretrain; DATA="dataset.data_path=$WT/data/sudoku-6u dataset.grid_size=6 dataset.name=Sudoku-6u";;
   nqueens8) CFG=cfg_pretrain_nqueens; DATA="dataset.data_path=$WT/data/nqueens-8 dataset.board_size=8";;
-  nqueens8ho) CFG=cfg_pretrain_nqueens; DATA="dataset.data_path=$WT/data/nqueens-8ho dataset.board_size=8";;
+  nqueens8ho|nqueens8ho10k) CFG=cfg_pretrain_nqueens; DATA="dataset.data_path=$WT/data/nqueens-8ho dataset.board_size=8";;
   sudoku4)  CFG=cfg_pretrain; DATA="dataset.data_path=$WT/data/sudoku-4ho dataset.grid_size=4 dataset.name=Sudoku-4ho";;
   sudoku4u) CFG=cfg_pretrain; DATA="dataset.data_path=$WT/data/sudoku-4hu dataset.grid_size=4 dataset.name=Sudoku-4hu";;
   *) echo "unknown tier $TIER" >&2; exit 2;;
