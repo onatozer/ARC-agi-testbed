@@ -33,7 +33,7 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "lprm_weight": 0.5, "carry_norm": True, "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "lprm_weight": 0.5, "carry_norm": True, "kl_reduction": "mean", "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
@@ -56,6 +56,25 @@ def test_lprm_prior_rollouts_train_only_the_value_head_on_prior_draws():
     loss_off.backward()
     assert metrics["kl_loss"] > metrics_off["kl_loss"]
     assert not torch.equal(v_grad, model_off.model.inner.v_head.weight.grad)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_kl_reduction_sum_is_the_token_count_times_the_mean():
+    """The official release's token-sum KL is the per-token mean times the number of tokens (the puzzle prefix included)."""
+    kls = {}
+    for reduction in ("mean", "sum"):
+        model, batch = _gram_head(kl_reduction=reduction)
+        inner = model.model.inner
+        with torch.no_grad():  # the Gaussian heads start at zero (KL exactly 0): give both models the same non-zero heads
+            g = torch.Generator(device="cuda").manual_seed(1)
+            for head in (inner.prior_head, inner.posterior_head.head):
+                head.to_stats.weight.copy_(torch.randn(head.to_stats.weight.shape, generator=g, device="cuda") * 0.1)
+        model.train()
+        torch.manual_seed(0)
+        _, _, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+        kls[reduction] = float(metrics["kl_loss"])
+    tokens = model.model.inner.config.seq_len  # the inner's seq_len includes the puzzle prefix
+    assert kls["sum"] > 0 and abs(kls["sum"] / kls["mean"] - tokens) < 0.05 * tokens
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")

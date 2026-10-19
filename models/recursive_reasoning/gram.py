@@ -98,7 +98,7 @@ class GRAM_Inner(InnerNetwork):
 
         if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
             raise ValueError(f"grad_cycles must be in [1, H_cycles={self.config.H_cycles}], got {self.config.grad_cycles}.")
-        for key, allowed in (("lprm_pool", ("first", "mean")), ("lprm_rollout_cycles", ("grad", "all")), ("lprm_target", ("step", "final"))):
+        for key, allowed in (("lprm_pool", ("first", "mean")), ("lprm_rollout_cycles", ("grad", "all")), ("lprm_target", ("step", "final")), ("kl_reduction", ("mean", "sum"))):
             if getattr(self.config, key) not in allowed:
                 raise ValueError(f"{key} must be one of {allowed}, got {getattr(self.config, key)!r}.")
 
@@ -129,14 +129,18 @@ class GRAM_Inner(InnerNetwork):
                 eps = torch.where(prior_rows.view(-1, 1, 1), mu_prior + torch.randn_like(u_t) * var_prior.sqrt(), eps)
 
             if torch.is_grad_enabled():
-                # kl_balanced sums over the hidden dim -> [B, S]; average over tokens like the lm loss, then sum over the batch
                 kl_loss = kl_balanced(
                     mu_post = mu_post,
                     var_post = var_post,
                     mu_prior = mu_prior,
                     var_prior = var_prior,
                     alpha=self.config.kl_grad_prior,
-                ).mean(-1).sum() * self.config.kl_strength
+                )
+                # kl_balanced sums over the hidden dim -> [B, S]; the official release sums over the tokens too
+                # (kl_reduction=sum, beta 0.07), which weights the KL ~S times more than the token mean this
+                # codebase used with beta 0.05 and is what stops the posterior from carrying the label on N-Queens
+                # (REPORTS_GRAM_TTS.md section 16); then sum over the batch
+                kl_loss = (kl_loss.sum(-1) if self.config.kl_reduction == "sum" else kl_loss.mean(-1)).sum() * self.config.kl_strength
 
             return eps, kl_loss
 

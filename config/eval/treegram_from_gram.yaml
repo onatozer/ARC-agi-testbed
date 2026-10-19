@@ -37,6 +37,7 @@ checkpoint_list:
       arch.posterior_y_pool: position # constructed then deleted by TreeGRAM; any value
       arch.lprm_weight: 0.5
       arch.carry_norm: true
+      arch.kl_reduction: mean
 param_iter:
   arch.halt_max_steps: ${depth}
   arch.eval_mcts_simulations: ${sims}

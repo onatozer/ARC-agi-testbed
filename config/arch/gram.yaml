@@ -13,7 +13,8 @@ loss:
 
 posterior_y_pool: position # how the label enters the posterior: position = embedded per position (the paper's reading; the label-carrying posterior that shortcuts multi-solution tasks); mean = its embedding averaged over the positions, as ad3002/gram defaults to (label-blind on N-Queens, whose boards all hold 8 queens; REPORTS_GRAM_TTS.md section 15)
 kl_grad_prior: 0.8 # KL balancing alpha: share of the KL gradient that trains the prior (paper App. B.2)
-kl_strength: 0.05 # KL weight beta; the paper uses 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2, 0.07 N-Queens 8x8
+kl_strength: 0.05 # KL weight beta; the paper uses 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2, 0.07 N-Queens 8x8 (with kl_reduction sum)
+kl_reduction: mean # how the per-token KL is reduced before beta: mean over the tokens (this codebase's choice, also ad3002/gram and pixeli99/GRAM) or sum (the official gram-release: ~S times stronger; with beta 0.07 it is what keeps the posterior from carrying the label on 8x8 N-Queens, REPORTS_GRAM_TTS.md section 16; mean x 5.6 reproduced it)
 # No halt head: every puzzle runs halt_max_steps supervision steps, so halt_exploration_prob / act_inference / halt_* don't apply
 grad_cycles: 1 # how many of the H_cycles carry the gradient (and the posterior + its KL); 1 is the paper's truncation
 posterior_nograd_cycles: False # also sample the posterior in the no-grad cycles while training (they pay no KL, so y leaks into z_H for free)

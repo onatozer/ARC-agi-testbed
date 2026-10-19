@@ -20,6 +20,7 @@ checkpoint_list:
       arch.posterior_y_pool: position
       arch.lprm_weight: 0.5
       arch.carry_norm: true
+      arch.kl_reduction: mean
 param_iter:
   arch.eval_mcts_simulations: ${sims}
   arch.eval_pick: ${pick}

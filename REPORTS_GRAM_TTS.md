@@ -455,3 +455,34 @@ off between 2500 and 3000; TRM 23.7). Sampling the posterior on the no-grad cycl
 does, is slightly behind at this budget (0.6). The 110x KL weighting is the difference between our GRAM and the
 paper's; whether the prior path then catches TRM and passes it (the paper: 99.5 vs 66.8) is a question of budget,
 tested next at 10k steps (TRM 68.9).
+
+At 10k steps (tier `nqueens8ho10k`, the plain objective, `kl_strength=5.6`):
+
+| run | accuracy by 2000 steps | train exact | wall |
+|---|---|---|---|
+| TRM (section 13) | 0.1 / 52.4 / 61.4 / 65.8 / **68.9** | 24.5 | 1606 s |
+| GRAM, our KL (section 13, with the pooled head etc.) | 0 / 0 / 0 / 0.3 / **0** | 74.7 | 5006 s |
+| GRAM, the official KL strength | 0 / 22.7 / 49.5 / 61.2 / **66.2** (still rising) | 32.3 (KL 0.014) | 3776 s |
+
+Reading: one config value takes the faithful GRAM from 0 to 66.2% on held-out N-Queens, level with TRM (68.9) and
+with the paper's TRM (66.8 +- 5.6), the posterior no longer memorising (train exact 32 vs 97 / 75). The paper's
+GRAM is 99.5 there at ~27x the samples and hidden 512; whether the crossover appears at our scale with more steps
+is open (the curve has not flattened). The reduction is now a config option, `kl_reduction: mean | sum`
+(commit below), so the paper's recipe is `kl_reduction: sum, kl_strength: 0.07` rather than a token-count-scaled
+beta; the default stays `mean` so every earlier number keeps its meaning.
+
+## 17. Where the discrepancy investigation leaves things
+
+- **Why our GRAM scored 0 on N-Queens**: the KL was ~110x too weak per token (a token mean x 0.05 against the
+  official token sum x 0.07), so the label-conditioned posterior could carry the answer at almost no cost and the
+  prior never had to learn. The `gram-posterior-fixes` branch's "fix 1" introduced the mean as a correction of a
+  "64x too strong" KL; it was the official strength. Both public re-implementations use the mean; ad3002's works
+  on N-Queens only because its posterior is label-blind there.
+- **What the fix restores**: held-out N-Queens 0 -> 66.2 at 10k steps (TRM 68.9), with the faithful per-position
+  posterior; the posterior-on-no-grad-cycles variant and the content-token beta (4.48) behave the same at 3k.
+- **What it means for the rest of this file**: the Sudoku ladder (sections 6-11) was run on a GRAM trained with
+  the weak KL; its single-sample / vote / best-of-N / search numbers stand as measured, but the model under them
+  was partly shortcutting too (train exact 100% there), so the ladder should be repeated on a `kl_reduction: sum`
+  checkpoint before any number is quoted as GRAM's. Not done in this session.
+- Still open: the paper's 99.5 needs its scale or budget; the vote rung on the 66.2 checkpoint (next); a value
+  head trained alongside (`lprm_weight`) at the official KL, since best-of-N and the search need one.
