@@ -23,7 +23,9 @@ checkpoint_list:
       arch.mcts_horizon: ${horizon}
       arch.mcts_c_puct: 1.25
       arch.mcts_impl: cpp
-      arch.search_compile: true
+      # the compiled round is specialised per rollout length: 3 shapes at the step horizon, about a dozen at the full
+      # horizon (up to 11 updates each), which took over 10 min of compiles before the first batch; eager is faster here
+      arch.search_compile: false
       # training-only keys TreeRMInner / TreeGRAMInner read or validate at construction
       arch.mcts_simulations: 8
       arch.value_bootstrap_weight: 0.0
