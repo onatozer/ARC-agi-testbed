@@ -11,6 +11,7 @@ loss:
   loss_type: stablemax_cross_entropy
   
 
+posterior_y_pool: position # how the label enters the posterior: position = embedded per position (the paper's reading; the label-carrying posterior that shortcuts multi-solution tasks); mean = its embedding averaged over the positions, as ad3002/gram defaults to (label-blind on N-Queens, whose boards all hold 8 queens; REPORTS_GRAM_TTS.md section 15)
 kl_grad_prior: 0.8 # KL balancing alpha: share of the KL gradient that trains the prior (paper App. B.2)
 kl_strength: 0.05 # KL weight beta; the paper uses 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2, 0.07 N-Queens 8x8
 # No halt head: every puzzle runs halt_max_steps supervision steps, so halt_exploration_prob / act_inference / halt_* don't apply

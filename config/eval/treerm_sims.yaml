@@ -17,6 +17,7 @@ checkpoint_list:
       arch.prior_target: visits
       arch.lprm_pool: first
       arch.mcts_horizon: step
+      arch.posterior_y_pool: position
 param_iter:
   arch.eval_mcts_simulations: ${sims}
   arch.eval_pick: ${pick}

@@ -33,7 +33,7 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
@@ -56,6 +56,26 @@ def test_lprm_prior_rollouts_train_only_the_value_head_on_prior_draws():
     loss_off.backward()
     assert metrics["kl_loss"] > metrics_off["kl_loss"]
     assert not torch.equal(v_grad, model_off.model.inner.v_head.weight.grad)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_posterior_y_pool_mean_is_blind_to_where_the_label_tokens_are():
+    model, batch = _gram_head(posterior_y_pool="mean")
+    inner = model.model.inner
+    u_t = torch.randn(2, inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
+    y = batch["labels"][:2]
+    y_perm = y[:, torch.randperm(y.shape[1], generator=torch.Generator().manual_seed(1))]  # the same token multiset, moved
+    model_pos, _ = _gram_head()
+    with torch.no_grad():
+        for m in (model, model_pos):  # the Gaussian head starts at zero weights (mu = 0 whatever the input)
+            torch.nn.init.normal_(m.model.inner.posterior_head.head.to_stats.weight, std=0.1)
+        mu, var = inner.posterior_head(u_t, y)
+        mu2, var2 = inner.posterior_head(u_t, y_perm)
+        torch.testing.assert_close(mu, mu2)
+        torch.testing.assert_close(var, var2)
+        mu, _ = model_pos.model.inner.posterior_head(u_t, y)
+        mu2, _ = model_pos.model.inner.posterior_head(u_t, y_perm)
+    assert not torch.equal(mu, mu2)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")

@@ -47,9 +47,12 @@ class GaussianHead(nn.Module):
         return mu, var
 
 class PosteriorHead(nn.Module):
-    def __init__(self, hidden_size: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype, expansion: float = 4):
+    def __init__(self, hidden_size: int, vocab_size: int, puzzle_emb_len: int, dtype: torch.dtype, expansion: float = 4, y_pool: str = "position"):
         super().__init__()
         self.puzzle_emb_len = puzzle_emb_len
+        if y_pool not in ("position", "mean"):
+            raise ValueError(f"posterior_y_pool must be 'position' or 'mean', got {y_pool!r}.")
+        self.y_pool = y_pool
         embed_std = 1.0 / math.sqrt(hidden_size)
         self.embedding = CastedEmbedding(vocab_size, hidden_size, embed_std, dtype)
 
@@ -60,6 +63,11 @@ class PosteriorHead(nn.Module):
         # Ignored label positions have no target token, so they get the pad token (0)
         y = torch.where(y == IGNORE_LABEL_ID, 0, y)
         y = self.embedding(y.to(torch.int32)) * math.sqrt(u_t.shape[-1])
+        if self.y_pool == "mean":
+            # ad3002/gram's default: the label enters as one vector, its embedding averaged over the positions, at
+            # every position. On a task whose labels all share one token multiset (N-Queens: 8 queens, 56 empties)
+            # that vector is the same for every puzzle, so the posterior cannot carry the label (REPORTS_GRAM_TTS.md)
+            y = y.mean(dim=1, keepdim=True).expand(-1, y.shape[1], -1)
         # The puzzle embedding prefix has no target, so its slots are zeros
         y = F.pad(y, (0, 0, self.puzzle_emb_len, 0))
 
@@ -81,6 +89,7 @@ class GRAM_Inner(InnerNetwork):
             puzzle_emb_len=self.config.puzzle_emb_len,
             dtype=self.forward_dtype,
             expansion=self.config.expansion,
+            y_pool=self.config.posterior_y_pool,
         )
         # LPRM value head (paper App. A.2): predicts the prediction's accuracy from the first token of z_H
         self.v_head = CastedLinear(self.config.hidden_size, 1, bias=True)

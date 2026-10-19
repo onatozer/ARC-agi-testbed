@@ -34,6 +34,7 @@ checkpoint_list:
       arch.prior_target: none
       # a GRAM checkpoint trained before lprm_pool existed read the first token; newer ones carry their own value
       arch.lprm_pool: ${lprm_pool}
+      arch.posterior_y_pool: position # constructed then deleted by TreeGRAM; any value
 param_iter:
   arch.halt_max_steps: ${depth}
   arch.eval_mcts_simulations: ${sims}

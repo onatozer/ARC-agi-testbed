@@ -1,0 +1,4 @@
+# ad3002/gram's label-blind posterior (the label's embedding averaged over the positions) on held-out N-Queens:
+# plain GRAM, and GRAM with the pooled LPRM head + final target + prior sample fraction + bootstrap; sampled guidance at eval
+gram_ypool      arch=gram +arch.eval_prior_mean=false arch.posterior_y_pool=mean
+gram_ypool_pf   arch=gram +arch.eval_prior_mean=false arch.posterior_y_pool=mean arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean arch.lprm_target=final
