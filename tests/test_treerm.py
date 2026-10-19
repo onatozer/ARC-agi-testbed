@@ -18,7 +18,7 @@ def _treerm_head(**overrides):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
         "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05,
-        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax", "lprm_pool": "first", "lprm_target": "step", "lprm_prior_rollouts": 0, "lprm_rollout_cycles": "grad", **overrides,
+        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax", "mcts_horizon": "step", "lprm_pool": "first", "lprm_target": "step", "lprm_prior_rollouts": 0, "lprm_rollout_cycles": "grad", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -245,6 +245,30 @@ def test_eval_pick_is_one_hot_and_argmax_takes_the_most_visited(pick):
     for key in ("search/pick_ce_regret", "search/pick_is_best", "search/cand_ce_gap", "search/value_rank_corr"):
         assert key in info and torch.isfinite(info[key]).all()
     assert (info["search/pick_ce_regret"] >= 0).all() and (info["search/value_rank_corr"].abs() <= 1 + 1e-5).all()
+
+
+@needs_cuda
+@pytest.mark.parametrize("horizon", ["step", "full"])
+def test_full_horizon_search_rolls_through_the_steps_left(horizon):
+    """With mcts_horizon=full the eval search's allowed depth grows by H_cycles per supervision step left (the outer
+    model passes steps_left); training and the step horizon keep the depth within the step."""
+    model, batch = _treerm_head(mcts_horizon=horizon)
+    inner = model.model.inner
+    seen = []
+    original = inner._search
+    inner._search = lambda cand, prior, z_L, x, y, remaining: seen.append(remaining[0]) or original(cand, prior, z_L, x, y, remaining)
+    model.eval()
+    with torch.inference_mode():
+        carry = model.initial_carry(batch)
+        for _ in range(2):  # steps 0 and 1 of halt_max_steps 4: 3 and 2 steps left
+            carry, _ = model.model(carry=carry, batch=batch)
+    H = inner.config.H_cycles
+    extra = [3 * H, 3 * H, 2 * H, 2 * H] if horizon == "full" else [0, 0, 0, 0]  # H_cycles 2: two searches per step
+    assert seen == [H + extra[0], H - 1 + extra[1], H + extra[2], H - 1 + extra[3]]
+    model.train()
+    seen.clear()
+    model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert seen == [1]  # training searches on the grad cycle only (the last one) and never rolls past the step
 
 
 # Candidate training (REPORTS_CANDIDATES.md): without a candidate loss only the picked candidate gets a gradient

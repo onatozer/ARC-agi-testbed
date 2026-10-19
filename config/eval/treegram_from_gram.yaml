@@ -8,6 +8,7 @@ sims: [4, 8, 16]
 depth: [8, 16]
 seed: 0
 lprm_pool: first # must match the checkpoint's training (its config carries it from gram.yaml onward)
+horizon: step # step: a simulation ends with the supervision step; full: it rolls through every remaining step (4x the passes per simulation at the first step)
 checkpoint: null
 # arch.loss.name is resolved from the checkpoint's inference_name before init_override runs (evaluate.py
 # _base_config), so the TreeRM eval head (search + pick diagnostics) is named here
@@ -19,6 +20,7 @@ checkpoint_list:
       arch.num_candidates: ${k}
       arch.eval_mcts_simulations: 8 # swept by param_iter
       arch.eval_pick: argmax
+      arch.mcts_horizon: ${horizon}
       arch.mcts_c_puct: 1.25
       arch.mcts_impl: cpp
       arch.search_compile: true
@@ -33,7 +35,7 @@ checkpoint_list:
 param_iter:
   arch.halt_max_steps: ${depth}
   arch.eval_mcts_simulations: ${sims}
-suffix: tg_k${k}_s${seed}
+suffix: tg_k${k}_${horizon}_s${seed}
 global_batch_size: 250
 max_eval_steps: null
 force_rerun: true

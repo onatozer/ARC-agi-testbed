@@ -25,6 +25,7 @@ mcts_simulations: 8 # simulations per puzzle per z_H update in training, K of th
 eval_mcts_simulations: 16 # simulations per search at eval; null = mcts_simulations. Pays once the value head is bootstrapped
 eval_pick: argmax # which candidate a search picks at eval: argmax = the most visited; sample = a draw from the visit distribution, as in training (its K/sims uniform floor made a larger K a more random pick: REPORTS_SCALING.md)
 mcts_c_puct: 1.25 # PUCT exploration constant (Q is min-max normalised per tree)
+mcts_horizon: step # how far an eval simulation rolls a candidate out before the value head scores it: step = to the end of this supervision step (training always; the KL needs it); full = through every remaining supervision step, so the search values the trajectory's end (REPORTS_GRAM_TTS.md section 10)
 value_bootstrap_weight: 0.5 # train the LPRM value head on the training search's rollouts: MSE(v(leaf z_H), rollout token accuracy), as in AlphaZero
 
 # ---- Runtime: exact, speed and memory only (REPORTS_MCTS.md) ----

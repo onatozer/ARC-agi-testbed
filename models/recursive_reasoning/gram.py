@@ -152,7 +152,8 @@ class GRAM_Inner(InnerNetwork):
         for _ in range(remaining):
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+            u = self.L_level(z_H, z_L, **seq_dict)
+            z_H = u + self.prior_head(u)[0]  # as mean inference (and TreeGRAM's rollouts) continue a trajectory
         z = rms_norm(z_H, self.config.rms_norm_eps)
         logits = self.lm_head(z[:, self.config.puzzle_emb_len :] if self.config.puzzle_emb_ndim != 0 else z)
         mask = y != IGNORE_LABEL_ID
@@ -294,7 +295,8 @@ class GRAM(TRMModel):
 
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
         prev_latent = inner_carry
-        inner_carry, fpass_info = self.inner(inner_carry, current_data)
+        # steps_left: the supervision steps after this one (TreeRM's full-horizon eval search rolls through them)
+        inner_carry, fpass_info = self.inner(inner_carry, {**current_data, "steps_left": self.config.halt_max_steps - 1 - steps})
         if self.training and torch.is_grad_enabled() and self.config.lprm_target == "final":
             fpass_info["lprm_target"] = self._final_correct(inner_carry, current_data, fpass_info["logits"], steps)
 

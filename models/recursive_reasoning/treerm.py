@@ -75,6 +75,9 @@ class TreeRMInner(GRAM_Inner):
             raise ValueError(f"candidate_loss_eps must be in [0, 1], got {self.config.candidate_loss_eps!r}.")
         if self.config.eval_pick not in ("argmax", "sample"):
             raise ValueError(f"eval_pick must be 'argmax' or 'sample', got {self.config.eval_pick!r}.")
+        if self.config.mcts_horizon not in ("step", "full"):
+            raise ValueError(f"mcts_horizon must be 'step' or 'full', got {self.config.mcts_horizon!r}.")
+        self._rollout_steps_left = 0  # supervision steps a simulation rolls through after this one (mcts_horizon=full, eval)
         self.candidate_scorer = CandidateScorer(
             hidden_size=self.config.hidden_size,
             num_heads=self.config.num_heads,
@@ -111,6 +114,18 @@ class TreeRMInner(GRAM_Inner):
     def _prior_logits(self, u_t: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
         """The search prior over the candidates, as logits [B, K]: the scorer's."""
         return self.candidate_scorer(u_t, cand, self._cos_sin())
+
+    def _rollout_next(self, u_t: torch.Tensor) -> torch.Tensor:
+        """A rollout's next z_H from the plain update u_t: the plain update itself (TreeGRAM adds the prior's mean)."""
+        return u_t
+
+    def _rollout_boundary(self, z_H: torch.Tensor, left: torch.Tensor, steps_left: int) -> torch.Tensor:
+        """With mcts_horizon=full a rollout crosses supervision steps: rms-norm the state where inference does, i.e.
+        the rows with `left` updates to go at a step boundary (a positive multiple of H_cycles within the steps left)."""
+        if not steps_left:
+            return z_H
+        boundary = (left > 0) & (left <= self.config.H_cycles * steps_left) & (left % self.config.H_cycles == 0)
+        return torch.where(boundary[:, None, None], rms_norm(z_H, self.config.rms_norm_eps), z_H)
 
     # A search state is (batch row, z_H [S, H], z_L [S, H]); the callbacks below batch over the leaves of every tree
 
@@ -168,13 +183,13 @@ class TreeRMInner(GRAM_Inner):
                 break
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+            z_H = self._rollout_boundary(self._rollout_next(self.L_level(z_H, z_L, **seq_dict)), depths_t - (n_updates + 1), self._rollout_steps_left)
 
         if self.training and self.config.value_bootstrap_weight > 0:
             self._bootstrap.append((leaf_token, targets))
         return values.tolist()
 
-    def _step_core(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, depths: torch.Tensor, max_depth: int):
+    def _step_core(self, z_H: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, depths: torch.Tensor, max_depth: int, steps_left: int = 0):
         """The fixed-shape tensor work of one fused search round over n leaves: max_depth plain TRM updates, each
         leaf's value at its own depth (computed for every row at every stage and selected by depth, so nothing is
         data-dependent), and from the first update the K candidates and their prior for every leaf. Returns
@@ -198,7 +213,7 @@ class TreeRMInner(GRAM_Inner):
                 # The transition: the rollout's first update is exactly the expand's u_t
                 cand = self._candidates(z_L, u_t)
                 priors, z_L_next = self._prior_logits(u_t, cand).softmax(dim=-1), z_L
-            z_H = u_t
+            z_H = self._rollout_boundary(self._rollout_next(u_t), depths - (n_updates + 1), steps_left)
         return values, targets, leaf_token, cand, priors, z_L_next
 
     # A fused search's state is (batch row, arena index): the latents of every node of this search live in two
@@ -236,7 +251,7 @@ class TreeRMInner(GRAM_Inner):
             pad = SEARCH_BATCH_QUANTUM - n % SEARCH_BATCH_QUANTUM
             rows, indices, padded = rows + rows[:1] * pad, indices + indices[:1] * pad, depths + depths[:1] * pad
         ids = torch.tensor(indices, device=arena_H.device)
-        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(padded))
+        args = (arena_H[ids], arena_L[ids], x[rows], y[rows], torch.tensor(padded, device=arena_H.device), max(padded), self._rollout_steps_left)
         outputs = _compiled_step_core()(self, *args) if self.config.search_compile else self._step_core(*args)
         values, targets, leaf_token, cand, priors, z_L_next = (t[:n] if t is not None else None for t in outputs)
 
@@ -362,7 +377,7 @@ class TreeRMInner(GRAM_Inner):
         for _ in range(left - 1):
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+            z_H = self._rollout_next(self.L_level(z_H, z_L, **seq_dict))
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         mask = y != IGNORE_LABEL_ID
         ce = self.rollout_loss_fn(self._decode(z_H), y, valid_mask=mask).sum(dim=-1) / mask.sum(dim=-1).clamp_min(1)
@@ -429,6 +444,12 @@ class TreeRMInner(GRAM_Inner):
         batch_size = z_H.shape[0]
         diagnostics: Dict[str, torch.Tensor] = {}
         counts: Dict[str, int] = {}
+        # mcts_horizon=full at eval: a simulation also rolls through the supervision steps after this one (the outer
+        # model passes steps_left; a batch's rows share the step at eval), so the search values the trajectory's end
+        self._rollout_steps_left = 0
+        if not self.training and self.config.mcts_horizon == "full" and "steps_left" in batch:
+            self._rollout_steps_left = int(batch["steps_left"].max().item())
+        horizon = self._rollout_steps_left * self.config.H_cycles
 
         def accumulate(diag: Dict[str, torch.Tensor]) -> None:
             # Each key is averaged over the cycles that report it: the search diagnostics over every cycle, the
@@ -444,7 +465,7 @@ class TreeRMInner(GRAM_Inner):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
                 u_t = self.L_level(z_H, z_L, **seq_dict)
-                z_H, _, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle] * batch_size)
+                z_H, _, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle + horizon] * batch_size)
                 accumulate(diag)
 
         # The last grad_cycles cycles carry the gradient; each pays the KL of its search's posterior from the prior
@@ -454,7 +475,7 @@ class TreeRMInner(GRAM_Inner):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
-            z_H, guidance_loss, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle] * batch_size)
+            z_H, guidance_loss, diag = self._mcts_guidance(u_t, z_L, x, y, [self.config.H_cycles - cycle + horizon] * batch_size)
             kl_loss += guidance_loss
             accumulate(diag)
 

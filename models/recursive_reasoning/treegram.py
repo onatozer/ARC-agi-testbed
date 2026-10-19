@@ -28,6 +28,11 @@ class TreeGRAMInner(TreeRMInner):
     def _prior_logits(self, u_t: torch.Tensor, cand: torch.Tensor) -> torch.Tensor:
         return torch.zeros(cand.shape[:2], device=cand.device, dtype=torch.float32)
 
+    def _rollout_next(self, u_t: torch.Tensor) -> torch.Tensor:
+        """A rollout continues as GRAM's mean inference does: each update takes the prior's mean guidance."""
+        mu, _ = self.prior_head(u_t)
+        return u_t + mu
+
     def _prior_loss(self, u_t: torch.Tensor, cand: torch.Tensor, prior_logits: torch.Tensor, post_logits: torch.Tensor) -> torch.Tensor:
         """prior_target=visits: pull the prior toward the draws the search favoured, weighted by their visit share
         (Sampled MuZero's policy target for a sampled continuous action space). A draw is the offset eps_k = cand_k -

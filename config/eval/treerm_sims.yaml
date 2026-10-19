@@ -16,6 +16,7 @@ checkpoint_list:
       arch.eval_pick: argmax
       arch.prior_target: visits
       arch.lprm_pool: first
+      arch.mcts_horizon: step
 param_iter:
   arch.eval_mcts_simulations: ${sims}
   arch.eval_pick: ${pick}
