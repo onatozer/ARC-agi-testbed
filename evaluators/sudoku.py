@@ -41,6 +41,15 @@ class Sudoku:
                   for r in range(0, N, self.box_rows) for c in range(0, N, self.box_cols)]
         return sum(set(u.tolist()) == digits for u in units)
 
+    def valid_rows(self, inputs: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+        """[B] bool: each prediction is a valid solution of its puzzle (every unit a permutation, every clue kept), for
+        the N-copy vote / best-of-N of evaluators.eval_fn on puzzles with several solutions."""
+        N = self.grid_size
+        out = []
+        for inp, pred in zip(inputs.cpu().numpy() - 1, preds.cpu().numpy() - 1):
+            out.append(self._units_satisfied(pred.reshape(N, N)) == 3 * N and not np.any((inp != 0) & (pred != inp)))
+        return torch.tensor(out, dtype=torch.bool, device=preds.device)
+
     def update_batch(self, batch: Dict[str, torch.Tensor], preds: Dict[str, torch.Tensor]):
         labels = batch["labels"].cpu().numpy()
         # Batch padding rows have labels that are all IGNORE_LABEL_ID

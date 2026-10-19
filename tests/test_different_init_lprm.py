@@ -17,6 +17,21 @@ def test_lprm_best_of_n_picks_the_highest_scored_copy():
     assert metrics["different_init/majority_vote_acc"] == 0.5  # no copy repeats: ties go to the first seen (right for puzzle 1 only)
 
 
+def test_validity_scored_vote_and_best_of_n():
+    labels = torch.tensor([[1, 2], [3, 4]])
+    # puzzle 0: copies (label, other valid, other valid): vote ties -> first seen = label; puzzle 1: (invalid, invalid, valid)
+    preds = torch.tensor([[1, 2], [2, 1], [2, 1], [0, 0], [0, 0], [4, 3]])
+    valid = torch.tensor([True, True, True, False, False, True])
+    scores = torch.tensor([0.1, 0.9, 0.2, 0.9, 0.1, 0.2])  # best-of-N: puzzle 0 picks a valid non-label, puzzle 1 an invalid
+    state = _di_state(torch.device("cpu"))
+    _update_di(state, preds, labels, 3, scores, valid)
+    m = _finish_di(state, 3, rank=0, world_size=1, group=None)
+    assert m["different_init/majority_vote_acc"] == 0.0  # puzzle 0's winner is the repeated non-label copy, puzzle 1's an invalid one
+    assert m["different_init/majority_valid"] == 0.5
+    assert m["different_init/lprm_best_acc"] == 0.0 and m["different_init/lprm_best_valid"] == 0.5
+    assert m["different_init/any_valid"] == 1.0 and abs(m["different_init/copy_valid"] - (1.0 + 1 / 3) / 2) < 1e-6
+
+
 def test_lprm_best_of_n_without_scores_stays_zero():
     labels = torch.tensor([[1, 2]])
     preds = torch.tensor([[1, 2], [1, 2]])
