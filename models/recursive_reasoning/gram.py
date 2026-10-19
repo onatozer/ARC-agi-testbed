@@ -89,6 +89,19 @@ class GRAM_Inner(InnerNetwork):
 
         if not 1 <= self.config.grad_cycles <= self.config.H_cycles:
             raise ValueError(f"grad_cycles must be in [1, H_cycles={self.config.H_cycles}], got {self.config.grad_cycles}.")
+        for key, allowed in (("lprm_pool", ("first", "mean")), ("lprm_rollout_cycles", ("grad", "all")), ("lprm_target", ("step", "final"))):
+            if getattr(self.config, key) not in allowed:
+                raise ValueError(f"{key} must be one of {allowed}, got {getattr(self.config, key)!r}.")
+
+    def _lprm_token(self, z: torch.Tensor) -> torch.Tensor:
+        """What the LPRM head reads of an rms-normed state [B, S, H] -> [B, H]: the first token (the paper), or the
+        mean over tokens (lprm_pool=mean): a draw's noise on the other tokens is invisible to the first one until an
+        update has mixed them, and the search reads the head on the draw itself at a step's last cycle."""
+        return z.mean(dim=1) if self.config.lprm_pool == "mean" else z[:, 0]
+
+    def _lprm_value(self, z: torch.Tensor) -> torch.Tensor:
+        """The LPRM head's prediction [B] of a rms-normed state's correctness."""
+        return torch.sigmoid(self.v_head(self._lprm_token(z)).to(torch.float32)).squeeze(-1)
 
     def _guidance(self, u_t: torch.Tensor, y: torch.Tensor, use_posterior: bool,
                   prior_rows: torch.Tensor | None = None) -> Tuple[torch.Tensor, torch.Tensor | int]:
@@ -123,22 +136,28 @@ class GRAM_Inner(InnerNetwork):
         eps = mu_prior + torch.randn_like(u_t) * var_prior.sqrt()
         return eps, 0
 
-    def _lprm_rollout_loss(self, u_t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Value bootstrapping for the LPRM head (TreeRM's, with the prior's draws as the rollouts): K draws of eps from
-        the prior at u_t, each decoded without gradient, and the head trained to predict each draw's token accuracy
-        from the draw's first token. The loss head only ever shows the head posterior-guided states, which is not
-        what best-of-N or a search over prior draws asks it to rank. Batch-summed, averaged over the K draws, weighted
-        by value_bootstrap_weight."""
+    @torch.no_grad()
+    def _lprm_rollout_pairs(self, u_t: torch.Tensor, z_L: torch.Tensor, x: torch.Tensor, y: torch.Tensor, remaining: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Value bootstrapping for the LPRM head (TreeRM's, with the prior's draws as the rollouts): K draws of eps
+        from the prior at u_t, each rolled out exactly as the search rolls a draw out (plain updates through the step's
+        `remaining` cycles) and scored by its token accuracy. Returns (what the head reads of each leaf [B*K, H],
+        targets [B*K]); the head is trained on them with gradient in forward. The loss head alone only ever shows the
+        head posterior-guided states, which is not what best-of-N or a search over prior draws asks it to rank."""
         K = self.config.lprm_prior_rollouts
-        with torch.no_grad():
-            mu, var = self.prior_head(u_t)
-            noise = torch.randn((u_t.shape[0], K) + u_t.shape[1:], device=u_t.device, dtype=u_t.dtype)
-            z = rms_norm(u_t.unsqueeze(1) + mu.unsqueeze(1) + var.sqrt().unsqueeze(1) * noise, self.config.rms_norm_eps)  # [B, K, S, H]
-            logits = self.lm_head(z[:, :, self.config.puzzle_emb_len :] if self.config.puzzle_emb_ndim != 0 else z)
-            mask = y != IGNORE_LABEL_ID
-            acc = ((logits.argmax(-1) == y.unsqueeze(1)) & mask.unsqueeze(1)).sum(-1) / mask.sum(-1, keepdim=True).clamp_min(1)  # [B, K]
-        predicted = torch.sigmoid(self.v_head(z[:, :, 0]).to(torch.float32)).squeeze(-1)
-        return F.mse_loss(predicted, acc.float(), reduction="sum") / K * self.config.value_bootstrap_weight
+        mu, var = self.prior_head(u_t)
+        noise = torch.randn((u_t.shape[0], K) + u_t.shape[1:], device=u_t.device, dtype=u_t.dtype)
+        z_H = (u_t.unsqueeze(1) + mu.unsqueeze(1) + var.sqrt().unsqueeze(1) * noise).flatten(0, 1)  # [B*K, S, H]
+        z_L, x, y = (t.repeat_interleave(K, dim=0) for t in (z_L, x, y))
+        seq_dict = self._seq_dict()
+        for _ in range(remaining):
+            for _ in range(self.config.L_cycles):
+                z_L = self.L_level(z_L, z_H + x, **seq_dict)
+            z_H = self.L_level(z_H, z_L, **seq_dict)
+        z = rms_norm(z_H, self.config.rms_norm_eps)
+        logits = self.lm_head(z[:, self.config.puzzle_emb_len :] if self.config.puzzle_emb_ndim != 0 else z)
+        mask = y != IGNORE_LABEL_ID
+        acc = ((logits.argmax(-1) == y) & mask).sum(-1) / mask.sum(-1).clamp_min(1)
+        return self._lprm_token(z), acc.float()
 
     def forward(self, carry: LatentCarry, batch: Dict[str, torch.Tensor]) -> Tuple[LatentCarry, dict]:
         z_H, z_L = carry.z_H, carry.z_L
@@ -155,13 +174,20 @@ class GRAM_Inner(InnerNetwork):
             else:
                 prior_rows = torch.rand(y.shape[0], device=y.device) < self.config.prior_sample_frac
 
+        # The LPRM bootstrap's draws: on the grad cycle, or on every cycle (lprm_rollout_cycles=all, where the search
+        # draws at eval), each scored at the end of the step; the head is trained on all of them below
+        bootstrap = self.training and torch.is_grad_enabled() and self.config.lprm_prior_rollouts
+        lprm_pairs = []
+
         # Run the recursion cycle for H_cycles - grad_cycles times without the gadient
         with torch.no_grad():
-            for _ in range(self.config.H_cycles - self.config.grad_cycles):
+            for cycle in range(self.config.H_cycles - self.config.grad_cycles):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
                 u_t = self.L_level(z_H, z_L, **seq_dict)
+                if bootstrap and self.config.lprm_rollout_cycles == "all":
+                    lprm_pairs.append(self._lprm_rollout_pairs(u_t, z_L, x, y, self.config.H_cycles - 1 - cycle))
 
                 # Change with the GRAM network is that now noise from added to the z_H at each iteration
                 # The posterior here pays no KL, so by default these cycles use the prior: otherwise y leaks into the trajectory for free
@@ -171,17 +197,23 @@ class GRAM_Inner(InnerNetwork):
 
         # The last grad_cycles cycles carry the gradient; each samples the posterior and pays its KL
         kl_loss = 0
-        for _ in range(self.config.grad_cycles):
+        for cycle in range(self.config.H_cycles - self.config.grad_cycles, self.config.H_cycles):
             for __ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
             u_t = self.L_level(z_H, z_L, **seq_dict)
             eps, guidance_loss = self._guidance(u_t, y, use_posterior=self.training, prior_rows=prior_rows)
             kl_loss += guidance_loss
-            if self.training and torch.is_grad_enabled() and self.config.lprm_prior_rollouts:
-                kl_loss = kl_loss + self._lprm_rollout_loss(u_t, y)
+            if bootstrap:
+                lprm_pairs.append(self._lprm_rollout_pairs(u_t, z_L, x, y, self.config.H_cycles - 1 - cycle))
 
             z_H = u_t + eps
+
+        if lprm_pairs:
+            # Batch-summed MSE, averaged over the K draws (cycles add), weighted like TreeRM's bootstrap
+            predicted = torch.sigmoid(self.v_head(torch.cat([t for t, _ in lprm_pairs])).to(torch.float32)).squeeze(-1)
+            targets = torch.cat([v for _, v in lprm_pairs])
+            kl_loss = kl_loss + F.mse_loss(predicted, targets, reduction="sum") / self.config.lprm_prior_rollouts * self.config.value_bootstrap_weight
 
         z_H = rms_norm(z_H, self.config.rms_norm_eps)
         
@@ -192,7 +224,7 @@ class GRAM_Inner(InnerNetwork):
             logits = self.lm_head(z_H).contiguous()
 
         info = {
-            "lprm_value": torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1),
+            "lprm_value": self._lprm_value(z_H),
             "logits": logits,
             "kl_loss": kl_loss,
         }
@@ -211,6 +243,27 @@ class GRAM(TRMModel):
     def initial_carry(self, batch: Dict[str, torch.Tensor]) -> ModelCarry:
         """TRMModel.initial_carry, with room in current_data for each puzzle's prior_traj flag (see forward)."""
         return super().initial_carry(self._with_prior_traj(batch))
+
+    @torch.compiler.disable
+    @torch.no_grad()
+    def _final_correct(self, inner_carry: LatentCarry, current_data: Dict[str, torch.Tensor], logits: torch.Tensor, steps: torch.Tensor) -> torch.Tensor:
+        """The paper's LPRM target (App. A.4): whether this puzzle's trajectory ends correct, [B] in {0, 1}. Each row's
+        remaining supervision steps are rolled out as inference runs them (the inner in eval mode: prior guidance,
+        no posterior, no bootstrap) and its final prediction's exact match is returned; a row on its last step
+        returns this step's."""
+        labels = current_data["labels"]
+        mask = labels != IGNORE_LABEL_ID
+        exact = lambda lg: ((lg.argmax(-1) == labels) | ~mask).all(dim=-1)
+        remaining = self.config.halt_max_steps - 1 - steps  # supervision steps after this one
+        final = exact(logits)
+        was_training = self.inner.training
+        self.inner.eval()
+        z = inner_carry
+        for i in range(1, int(remaining.max().item()) + 1):
+            z, info = self.inner(z, current_data)
+            final = torch.where(remaining >= i, exact(info["logits"]), final)
+        self.inner.train(was_training)
+        return final.float()
 
     def _with_prior_traj(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Adds prior_traj ([B] bool): whether a puzzle starting now runs its whole training trajectory on the prior's
@@ -242,6 +295,8 @@ class GRAM(TRMModel):
         steps = torch.where(reset, torch.zeros_like(carry.steps, device=device), carry.steps.to(device=device))
         prev_latent = inner_carry
         inner_carry, fpass_info = self.inner(inner_carry, current_data)
+        if self.training and torch.is_grad_enabled() and self.config.lprm_target == "final":
+            fpass_info["lprm_target"] = self._final_correct(inner_carry, current_data, fpass_info["logits"], steps)
 
         with torch.no_grad():
             # NFE = L_level (the shared block f) evaluations

@@ -104,9 +104,6 @@ class TreeRMInner(GRAM_Inner):
             return self.lm_head(z_H[:, self.config.puzzle_emb_len :]).contiguous()
         return self.lm_head(z_H).contiguous()
 
-    def _lprm_value(self, z_H: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.v_head(z_H[:, 0]).to(torch.float32)).squeeze(-1)
-
     def _candidates(self, z_L: torch.Tensor, u_t: torch.Tensor) -> torch.Tensor:
         """The K proposals for the new z_H: u_t plus a gated flag per slot."""
         return self.candidate_generator(z_L, u_t)
@@ -159,8 +156,8 @@ class TreeRMInner(GRAM_Inner):
         depths_t = torch.tensor(depths, device=z_H.device)
         values = torch.zeros(len(states), device=z_H.device)
         targets = torch.zeros(len(states), device=z_H.device)
-        # The value head reads the leaf's own state (first token, rms-normed as in forward); the rollout gives its target
-        leaf_token = rms_norm(z_H, self.config.rms_norm_eps)[:, 0]
+        # The value head reads the leaf's own state (rms-normed as in forward); the rollout gives its target
+        leaf_token = self._lprm_token(rms_norm(z_H, self.config.rms_norm_eps))
 
         seq_dict = self._seq_dict()
         for n_updates in range(max(depths) + 1):
@@ -185,7 +182,7 @@ class TreeRMInner(GRAM_Inner):
         first update [n, S, H]); the last three are None when max_depth is 0. Compiled when search_compile is on."""
         values = torch.zeros(z_H.shape[0], device=z_H.device)
         targets = torch.zeros(z_H.shape[0], device=z_H.device)
-        leaf_token = rms_norm(z_H, self.config.rms_norm_eps)[:, 0]
+        leaf_token = self._lprm_token(rms_norm(z_H, self.config.rms_norm_eps))
         cand = priors = z_L_next = None
         seq_dict = self._seq_dict()
         for n_updates in range(max_depth + 1):

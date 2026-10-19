@@ -15,6 +15,7 @@ checkpoint_list:
       arch.mcts_impl: cpp # every impl makes the same search decisions (tests/test_mcts_contract.py)
       arch.eval_pick: argmax
       arch.prior_target: visits
+      arch.lprm_pool: first
 param_iter:
   arch.eval_mcts_simulations: ${sims}
   arch.eval_pick: ${pick}

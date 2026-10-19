@@ -7,6 +7,7 @@ k: 4
 sims: [4, 8, 16]
 depth: [8, 16]
 seed: 0
+lprm_pool: first # must match the checkpoint's training (its config carries it from gram.yaml onward)
 checkpoint: null
 # arch.loss.name is resolved from the checkpoint's inference_name before init_override runs (evaluate.py
 # _base_config), so the TreeRM eval head (search + pick diagnostics) is named here
@@ -27,6 +28,8 @@ checkpoint_list:
       arch.candidate_loss: none
       arch.candidate_loss_eps: 0.05
       arch.prior_target: none
+      # a GRAM checkpoint trained before lprm_pool existed read the first token; newer ones carry their own value
+      arch.lprm_pool: ${lprm_pool}
 param_iter:
   arch.halt_max_steps: ${depth}
   arch.eval_mcts_simulations: ${sims}
