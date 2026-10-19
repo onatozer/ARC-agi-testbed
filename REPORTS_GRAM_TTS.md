@@ -207,3 +207,36 @@ reading it as a cost. A head that ranks draws needs more than this target: the d
 rms-norm is a thin view of a 16-token state, and token accuracy of the draw itself is a noisy label for a 4-step
 trajectory's outcome; the paper's target (final correctness from every intermediate state) or a head over the
 whole state are the next things to try, neither built.
+
+## 9. Three changes to the LPRM head (user, 2026-10-18 night): pooled read-out, draws on every cycle, final target
+
+Built (commit 308eba7), each behind a key on `arch` (gram.yaml): `lprm_pool: mean` (the head reads the mean over
+tokens of the rms-normed state instead of its first token, through one `_lprm_token` / `_lprm_value` that the loss
+head, the bootstrap, TreeRM's search leaves and the pick diagnostics all use; at a step's last cycle the search
+reads the head on the draw itself, whose noise on the other tokens the first token cannot see);
+`lprm_rollout_cycles: all` (the section 8 bootstrap draws K prior draws on every cycle, each rolled out with plain
+updates to the end of the step, the search's rollout policy, instead of on the grad cycle only); `lprm_target:
+final` (the loss head regresses the value onto the trajectory's final correctness, the paper's App. A.4 target:
+each row's remaining supervision steps rolled out without gradient as inference runs them, `GRAM._final_correct`,
+instead of this step's exact match). All on top of section 8's run (frac 0.25, bootstrap K=4); unique 4x4 build,
+5000 steps, seed 0; the ladder's width rung with draws-only copies.
+
+| run | wall | single sample | vote N=4 / 8 / 16 | LPRM best-of-4 / 8 / 16 | any of 16 |
+|---|---|---|---|---|---|
+| section 8 (bootstrap, first token) | 427 s | 87.9 / 88.5 | 89.3 / 91.3 / 91.5 | 86.7 / 88.4 / 85.8 | 98.7 |
+| + `lprm_pool: mean` | 1107 s | 92.3 / 92.5 | 94.9 / 95.8 / 96.0 | 96.6 / 97.4 / 97.5 | 99.0 |
+| + pool + `lprm_target: final` | 646 s | **94.0 / 92.9** | 96.0 / 95.9 / 96.6 | 97.4 / **98.8** / 98.3 | 99.4 |
+| + pool + `lprm_rollout_cycles: all` | 1325 s | 88.9 / 89.6 | 92.0 / 93.4 / 93.3 | 87.8 / 87.5 / 85.2 | 98.5 |
+| all three | 979 s | 86.9 / 87.5 | 89.5 / 92.0 / 92.0 | 94.4 / 96.7 / 97.7 | 99.4 |
+
+(depth 8 / depth 16 for the single sample; the N columns are depth 8, depth 16 within 0.7.)
+
+Reading:
+1. **The pooled read-out is the fix.** With the head reading every token, LPRM best-of-N goes from below a single
+   sample to 97.5% at N=16, 1.5-2 pts above the vote and within 1.5 of the any-correct ceiling. The single-sample
+   model also gains 4-5 pts (92.3 vs 87.9): the pooled value loss is a better auxiliary signal for the backbone.
+2. **The final-correctness target adds on top**: single sample 94.0, best-of-8 98.8, 0.6 under its ceiling, the
+   best numbers of the loop. The paper defined this target and never used it.
+3. **Draws on every cycle hurt** (single sample -3, best-of-N back below the vote): rolled-out depth-1 and depth-2
+   states mixed with depth-0 draws under one target confuse the head and the backbone, at 2.5x the wall; dropped.
+4. The search rung failed on every checkpoint (exit 66, below) and is rerun in section 10.
