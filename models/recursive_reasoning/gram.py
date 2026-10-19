@@ -224,8 +224,12 @@ class GRAM_Inner(InnerNetwork):
         else:
             logits = self.lm_head(z_H).contiguous()
 
+        lprm_value = self._lprm_value(z_H)
         info = {
-            "lprm_value": self._lprm_value(z_H),
+            "lprm_value": lprm_value,
+            # No halt head: the LPRM value stands in for ACT's halt logit where the evaluators want a confidence (the
+            # ARC vote's tie-break requires it)
+            "q_halt_logits": torch.logit(lprm_value.clamp(1e-6, 1 - 1e-6)),
             "logits": logits,
             "kl_loss": kl_loss,
         }
