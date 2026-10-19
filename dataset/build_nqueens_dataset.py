@@ -284,6 +284,7 @@ def convert_subset(set_name: str, config: DictConfig, exclude: frozenset = froze
         # Add 1 to shift: 0 (empty) -> 1, 1 (queen) -> 2
         return arr + 1
     
+    raw_inputs = frozenset(np.asarray(inp).tobytes() for inp in results["inputs"])  # as _generate_subset sees them (0 / 1)
     results = {
         "inputs": _seq_to_numpy(results["inputs"]),
         "labels": _seq_to_numpy(results["labels"]),
@@ -328,7 +329,7 @@ def convert_subset(set_name: str, config: DictConfig, exclude: frozenset = froze
     print(f"  - Total groups: {metadata.total_groups}")
     print(f"  - Sequence length: {metadata.seq_len}")
     print(f"  - Vocabulary size: {metadata.vocab_size}")
-    return frozenset(np.asarray(inp).tobytes() for inp in results["inputs"])
+    return raw_inputs
 
 
 # NOTE: I'm pretty sure we're doing the seeding here incorrectly, don't think we're using the rng. On the other mind might not really matter
