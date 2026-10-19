@@ -486,3 +486,12 @@ beta; the default stays `mean` so every earlier number keeps its meaning.
   checkpoint before any number is quoted as GRAM's. Not done in this session.
 - Still open: the paper's 99.5 needs its scale or budget; the vote rung on the 66.2 checkpoint (next); a value
   head trained alongside (`lprm_weight`) at the official KL, since best-of-N and the search need one.
+
+The paper's width scaling on the 66.2 checkpoint (prior draws, draws-only copies, validity-scored; the LPRM head
+was not trained in this run, `lprm_weight=0`):
+
+| width | per copy valid | majority vote valid | LPRM best-of-N valid (untrained head) | any copy valid |
+|---|---|---|---|---|
+| 1 | 66.1 | | | |
+| 8 | 66.4 | **69.7** | 66.9 | 75.4 |
+| 16 | pending | | | |
