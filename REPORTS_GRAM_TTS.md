@@ -22,6 +22,8 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 8 | the search with the full horizon (`mcts_horizon: full`: a simulation rolls through the remaining supervision steps) | improves with budget for the first time: 95.2 / 97.9 / 97.2 at S = 4 / 8 / 16 (step horizon 95.2 / 93.7 / 92.3), above the vote (96.6 at N=16), just under best-of-N (98.8), at ~5x the passes per simulation |
 | 9 | MiniARC 5x5, GRAM pool+final, the ladder | GRAM is at the floor there (single sample 0.04% exact, pass@2 1.3 vs TRM 4.7); every rung 0.04-0.23%; not a usable tier for GRAM at this recipe |
 | 10 | held-out 8x8 N-Queens, 1-3 givens, 3k and 10k steps | TRM 23.7 -> 68.9 (= the paper's 66.8); GRAM pool+final 0 at both (75% train exact with the posterior; mean guidance 3.2; width 8 any-valid 0.4%): the shortcut; ladder skipped |
+| 11 | the discrepancy with the public and official GRAM code (sections 15-16) | ad3002: label-blind posterior (TRM + noise); pixeli99: same mechanism as ours at 33x the budget, its objective / precision / carry change nothing here; official: the KL is a token **sum** (~110x ours per token) |
+| 12 | GRAM with the official KL strength, held-out N-Queens, 10k steps | 0 -> **66.2%** (TRM 68.9, the paper's TRM 66.8), train exact 97 -> 32; vote +4 at N=8 / 16 (69.7 / 70.4), any-valid 75-77% |
 
 ## 1. Baseline (seed 0)
 
@@ -494,4 +496,9 @@ was not trained in this run, `lprm_weight=0`):
 |---|---|---|---|---|
 | 1 | 66.1 | | | |
 | 8 | 66.4 | **69.7** | 66.9 | 75.4 |
-| 16 | pending | | | |
+| 16 | 66.4 | **70.4** | 65.0 | 76.6 |
+
+Reading: on the restored GRAM the paper's width scaling works on N-Queens as it did on Sudoku: +3.6 / +4.2 valid
+boards by voting 8 / 16 prior draws, with 75-77% of puzzles solved by at least one draw (the paper: 99.5 -> 100 at
+N=20 with coverage 89.7). The 9-10 pt gap between the vote and any-valid is what a trained selector (LPRM best-of-N
+with the pooled head, or the full-horizon search) would have to close; this run trained no value head.
