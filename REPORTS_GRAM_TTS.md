@@ -19,6 +19,7 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 5 | value bootstrapping of the LPRM head on prior draws (`lprm_prior_rollouts: 4`), same ladder | rank correlation 0.05 -> 0.12; LPRM best-of-N still level with one sample (86-88), MCTS still 89 -> 86 with budget, vote +3.3 (91.5-91.8 at N=16); single sample 88 vs 89-91 |
 | 6 | pooled LPRM read-out (`lprm_pool: mean`) and the paper's final-correctness target (`lprm_target: final`) | the head ranks draws (corr 0.34 / 0.67); LPRM best-of-N 97.5 / 98.8 at N=16 / 8, above the vote (96) and within 1 of the any-correct ceiling; single sample 92-94; draws on every cycle hurt |
 | 7 | the search on those checkpoints | still falls with budget (95.2 -> 93.4 at K=4, 94.9 -> 92.0 at K=8) despite the head: 4-5 pts under best-of-N at equal passes; the step-wise criterion is myopic |
+| 8 | the search with the full horizon (`mcts_horizon: full`: a simulation rolls through the remaining supervision steps) | improves with budget for the first time: 95.2 / 97.9 / 97.2 at S = 4 / 8 / 16 (step horizon 95.2 / 93.7 / 92.3), above the vote (96.6 at N=16), just under best-of-N (98.8), at ~5x the passes per simulation |
 
 ## 1. Baseline (seed 0)
 
@@ -175,6 +176,8 @@ Reading:
   falls with budget (95 -> 92-93) even once its value head works, because its per-step choice is myopic. The paper's
   never-used selector, with a read-out over the whole state and its own final-correctness target, is the test-time
   scaling to use; the search as built is dominated at every budget.
+- Section 11 (later): with the value read at the trajectory's end (`mcts_horizon: full`) the search improves with
+  budget and beats the vote (97.9 at S=8), still just under best-of-N at several times the passes per simulation.
 - Single seed, one checkpoint per cell, one testbed near TRM's ceiling. Not run: more seeds, the multi-solution
   build (needs a validity-scored vote / best-of-N), augmentation and 10k steps, a search whose value is the
   trajectory's final correctness rather than the step's.
@@ -264,3 +267,29 @@ step, and those greedy choices compound into a worse final board than either tak
 search setting) or judging whole trajectories once by their final value (best-of-N). A search would need the
 trajectory's final correctness as its leaf value (the full horizon, at 4x the passes per simulation; stripped in
 #64 as `mcts_horizon=full`) to be asking the same question best-of-N asks. Not built.
+
+## 11. The full-horizon search (user, 2026-10-18 night)
+
+The step horizon was a training-time constraint (the KL needs the search inside the supervision step) that the eval
+search had inherited. `arch.mcts_horizon: full` (commit efe80cc): at eval the outer model passes the steps left, a
+simulation's allowed depth grows by H_cycles per step left, the state is rms-normed at the step boundaries as
+inference does, and the LPRM scores the trajectory's end. TreeGRAM's rollouts (and GRAM's bootstrap rollouts)
+now continue as mean inference does, u + mu per update, instead of plain updates. The compiled search round is
+specialised per rollout length, which the full horizon turns into a 10+ min compile storm (up to 11 updates, about
+a dozen shapes), so `treegram_from_gram.yaml` now runs the search eagerly.
+
+Sudoku pool+final checkpoint (section 9), K=4, depth 8, eval seed 0, eager search:
+
+| horizon | S=4 (= K: the mean is picked) | S=8 | S=16 | eval s at S=4 / 8 / 16 |
+|---|---|---|---|---|
+| step (mean-guided rollouts) | 95.2 | 93.7 | 92.3 | 60 / 9 / 9 |
+| full | 95.2 | **97.9** | 97.2 | 1925 / 126 / 235 |
+| for reference: vote N=8 / 16 | 95.9 / 96.6 | | | |
+| for reference: LPRM best-of-8 / 16 | 98.8 / 98.3 | | | |
+
+Reading: with the value read at the trajectory's end, the search improves with budget for the first time in this
+project (+2.7 from S=4 to S=8) and beats the vote at N=8 and N=16. It stays just under LPRM best-of-N, and each
+full-horizon simulation costs about five times the forward passes of a step-horizon one (a rollout of up to 11
+updates instead of at most 2), so at matched passes best-of-N remains the more efficient selector; the
+`pick_is_best` / `value_rank_corr` columns measure the step-level criterion and no longer describe this search. The
+S=4 wall (1925 s) is an outlier of unknown cause (a shared machine; the S=8 / S=16 rows took 126 / 235 s).
