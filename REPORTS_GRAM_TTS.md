@@ -17,6 +17,8 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 3 | anchor on held-out 4x4 Sudoku (the earlier branch's testbed), 5000 steps | multi-solution: GRAM 25.8 vs TRM 10.3 exact; unique-solution (clue 0.4): GRAM 89.2 vs TRM 99.5 |
 | 4 | the ladder from the unique-solution GRAM checkpoint | draws-only width: vote +3.3 at N=16 over N=1 (94.2 vs 91); MCTS over draws 91 -> 89 with budget, 3-5 pts under the vote at matched passes; LPRM best-of-N level with one sample: the value head cannot rank draws |
 | 5 | value bootstrapping of the LPRM head on prior draws (`lprm_prior_rollouts: 4`), same ladder | rank correlation 0.05 -> 0.12; LPRM best-of-N still level with one sample (86-88), MCTS still 89 -> 86 with budget, vote +3.3 (91.5-91.8 at N=16); single sample 88 vs 89-91 |
+| 6 | pooled LPRM read-out (`lprm_pool: mean`) and the paper's final-correctness target (`lprm_target: final`) | the head ranks draws (corr 0.34 / 0.67); LPRM best-of-N 97.5 / 98.8 at N=16 / 8, above the vote (96) and within 1 of the any-correct ceiling; single sample 92-94; draws on every cycle hurt |
+| 7 | the search on those checkpoints | still falls with budget (95.2 -> 93.4 at K=4, 94.9 -> 92.0 at K=8) despite the head: 4-5 pts under best-of-N at equal passes; the step-wise criterion is myopic |
 
 ## 1. Baseline (seed 0)
 
@@ -163,18 +165,19 @@ Reading:
    from the mean. The draws themselves are not the problem: the vote over the same draws works.
 3. **Depth is flat** (depth 16 = depth 8 everywhere): the model halts at the 4 supervision steps it was trained for.
 
-## 7. Where this leaves the pivot
+## 7. Where this leaves the pivot (final; sections 8-10 came after the first version of this section)
 
-- GRAM re-tuned: on the N-Queens 8x8 tier nothing works (the posterior memorises, the prior's draws score 0-1%;
-  sections 3); on held-out 4x4 Sudoku the earlier branch's recipe (frac 0.25, beta 0.05, no posterior on the
-  no-grad cycles) reproduces: 25.8 vs TRM 10.3 exact on multi-solution puzzles, 89.2 vs 99.5 on unique ones.
-- The test-time search over prior draws, as a plug-in for the paper's width scaling, loses to the paper's own
-  majority vote by 3-5 pts at matched compute and does not improve with budget, for the same reason LPRM best-of-N
-  gains nothing: the value head is blind to which draw is better. Until a value head ranks draws (the same gap REPORTS_SCALING
-  section 12 found on MiniARC), width + vote is the test-time scaling to use, and the search is a worse way to
-  spend the same passes.
-- Single seed, one checkpoint, two tiers. Not run: augmentation and 10k steps (the earlier branch's 80% regime), the
-  multi-solution ladder (needs validity-scored vote / best-of-N), more seeds.
+- GRAM re-tuned: the N-Queens 8x8 tier cannot test it (sections 3); on held-out 4x4 Sudoku the
+  `gram-posterior-fixes` recipe reproduces (section 4-5), and three changes to the LPRM head (section 9) lift the
+  single-sample model from 89 to 94 and make its value head rank prior draws (correlation 0.05 -> 0.67).
+- Test-time scaling on that model, from one checkpoint at matched forward passes (sections 6, 9, 10): LPRM
+  best-of-N 98.8 at N=8 (ceiling 99.4) > majority vote 96 > single sample 94 > the MCTS over prior draws, which
+  falls with budget (95 -> 92-93) even once its value head works, because its per-step choice is myopic. The paper's
+  never-used selector, with a read-out over the whole state and its own final-correctness target, is the test-time
+  scaling to use; the search as built is dominated at every budget.
+- Single seed, one checkpoint per cell, one testbed near TRM's ceiling. Not run: more seeds, the multi-solution
+  build (needs a validity-scored vote / best-of-N), augmentation and 10k steps, a search whose value is the
+  trajectory's final correctness rather than the step's.
 
 ## 8. Value bootstrapping of the LPRM head on prior draws (user, 2026-10-18 evening)
 
@@ -240,3 +243,24 @@ Reading:
 3. **Draws on every cycle hurt** (single sample -3, best-of-N back below the vote): rolled-out depth-1 and depth-2
    states mixed with depth-0 draws under one target confuse the head and the backbone, at 2.5x the wall; dropped.
 4. The search rung failed on every checkpoint (exit 66, below) and is rerun in section 10.
+
+## 10. The search on the section 9 checkpoints (rung 2, pooled head, depth 8, eval seed 0)
+
+The chain's first attempt had a wrong lock path (exit 66); rerun with `eval=treegram_from_gram lprm_pool=mean`.
+
+| checkpoint | K | S = K / 2K / 4K | value_rank_corr | pick_is_best (chance 1/K) | best-of-(S+1) from section 9 |
+|---|---|---|---|---|---|
+| + pool | 4 | 95.8 / 93.2 / 93.8 | 0.31-0.34 | 0.54 / 0.60 / 0.60 | 97.4 (N=8) |
+| + pool + final | 4 | 95.2 / 94.8 / 93.4 | 0.65-0.67 | 0.51 / 0.78 / 0.77 | 98.8 (N=8) |
+| + pool + final | 8 | 94.9 / 93.6 / 92.0 | 0.59-0.60 | 0.36 / 0.71 / 0.72 | 98.3 (N=16) |
+| + pool + all | 4 | 91.4 / 88.4 / 88.5 | 0.55-0.58 | 0.32 / 0.70 / 0.69 | 87.5 |
+| all three | 4 | 90.3 / 88.2 / 87.3 | 0.30-0.33 | 0.40 / 0.51 / 0.51 | 96.7 |
+
+Reading: the value head now ranks the draws (0.67 against 0.05 in section 6) and the pick is the CE-best candidate
+78% of the time at K=4, yet accuracy still falls as the budget grows, and at equal forward passes the search trails
+best-of-N by 4-5 pts (94.8 vs 98.8 at S=8 / N=9). With the head no longer the limit, the search's own criterion is:
+it chooses, at each of the 12 z_H updates of a trajectory, the draw whose rollout decodes best at the end of that
+step, and those greedy choices compound into a worse final board than either taking the mean (S=K, the best
+search setting) or judging whole trajectories once by their final value (best-of-N). A search would need the
+trajectory's final correctness as its leaf value (the full horizon, at 4x the passes per simulation; stripped in
+#64 as `mcts_horizon=full`) to be asking the same question best-of-N asks. Not built.
