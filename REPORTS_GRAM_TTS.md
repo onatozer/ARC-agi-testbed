@@ -20,6 +20,7 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 6 | pooled LPRM read-out (`lprm_pool: mean`) and the paper's final-correctness target (`lprm_target: final`) | the head ranks draws (corr 0.34 / 0.67); LPRM best-of-N 97.5 / 98.8 at N=16 / 8, above the vote (96) and within 1 of the any-correct ceiling; single sample 92-94; draws on every cycle hurt |
 | 7 | the search on those checkpoints | still falls with budget (95.2 -> 93.4 at K=4, 94.9 -> 92.0 at K=8) despite the head: 4-5 pts under best-of-N at equal passes; the step-wise criterion is myopic |
 | 8 | the search with the full horizon (`mcts_horizon: full`: a simulation rolls through the remaining supervision steps) | improves with budget for the first time: 95.2 / 97.9 / 97.2 at S = 4 / 8 / 16 (step horizon 95.2 / 93.7 / 92.3), above the vote (96.6 at N=16), just under best-of-N (98.8), at ~5x the passes per simulation |
+| 9 | MiniARC 5x5, GRAM pool+final, the ladder | GRAM is at the floor there (single sample 0.04% exact, pass@2 1.3 vs TRM 4.7); every rung 0.04-0.23%; not a usable tier for GRAM at this recipe |
 
 ## 1. Baseline (seed 0)
 
@@ -293,3 +294,22 @@ full-horizon simulation costs about five times the forward passes of a step-hori
 updates instead of at most 2), so at matched passes best-of-N remains the more efficient selector; the
 `pick_is_best` / `value_rank_corr` columns measure the step-level criterion and no longer describe this search. The
 S=4 wall (1925 s) is an outlier of unknown cause (a shared machine; the S=8 / S=16 rows took 126 / 235 s).
+
+## 12. MiniARC 5x5 (standard build, 4000 steps, the recipes.sh recipe plus puzzle_emb_lr 3e-2, seed 0)
+
+`scripts/miniarc5/queue_gram.sh`: GRAM with the pooled head, the final target, frac 0.25 and the draw bootstrap,
+sampled guidance (a first run died in the ARC evaluator, which requires `q_halt_logits`; GRAM now emits the LPRM
+value's logit for it, as TreeRM does; 8a36eb2). 1570 s. Ladder from its checkpoint (4768 test rows, batch 149):
+
+| | single sample | width 4 / 8 / 16 vote | LPRM best-of-4 / 8 / 16 | step search S=4 / 8 / 16 | full-horizon search S=4 / 8 / 16 |
+|---|---|---|---|---|---|
+| exact | 0.04 | 0.06 / 0.06 / 0.06 | 0.08 / 0.08 / 0.08 | 0.15 / 0.08 / 0.08 | 0.15 / 0.23 / 0.17 |
+| pass@2 (in-training eval) | 1.3 | | | | |
+
+Eval wall: width 29-145 s, step search 120-200 s, full-horizon search 1968-3928 s per setting.
+
+Reading: GRAM at this recipe does not work on MiniARC (TRM and TreeRM reach pass@2 4.7 here; GRAM 1.3, token
+accuracy 56%), so every rung is at the floor and the value head's rank correlation is negative; no test-time
+procedure can be measured on it. GRAM needs its own tuning for ARC-style tasks (the paper trains it at ~10 M
+params for 50% on ARC-1), which this loop did not attempt. The full-horizon search is also impractical at this
+size without the compiled round (up to 65 min per setting).
