@@ -346,3 +346,34 @@ whether the faster embedding lr changes TreeRM's TTT picture.
   fix had not worked. Verified by a direct run with cleared result dirs: 30 epochs at lr 1e-2 take a task's eval
   `lm_loss` from 2.106 (1 epoch) to 1.510, with the training loss 2.07 -> 1.30 printed per task (`TTT run 0: 30
   steps, train lm_loss ...`, a new log line). Rule for this loop: never reuse a TTT suffix.
+
+## 7. L-module test-time training (branch `l-reinit-ttt`)
+
+**Idea (user, 2026-10-19).** Keep the pretrained H block, heads and puzzle embeddings; at TTT re-initialise the L block
+(the one that reads the input, `z_L = f_L(z_L, z_H + x)`) and train only it on the task's demos, so the L block
+becomes the task's program instead of a perturbation of the shared backbone. For GRAM, additionally train that L
+block on the single unlabeled test input by raising the frozen LPRM head's predicted correctness.
+
+**What it needed.** TRM/GRAM share one block for both updates (`H_layers` was a declared but unused config field), so
+`arch.H_layers > 0` now builds a separate H block (`inner.H_blocks`, the H update only; 0 = the old shared model, no new
+checkpoint keys). `evaluate_ttt.py` gained `reinit_substrings` (checkpoint keys not loaded: those modules keep a fresh
+init), `train_only_substrings` (every other parameter frozen; the puzzle-embedding table, a buffer with its own SignSGD
+optimizer, keeps training as in every section-3 variant) and `lprm_steps` (passes over the task's test inputs with
+the model in eval mode, prior guidance, maximising `-log` of its LPRM value by gradient on the trainable parameters).
+The held-out build was rebuilt in this worktree (`data/miniarc5-aug-31-ho30`, 30 tasks, seeds as section 1).
+
+**Runs** (`scripts/miniarc5/queue_lreinit.sh`; the section-1 recipe, `puzzle_emb_lr=3e-2`, 4000 steps, W&B online):
+`trm_sep_ho` (TRM, `H_layers=2`), `trm_ho2` (TRM shared, the control re-trained on the rebuilt build),
+`gram_sep_ho` (GRAM, `H_layers=2`, the `sc_gram_pf` recipe: pooled LPRM head, final target, prior sample fraction
+0.25, 4 bootstrap draws, PR #67's token-sum KL x0.07). TTT with `ttt_mini` over the 30 held-out tasks: `lr_full`
+(everything trains), `lr_lonly` (`train_only_substrings=[inner.L_level.]`), `lr_lreinit` (plus
+`reinit_substrings=[inner.L_level.]`); GRAM also `lr_lonly_lprm` and `lr_lreinit_lprm` (`lprm_steps=20`).
+The separate-H models carry ~0.79M dense params vs 0.53M shared (the L block alone is 527,360, the count the TTT log
+prints as trainable in the L-only variants); the within-checkpoint `lr_full` row is the comparison that matters.
+
+**Smoke (2-task, 40-step checkpoints):** the L-reinit TTT drops exactly the 12 L-block keys, trains 527,360
+parameters, and the LPRM phase moves the mean value (0.82 -> 0.98 on a 40-step model, where the critic is trivially
+satisfiable); every variant evaluates and reports pass@k.
+
+### Results
+(pending: filled in as the queue lands)
