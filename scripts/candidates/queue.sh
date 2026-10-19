@@ -15,6 +15,11 @@ case "$TIER" in
   nqueens8ho) COMMON="$BACKBONE global_batch_size=128 max_steps=3000 eval_interval_steps=500 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
   # The same at 10k steps: at 3000 neither TRM (23.7%, rising) nor GRAM (0%) has converged on the held-out build
   nqueens8ho10k) COMMON="$BACKBONE global_batch_size=128 max_steps=10000 eval_interval_steps=2000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
+  # The paper's enumerated build (data/nqueens-8off) at our size, 10k steps: the reference for the replication
+  nqueens8off10k) COMMON="$BACKBONE global_batch_size=128 max_steps=10000 eval_interval_steps=2000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;
+  # The official gram-release recipe (REPORTS_GRAM_TTS.md section 18): hidden 512, 8 heads, H 3 / L 6, 16 supervision
+  # steps, batch 768, lr 1e-4 with 2000 warm-up, 45k steps (the user's 2026-10-10 W&B run matched it); eval every 5000
+  nqueens8off) COMMON="arch.hidden_size=512 arch.num_heads=8 arch.L_layers=2 arch.H_cycles=3 arch.L_cycles=6 arch.halt_max_steps=16 epochs=100000 train_epochs_per_iter=100000 seed=0 global_batch_size=768 max_steps=45000 eval_interval_steps=5000 max_eval_steps=null lr_warmup_steps=2000 lr=1e-4";;
   # The gram-posterior-fixes branch's held-out 4x4 Sudoku testbed (REPORTS_GRAM_TTS.md section 4): hidden 128, 2 heads,
   # H 3 / L 3, 4 supervision steps; batch 128 x 5000 steps, lr 3e-4, eval on the 1000 held-out puzzles every 1000 steps
   sudoku4|sudoku4u)  COMMON="arch.hidden_size=128 arch.num_heads=2 arch.L_layers=2 arch.H_cycles=3 arch.L_cycles=3 arch.halt_max_steps=4 epochs=100000 train_epochs_per_iter=100000 seed=0 global_batch_size=128 max_steps=5000 eval_interval_steps=1000 max_eval_steps=null lr_warmup_steps=100 lr=3e-4";;

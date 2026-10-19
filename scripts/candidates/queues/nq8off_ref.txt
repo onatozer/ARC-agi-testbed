@@ -1,0 +1,3 @@
+# References on the paper's enumerated build at our size (10k steps): TRM, and GRAM with the official objective
+trm_ref   arch=trm
+gram_ref  arch=gram +arch.eval_prior_mean=false arch.kl_reduction=sum arch.kl_strength=0.07 arch.posterior_nograd_cycles=true arch.lprm_weight=0

@@ -164,9 +164,44 @@ def create_partial_input(solution: np.ndarray, num_given: int, rng: np.random.Ge
 # Dataset loaders
 # ---------------------------------------------------------------------------
 
+def _enumerate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """The GRAM paper's construction (enumerate_all): every solution x every subset of min..max of its queens is an
+    input, every solution consistent with an input is a row for it, and heldout_frac of the unique inputs (drawn with
+    `seed`) form the test split. 8x8 with 1-3 givens: 92 solutions, 5,148 unique inputs, 8,464 rows."""
+    N = config.board_size
+    solutions: List[np.ndarray] = []
+    solve_nqueens_backtrack(np.zeros((N, N), dtype=np.int32), 0, solutions, max_solutions=10**6)
+    lo = config.get("min_given_queens") if config.get("min_given_queens") is not None else 0
+    hi = config.get("max_given_queens") if config.get("max_given_queens") is not None else N - 1
+    from itertools import combinations
+    rows: dict = {}  # input bytes -> (input, [solutions consistent with it])
+    for solution in solutions:
+        queens = list(zip(*np.nonzero(solution)))
+        for k in range(lo, hi + 1):
+            for subset in combinations(queens, k):
+                partial = np.zeros((N, N), dtype=np.int32)
+                for r, c in subset:
+                    partial[r, c] = 1
+                rows.setdefault(partial.tobytes(), (partial, []))[1].append(solution)
+    keys = sorted(rows)
+    rng = np.random.default_rng(config.seed)
+    held = set(rng.choice(len(keys), size=int(round(config.heldout_frac * len(keys))), replace=False).tolist())
+    inputs, labels = [], []
+    for i, key in enumerate(keys):
+        if (i in held) != (set_name == "test"):
+            continue
+        partial, sols = rows[key]
+        for solution in sols:
+            inputs.append(partial)
+            labels.append(solution)
+    return inputs, labels
+
+
 def _generate_subset(set_name: str, config: DictConfig, exclude: frozenset = frozenset()) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """Generate N-Queens puzzles locally via randomized backtracking, skipping inputs in `exclude` (the training
     inputs, when building the test set, so the test inputs are held out as in the GRAM paper)."""
+    if config.get("enumerate_all"):
+        return _enumerate_subset(set_name, config)
     rng = np.random.default_rng(config.seed)
 
     N = config.board_size

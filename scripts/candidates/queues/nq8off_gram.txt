@@ -1,0 +1,3 @@
+# The replication: GRAM with the official gram-release objective on the paper's enumerated held-out build.
+# Token-sum KL with beta 0.07, the posterior sampled on every transition in training, no value head, sampled prior at eval.
+gram_off  arch=gram +arch.eval_prior_mean=false arch.kl_reduction=sum arch.kl_strength=0.07 arch.posterior_nograd_cycles=true arch.lprm_weight=0
