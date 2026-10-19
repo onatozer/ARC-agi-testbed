@@ -1,0 +1,7 @@
+# The official gram-release's KL weighting (REPORTS_GRAM_TTS.md section 16): its KL is summed over tokens (and latent
+# dims) with beta 0.07, ours is a token mean x 0.05, ~110x weaker per token. Plain objective (no LPRM loss, no prior
+# sample fraction, no bootstrap), sampled guidance at eval; kl_strength 5.6 = 0.07 x our 80 tokens, 4.48 = x 64 content
+# tokens; the official posterior also guides the no-grad cycles in training
+gram_kl56       arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.kl_strength=5.6
+gram_kl45       arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.kl_strength=4.48
+gram_kl56_pnc   arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.kl_strength=5.6 arch.posterior_nograd_cycles=true
