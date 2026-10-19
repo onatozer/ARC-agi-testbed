@@ -313,3 +313,21 @@ accuracy 56%), so every rung is at the floor and the value head's rank correlati
 procedure can be measured on it. GRAM needs its own tuning for ARC-style tasks (the paper trains it at ~10 M
 params for 50% on ARC-1), which this loop did not attempt. The full-horizon search is also impractical at this
 size without the compiled round (up to 65 min per setting).
+
+## 13. 8x8 N-Queens the paper's way (held-out inputs, 1-3 givens; `data/nqueens-8ho`, tier `nqueens8ho`)
+
+Rebuilt with the fixed builder (`build_nqueens_dataset board_size=8 num_train=8000 num_test=1000 num_aug=0
+min_given_queens=1 max_given_queens=3 seed=0`; the builder's held-out set had been taken after the inputs were
+re-encoded and so had never excluded anything, dab6e9c): 0 test inputs in training; the test set holds only 2-3
+givens because all 64 one-queen inputs occur in the 8000 training puzzles. Scored by `NQueens/accuracy` (a valid
+board that keeps the givens), the N-copy rungs by the new validity metrics. The nqueens8 recipe (128 x 3000, lr
+3e-4), seed 0:
+
+| run | accuracy by 500 steps | wall |
+|---|---|---|
+| TRM | 0 / 0 / 0 / 0.3 / 6.1 / **23.7** (still rising) | 482 s |
+| GRAM, pooled head + final target, frac 0.25, bootstrap, sampled guidance | 0 / 0 / 0 / 0 / 0 / **0** | 1600 s |
+
+GRAM has not taken off by 3000 steps on this tier (the earlier branch saw late, seed-sensitive take-offs on
+held-out Sudoku, and TRM itself is far from converged here), so its ladder (rung 1 and the step search were run
+before this was seen) measures nothing. Next: the same pair at 10k steps.
