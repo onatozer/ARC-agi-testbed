@@ -171,6 +171,10 @@ def _apply_runtime_arch_overrides(model: Any, overrides: Dict[str, Any], rank: i
     inner = _unwrap_inner(model)
     if inner is None:
         return
+    # Some models (GRAM, TreeRM) build the inner from a dict, so it has its own config object: the search settings
+    # (eval_mcts_simulations, ...) are read from there, not from loss_head.model.config
+    if getattr(inner, "config", None) is not None:
+        _apply_overrides(inner.config, arch_overrides, rank=rank)
 
     if "noise_scale" in arch_overrides:
         value = float(arch_overrides["noise_scale"])
@@ -282,7 +286,7 @@ def _run_checkpoint(eval_cfg: EvalConfig, ckpt_cfg: CheckpointEvalConfig, rank: 
         _apply_overrides(loss_head.model.config, {k.removeprefix("arch."): v for k, v in combo.items() if k.startswith("arch.")}, rank=rank)
         _apply_runtime_arch_overrides(train_state_eval.model, combo, rank)
         _seed(run_config.seed, rank)
-        if eval_cfg.different_init and eval_cfg.different_init > 1:
+        if eval_cfg.different_init and eval_cfg.different_init > 1 and eval_cfg.different_init_reset_std is not None:
             _setup_random_reset_carry(train_state_eval.model, eval_cfg.different_init_reset_std, rank)
 
         suffix = ckpt_cfg.suffix or eval_cfg.suffix or "eval"

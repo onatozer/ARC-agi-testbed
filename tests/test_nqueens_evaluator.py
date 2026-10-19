@@ -44,6 +44,38 @@ def test_counts_real_puzzles_and_checks_the_given_queens():
     assert results["NQueens/exact_match_accuracy"] == pytest.approx(1 / 3)
 
 
+def test_generated_test_split_is_held_out_and_keeps_the_givens_range(tmp_path):
+    config = OmegaConf.create({
+        "board_size": 6, "source_repo": None, "num_train": 20, "num_test": 10, "num_aug": 1,
+        "num_given_queens": None, "min_given_queens": 1, "max_given_queens": 2, "seed": 0, "output_dir": str(tmp_path),
+    })
+    train_inputs = convert_subset("train", config)
+    convert_subset("test", config, exclude=train_inputs)
+    train = np.load(tmp_path / "train" / "all__inputs.npy")
+    test = np.load(tmp_path / "test" / "all__inputs.npy")
+    assert train_inputs  # the training split's distinct (augmented) inputs
+    assert not {row.tobytes() for row in train} & {row.tobytes() for row in test}  # no test input was seen in training
+    givens = (test == 2).sum(axis=1)  # tokens: 1 empty, 2 queen
+    assert givens.min() >= 1 and givens.max() <= 2
+
+
+def test_enumerate_all_lists_every_consistent_solution_and_holds_inputs_out(tmp_path):
+    # 6x6 has 4 solutions sharing no queens: with 1 given every input is consistent with exactly one solution
+    config = OmegaConf.create({
+        "board_size": 6, "source_repo": None, "num_train": 0, "num_test": 0, "num_aug": 0, "num_given_queens": None,
+        "min_given_queens": 1, "max_given_queens": 2, "enumerate_all": True, "heldout_frac": 0.25, "seed": 0, "output_dir": str(tmp_path),
+    })
+    train_inputs = convert_subset("train", config)
+    convert_subset("test", config, exclude=train_inputs)
+    train = np.load(tmp_path / "train" / "all__inputs.npy")
+    test = np.load(tmp_path / "test" / "all__inputs.npy")
+    unique = {row.tobytes() for row in train} | {row.tobytes() for row in test}
+    assert len(unique) == 4 * (6 + 15)  # 4 solutions x (6 single queens + 15 pairs), no input shared between solutions
+    assert len({row.tobytes() for row in test}) == round(0.25 * len(unique))
+    assert not {row.tobytes() for row in train} & {row.tobytes() for row in test}
+    assert len(train) + len(test) == len(unique)  # one consistent solution per input here
+
+
 def test_builder_does_not_give_real_puzzles_the_blank_identifier(tmp_path):
     config = OmegaConf.create({
         "board_size": 6, "source_repo": None, "num_train": 5, "num_test": 5, "num_aug": 2,

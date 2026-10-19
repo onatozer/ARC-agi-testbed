@@ -122,11 +122,22 @@ def _di_state(device: torch.device) -> Dict[str, torch.Tensor]:
         "majority_exact": torch.zeros((), dtype=torch.float64, device=device),
         "majority_token_ok": torch.zeros((), dtype=torch.float64, device=device),
         "majority_token_total": torch.zeros((), dtype=torch.float64, device=device),
+        "lprm_best": torch.zeros((), dtype=torch.float64, device=device),
+        # the same four scored by the evaluator's validity (puzzles with several solutions): a copy, the voted copy,
+        # the LPRM-picked copy, any copy
+        "copy_valid": torch.zeros((), dtype=torch.float64, device=device),
+        "majority_valid": torch.zeros((), dtype=torch.float64, device=device),
+        "lprm_best_valid": torch.zeros((), dtype=torch.float64, device=device),
+        "any_valid": torch.zeros((), dtype=torch.float64, device=device),
         **{f"pass@{k}": torch.zeros((), dtype=torch.float64, device=device) for k in (1, 2, 4, 8, 16, 32, 64, 128)},
     }
 
 
-def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torch.Tensor, n: int) -> None:
+def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torch.Tensor, n: int, scores: Optional[torch.Tensor] = None,
+               valid: Optional[torch.Tensor] = None) -> None:
+    """scores [bsz * n]: a per-copy value (the LPRM head's) for best-of-N selection, the GRAM paper's alternative to
+    the vote (App. A.4); None leaves different_init/lprm_best_acc at 0. valid [bsz * n]: each copy's validity from the
+    evaluator (any valid solution counts, not only the label), for the *_valid metrics; None leaves them at 0."""
     bsz = labels.shape[0]
     pred = preds.view(bsz, n, -1)
     flat_labels = labels.view(bsz, -1)
@@ -135,21 +146,34 @@ def _update_di(state: Dict[str, torch.Tensor], preds: torch.Tensor, labels: torc
     correct_counts = exact.sum(dim=1)
     state["samples"] += bsz
     state["any"] += correct_counts.gt(0).sum()
+    valid_copies = valid.view(bsz, n) if valid is not None else None
+    if valid_copies is not None:
+        state["copy_valid"] += valid_copies.float().mean(dim=1).sum()
+        state["any_valid"] += valid_copies.any(dim=1).sum()
+    if scores is not None:
+        best = scores.view(bsz, n).float().argmax(dim=1)
+        state["lprm_best"] += exact.gather(1, best[:, None]).sum()
+        if valid_copies is not None:
+            state["lprm_best_valid"] += valid_copies.gather(1, best[:, None]).sum()
     state["pass_sum"] += correct_counts.to(torch.float64).sum() / float(n)
     for k in (1, 2, 4, 8, 16, 32, 64, 128):
         if k < n:
             state[f"pass@{k}"] += sum(compute_pass_at_k(n, k, int(c.item())) for c in correct_counts)
 
-    for sample_pred, label, sample_mask in zip(pred, flat_labels, mask):
+    for i, (sample_pred, label, sample_mask) in enumerate(zip(pred, flat_labels, mask)):
         votes: Dict[Tuple[int, ...], int] = {}
-        for row in sample_pred.detach().cpu():
+        first_copy: Dict[Tuple[int, ...], int] = {}
+        for j, row in enumerate(sample_pred.detach().cpu()):
             key = tuple(int(x) for x in row.tolist())
             votes[key] = votes.get(key, 0) + 1
+            first_copy.setdefault(key, j)
         winner = max(votes.items(), key=lambda item: item[1])[0]
         winner_t = torch.tensor(winner, dtype=label.dtype, device=label.device)
         state["majority_exact"] += float(((winner_t == label) | ~sample_mask).all().item())
         state["majority_token_ok"] += ((winner_t == label) & sample_mask).sum().to(state["majority_token_ok"])
         state["majority_token_total"] += sample_mask.sum().to(state["majority_token_total"])
+        if valid_copies is not None:
+            state["majority_valid"] += float(valid_copies[i, first_copy[winner]].item())
 
 
 def _finish_di(
@@ -173,6 +197,11 @@ def _finish_di(
         "different_init/avg_pass_rate": vals["pass_sum"] / total if total else 0.0,
         "different_init/any_correct": vals["any"] / total if total else 0.0,
         "different_init/majority_vote_acc": vals["majority_exact"] / total if total else 0.0,
+        "different_init/lprm_best_acc": vals["lprm_best"] / total if total else 0.0,
+        "different_init/copy_valid": vals["copy_valid"] / total if total else 0.0,
+        "different_init/majority_valid": vals["majority_valid"] / total if total else 0.0,
+        "different_init/lprm_best_valid": vals["lprm_best_valid"] / total if total else 0.0,
+        "different_init/any_valid": vals["any_valid"] / total if total else 0.0,
         "different_init/total_samples": total,
         "different_init/n": float(n),
         "majority_vote/exact_accuracy": vals["majority_exact"] / total if total else 0.0,
@@ -292,6 +321,9 @@ def evaluate(
     save_preds: Dict[str, List[torch.Tensor]] = {}
     n_init = int(different_init or 1)
     di = _di_state(device) if n_init > 1 else None
+    # An evaluator that can score a prediction's validity (any solution of the puzzle, not only the label) scores the
+    # N copies' vote and best-of-N too
+    valid_fn = next((e.valid_rows for e in evaluators if hasattr(e, "valid_rows")), None)
     conv_k = min(int(getattr(config, "convergence_top_k", 0) or 0), n_init)
     conv = _conv_state(device, conv_k) if n_init > 1 and conv_k > 0 else None
 
@@ -370,7 +402,10 @@ def evaluate(
 
             preds = preds or {}
             if n_init > 1 and "preds" in preds:
-                _update_di(di, preds["preds"], original_batch["labels"], n_init)  # type: ignore[arg-type]
+                valid = None
+                if valid_fn is not None:
+                    valid = valid_fn(original_batch["inputs"].repeat_interleave(n_init, dim=0), preds["preds"])
+                _update_di(di, preds["preds"], original_batch["labels"], n_init, preds.get("lprm_value"), valid)  # type: ignore[arg-type]
                 if conv is not None and len(trajectory) > 1:
                     deltas = torch.stack(trajectory)[1:] - torch.stack(trajectory)[:-1]
                     window = int(getattr(config, "convergence_window", 0) or 0)

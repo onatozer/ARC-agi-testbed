@@ -164,30 +164,70 @@ def create_partial_input(solution: np.ndarray, num_given: int, rng: np.random.Ge
 # Dataset loaders
 # ---------------------------------------------------------------------------
 
-def _generate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
-    """Generate N-Queens puzzles locally via randomized backtracking."""
+def _enumerate_subset(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """The GRAM paper's construction (enumerate_all): every solution x every subset of min..max of its queens is an
+    input, every solution consistent with an input is a row for it, and heldout_frac of the unique inputs (drawn with
+    `seed`) form the test split. 8x8 with 1-3 givens: 92 solutions, 5,148 unique inputs, 8,464 rows."""
+    N = config.board_size
+    solutions: List[np.ndarray] = []
+    solve_nqueens_backtrack(np.zeros((N, N), dtype=np.int32), 0, solutions, max_solutions=10**6)
+    lo = config.get("min_given_queens") if config.get("min_given_queens") is not None else 0
+    hi = config.get("max_given_queens") if config.get("max_given_queens") is not None else N - 1
+    from itertools import combinations
+    rows: dict = {}  # input bytes -> (input, [solutions consistent with it])
+    for solution in solutions:
+        queens = list(zip(*np.nonzero(solution)))
+        for k in range(lo, hi + 1):
+            for subset in combinations(queens, k):
+                partial = np.zeros((N, N), dtype=np.int32)
+                for r, c in subset:
+                    partial[r, c] = 1
+                rows.setdefault(partial.tobytes(), (partial, []))[1].append(solution)
+    keys = sorted(rows)
+    rng = np.random.default_rng(config.seed)
+    held = set(rng.choice(len(keys), size=int(round(config.heldout_frac * len(keys))), replace=False).tolist())
+    inputs, labels = [], []
+    for i, key in enumerate(keys):
+        if (i in held) != (set_name == "test"):
+            continue
+        partial, sols = rows[key]
+        for solution in sols:
+            inputs.append(partial)
+            labels.append(solution)
+    return inputs, labels
+
+
+def _generate_subset(set_name: str, config: DictConfig, exclude: frozenset = frozenset()) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Generate N-Queens puzzles locally via randomized backtracking, skipping inputs in `exclude` (the training
+    inputs, when building the test set, so the test inputs are held out as in the GRAM paper)."""
+    if config.get("enumerate_all"):
+        return _enumerate_subset(set_name, config)
     rng = np.random.default_rng(config.seed)
 
     N = config.board_size
     num_puzzles = config.num_train if set_name == "train" else config.num_test
+    # Queens revealed in the input: num_given_queens, else uniform over [min_given_queens, max_given_queens]
+    # (defaults 0 and N - 1; the GRAM paper's 8x8 benchmark uses 1 to 3)
+    lo = config.get("min_given_queens") if config.get("min_given_queens") is not None else 0
+    hi = config.get("max_given_queens") if config.get("max_given_queens") is not None else N - 1
 
     inputs, labels = [], []
-    for _ in tqdm(range(num_puzzles), desc=f"Generating {N}x{N} {set_name} puzzles"):
+    progress = tqdm(total=num_puzzles, desc=f"Generating {N}x{N} {set_name} puzzles")
+    while len(inputs) < num_puzzles:
         # Generate a valid solution
         solution = generate_nqueens_solution(N, rng)
 
         # Determine how many queens to give in the input
-        if config.num_given_queens is not None:
-            num_given = config.num_given_queens
-        else:
-            # Randomly choose between 0 and N-1 queens
-            num_given = rng.integers(0, N)
+        num_given = config.num_given_queens if config.num_given_queens is not None else int(rng.integers(lo, hi + 1))
 
         # Create partial input
         partial = create_partial_input(solution, num_given, rng)
+        if partial.tobytes() in exclude:
+            continue
 
         inputs.append(partial)
         labels.append(solution)
+        progress.update()
 
     return inputs, labels
 
@@ -218,9 +258,10 @@ def _load_from_hf(set_name: str, config: DictConfig) -> Tuple[List[np.ndarray], 
 # Main conversion
 # ---------------------------------------------------------------------------
 
-def convert_subset(set_name: str, config: DictConfig):
+def convert_subset(set_name: str, config: DictConfig, exclude: frozenset = frozenset()) -> frozenset:
     """
-    Build the N-Queens dataset for the train or test set.
+    Build the N-Queens dataset for the train or test set; returns the split's (augmented) inputs, so the generated
+    test split can be held out from the training inputs.
 
     Args:
         set_name: "train" or "test"
@@ -232,7 +273,7 @@ def convert_subset(set_name: str, config: DictConfig):
     if config.source_repo is not None:
         inputs, labels = _load_from_hf(set_name, config)
     else:
-        inputs, labels = _generate_subset(set_name, config)
+        inputs, labels = _generate_subset(set_name, config, exclude)
 
     # Generate dataset with augmentation
     num_augments = config.num_aug if set_name == "train" else 0
@@ -278,6 +319,7 @@ def convert_subset(set_name: str, config: DictConfig):
         # Add 1 to shift: 0 (empty) -> 1, 1 (queen) -> 2
         return arr + 1
     
+    raw_inputs = frozenset(np.asarray(inp).tobytes() for inp in results["inputs"])  # as _generate_subset sees them (0 / 1)
     results = {
         "inputs": _seq_to_numpy(results["inputs"]),
         "labels": _seq_to_numpy(results["labels"]),
@@ -322,6 +364,7 @@ def convert_subset(set_name: str, config: DictConfig):
     print(f"  - Total groups: {metadata.total_groups}")
     print(f"  - Sequence length: {metadata.seq_len}")
     print(f"  - Vocabulary size: {metadata.vocab_size}")
+    return raw_inputs
 
 
 # NOTE: I'm pretty sure we're doing the seeding here incorrectly, don't think we're using the rng. On the other mind might not really matter
@@ -358,8 +401,8 @@ def launch(config: DictConfig):
     print("=" * 80)
     
     # Generate train and test sets
-    convert_subset("train", config)
-    convert_subset("test", config)
+    train_inputs = convert_subset("train", config)
+    convert_subset("test", config, exclude=train_inputs)
     
     print("=" * 80)
     print("Dataset generation complete!")
