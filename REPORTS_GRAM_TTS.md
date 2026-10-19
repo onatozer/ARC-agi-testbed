@@ -21,6 +21,7 @@ naive depth and width scaling at matched compute. One GPU job at a time (4 GB la
 | 7 | the search on those checkpoints | still falls with budget (95.2 -> 93.4 at K=4, 94.9 -> 92.0 at K=8) despite the head: 4-5 pts under best-of-N at equal passes; the step-wise criterion is myopic |
 | 8 | the search with the full horizon (`mcts_horizon: full`: a simulation rolls through the remaining supervision steps) | improves with budget for the first time: 95.2 / 97.9 / 97.2 at S = 4 / 8 / 16 (step horizon 95.2 / 93.7 / 92.3), above the vote (96.6 at N=16), just under best-of-N (98.8), at ~5x the passes per simulation |
 | 9 | MiniARC 5x5, GRAM pool+final, the ladder | GRAM is at the floor there (single sample 0.04% exact, pass@2 1.3 vs TRM 4.7); every rung 0.04-0.23%; not a usable tier for GRAM at this recipe |
+| 10 | held-out 8x8 N-Queens, 1-3 givens, 3k and 10k steps | TRM 23.7 -> 68.9 (= the paper's 66.8); GRAM pool+final 0 at both (75% train exact with the posterior; mean guidance 3.2; width 8 any-valid 0.4%): the shortcut; ladder skipped |
 
 ## 1. Baseline (seed 0)
 
@@ -331,3 +332,36 @@ board that keeps the givens), the N-copy rungs by the new validity metrics. The 
 GRAM has not taken off by 3000 steps on this tier (the earlier branch saw late, seed-sensitive take-offs on
 held-out Sudoku, and TRM itself is far from converged here), so its ladder (rung 1 and the step search were run
 before this was seen) measures nothing. Next: the same pair at 10k steps.
+
+At 10k steps (tier `nqueens8ho10k`: eval every 2000; checkpoints kept):
+
+| run | accuracy by 2000 steps | train exact (last 200 steps) | wall |
+|---|---|---|---|
+| TRM | 0.1 / 52.4 / 61.4 / 65.8 / **68.9** | 24.5 | 1606 s |
+| GRAM pool+final, frac 0.25, bootstrap | 0 / 0 / 0 / 0.3 / **0** (mean guidance 3.2; width 8 sampled: any valid 0.4%) | 74.7 (posterior) | 5006 s |
+
+Reading: TRM lands on the paper's TRM number (68.9 vs 66.8 +- 5.6) on this rebuilt benchmark, so the testbed is
+the paper's. GRAM does not: with the posterior it solves 75% of training puzzles at 98% token accuracy, with the
+prior it produces no valid board (token accuracy 88%, every board a near miss), at 3x TRM's wall. This is the
+section 3 shortcut on a held-out task: a multi-solution problem lets the label-carrying guidance pick the solution
+in training, and the prior sample fraction (0.25) that cures it on 4x4 Sudoku does not here. The earlier branch
+had the same experience on 8x8 N-Queens ("none of the priors had started solving") before moving to 4x4 Sudoku;
+the paper's GRAM reaches 99.5% at ~10 M params, batch 768, ~28k steps. The ladder was skipped (nothing to scale).
+
+## 14. Where the project stands (final for this session)
+
+- **Test-time scaling on a GRAM that works** (held-out unique 4x4 Sudoku, one checkpoint, seed 0): LPRM best-of-N
+  with the pooled head and the paper's final-correctness target is the efficient selector (98.8 at N=8, ceiling
+  99.4); majority vote 96; the search over prior draws is the only search in this project that improves with
+  budget once its value is read at the trajectory's end (`mcts_horizon: full`: 95.2 -> 97.9 at S=8, above the vote)
+  but each simulation costs ~5x a step-horizon one, so best-of-N wins at matched passes. The step-horizon search is
+  dominated everywhere.
+- **GRAM's reach**: it works on held-out 4x4 Sudoku (multi- and unique-solution) and not, at this scale and
+  recipe, on held-out 8x8 N-Queens (0%; the posterior shortcut) or MiniARC 5x5 (pass@2 1.3 vs TRM 4.7). Both
+  would need GRAM-side work (the prior-sample mechanism, scale, steps) before any test-time ladder means anything.
+- **Harness kept on the branch**: `ladder.sh` / `ladder_table.py`, `gram_width.yaml` (draws-only width, mean or
+  sampled, vote, LPRM best-of-N, validity-scored variants), `treegram_from_gram.yaml` (step or full horizon,
+  eager), tiers `sudoku4`, `sudoku4u`, `nqueens8ho`, `nqueens8ho10k`, MiniARC queues; builders fixed (unique
+  Sudoku, held-out N-Queens); GRAM emits `q_halt_logits`.
+- Single seed throughout. Not run: a second seed of the Sudoku ladder, augmentation, the paper's scale, a
+  compiled full-horizon round (per-length shapes), GRAM tuning for N-Queens / ARC.

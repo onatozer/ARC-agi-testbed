@@ -7,14 +7,15 @@ ckpt: ???
 width: 1
 depth: [8, 16]
 seed: 0
+mean: false # true: the prior's mean guides every copy (deterministic; width 1 is the mean inference); false: each copy draws (the paper)
 checkpoint: null
 checkpoint_list:
   - checkpoint: ${ckpt}
     init_override:
-      arch.eval_prior_mean: false # the training runs save true (the deterministic mean); the paper samples
+      arch.eval_prior_mean: ${mean}
 param_iter:
   arch.halt_max_steps: ${depth}
-suffix: width${width}_s${seed}
+suffix: width${width}_mean${mean}_s${seed}
 different_init: ${width} # N copies per puzzle, differing only by their prior draws (the paper's width; the search's K draws differ the same way)
 different_init_reset_std: null # a float gives every copy a random latent init of that std as well (the old rows of REPORTS_GRAM_TTS.md section 6)
 save_outputs: [lprm_value]
