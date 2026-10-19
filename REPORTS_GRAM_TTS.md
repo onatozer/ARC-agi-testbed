@@ -415,3 +415,36 @@ prior-sample fraction, in bf16 or fp32, with the normed or the raw carry, the fa
 the training puzzles and the prior produces no valid board. What separates pixeli99's 98% from our 0% is therefore
 not in the objective, precision or carry but in scale and budget (10.5 M params, ~33x the puzzle-steps) or in the
 data (all consistent solutions as rows), neither affordable here; the official release is diffed next.
+
+## 16. The official release (https://github.com/ahn-ml/gram-release; notes `diff_official.md`)
+
+The official GRAM is this codebase's own shape (an HRM/TRM fork: one shared 2-layer block, H 3 / L 4, AdamATan2,
+bf16 backbone, stablemax CE, ACT halting, 16-token puzzle prefix, EMA 0.999) with a per-token label-conditioned
+posterior like ours (one-hot y concatenated with u_t; `gram.py:435, 467`). The load-bearing difference is the
+**KL reduction**: `compute_kl` (`models/losses.py:125, 146-151, 184`) is a plain `torch.sum` over batch x tokens x
+the 256 latent dims, set against a per-row token-mean CE, with beta 0.07 (`scripts/nqueens_8.sh:14`); per content
+token that weights the KL 0.07 x 64 = 4.5 nats for nats. Ours averages the KL over the 80 tokens and multiplies by
+0.05 (`gram.py:131-139`): 0.04 per content token, about 110x weaker. The posterior KL our runs settle at (0.2-0.8
+nats per token, 16-66 per puzzle) would cost 1-4 nats of loss per row under the official weighting against a CE
+saving of at most ~0.17, so the label shortcut is a net loss in their objective and nearly free in ours. Both
+public re-implementations (and the earlier `gram-posterior-fixes` branch, whose "fix 1" moved the KL from a token
+sum to a token mean as "64x too strong") made our choice, not the official one.
+
+Also settled: the Gaussian heads run in fp32 inside the bf16 forward and are default-initialised (not zeroed);
+logvar parameterisation, no floor, no temperature; the posterior is sampled on every transition in training,
+including the no-grad cycles (`gram.py:420-473`), the prior on all at eval; no free bits, warm-up, annealing,
+dropout or stop-gradient; a 256-dim latent projected and added to u_t; no value head on N-Queens (`use_value_head:
+False`; the official N-Queens objective is CE + 0.07 KL + 0.5 halt BCE); raw carry; 45,000 optimizer steps x 768 at
+hidden 512 (27x our supervision-step samples); accuracy = any valid board (ours also requires the givens kept);
+data = the paper's enumeration (all 92 solutions x 1-3-queen subsets, every consistent solution as a row, 15% of
+the 5,148 unique inputs held out). No curves or take-off step are published.
+
+Test (plain objective: `lprm_weight=0`, no prior-sample fraction, no bootstrap, sampled guidance; held-out tier,
+3000 steps, TRM 23.7):
+
+| run | kl_strength | posterior on no-grad cycles | accuracy by 500 steps | train exact |
+|---|---|---|---|---|
+| gram_plain (section 15) | 0.05 | no | 0 at every eval | 96.7 |
+| gram_kl56 | 5.6 (0.07 x 80 tokens) | no | pending | |
+| gram_kl45 | 4.48 (0.07 x 64 content tokens) | no | pending | |
+| gram_kl56_pnc | 5.6 | yes (the official training) | pending | |
