@@ -138,7 +138,7 @@ def test_gram_has_no_halt_head_and_runs_every_supervision_step():
     for step in range(1, 5):  # halt_max_steps = 4
         carry, loss, metrics, outputs, _ = model(return_keys=["q_halt_logits"], carry=carry, batch=batch)
         assert bool(carry.halted.all()) == (step == 4) and bool(carry.halted.any()) == (step == 4)
-    assert torch.isfinite(loss) and not outputs and not any(k.startswith(("q_halt", "halted_q")) for k in metrics)
+    assert torch.isfinite(loss) and set(outputs) <= {"q_halt_logits"} and not any(k.startswith(("q_halt", "halted_q")) for k in metrics)  # q_halt_logits is the LPRM stand-in
 
 
 def test_gram_inference_loss_head_needs_no_halt_head():
