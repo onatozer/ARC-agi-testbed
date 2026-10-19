@@ -196,6 +196,11 @@ class InnerNetwork(nn.Module):
         self.q_head = CastedLinear(config.hidden_size, 2, bias=True) 
 
         self.L_level = Blocks(layers = [Block(config, self.seq_len) for _ in range(config.L_layers)], config = self.config)
+        # H_layers > 0: the H update z_H = f_H(z_H, z_L) gets its own block instead of sharing L_level (TRM's single
+        # network); kept as a separate attribute so H_layers=0 adds no state-dict keys
+        # shortcut: TreeRM/TreeGRAM inners still call L_level for both updates, so H_layers > 0 is TRM/GRAM only
+        if config.H_layers > 0:
+            self.H_blocks = Blocks(layers = [Block(config, self.seq_len) for _ in range(config.H_layers)], config = self.config)
         self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
         
@@ -207,6 +212,11 @@ class InnerNetwork(nn.Module):
         with torch.no_grad():
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)
+
+    @property
+    def H_level(self) -> nn.Module:
+        """The block of the H update: its own (H_layers > 0) or L_level (shared, the TRM default)."""
+        return self.H_blocks if self.config.H_layers > 0 else self.L_level
 
     def _board_dims(self) -> Tuple[int, int]:
         if self.config.board_height is not None and self.config.board_width is not None:
@@ -355,13 +365,13 @@ class InnerNetwork(nn.Module):
             for _ in range(self.config.H_cycles - self.config.grad_cycles):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
-                z_H = self.L_level(z_H, z_L, **seq_dict)
+                z_H = self.H_level(z_H, z_L, **seq_dict)
 
         # Finally, last recursion cycle(s) is ran with the gradient attached
         for _ in range(self.config.grad_cycles):
             for __ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            z_H = self.L_level(z_H, z_L, **seq_dict)
+            z_H = self.H_level(z_H, z_L, **seq_dict)
 
         # Clip out the puzzle embedding dims from the decoder
         if self.config.puzzle_emb_ndim != 0:

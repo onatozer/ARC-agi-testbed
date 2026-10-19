@@ -28,6 +28,11 @@ train_overrides:
   # inherits a pretraining value counted in pretraining epochs
   freeze_alternation_epochs: null
   freeze_weights: false # true: only the puzzle embeddings train (Embed-TTT of arXiv 2609.21181)
+# L-module TTT (REPORTS_ARC.md section 7): e.g. reinit_substrings=[inner.L_level.] train_only_substrings=[inner.L_level.]
+# re-initialises the L block of a checkpoint trained with arch.H_layers > 0 and trains only it (plus the puzzle embeddings)
+reinit_substrings: []
+train_only_substrings: []
+lprm_steps: 0 # GRAM: passes over the test inputs after the demo epochs, maximising the LPRM value (no labels)
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it

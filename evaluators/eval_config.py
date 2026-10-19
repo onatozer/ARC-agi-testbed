@@ -61,5 +61,8 @@ class TTTConfig(pydantic.BaseModel):
     ttt_runs_per_task: int  # independent runs whose votes are pooled
     num_views: int  # eval passes per run, pooled; > 1 only helps models with random views (e.g. VARC's canvas)
     train_overrides: Dict[str, Any] = Field(default_factory=dict)  # PretrainConfig fields for the TTT training, e.g. lr
+    reinit_substrings: List[str] = Field(default_factory=list)  # checkpoint keys containing one of these are not loaded: those modules start from a fresh init (e.g. inner.L_level.)
+    train_only_substrings: List[str] = Field(default_factory=list)  # only parameters whose name contains one of these train (the puzzle-embedding buffer always does); empty = all
+    lprm_steps: int = 0  # after the demo epochs, passes over the task's test inputs training the trainable parameters to raise the model's LPRM value (GRAM; label-free)
     seed: int = 0
     wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

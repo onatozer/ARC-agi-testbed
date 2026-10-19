@@ -19,7 +19,7 @@ finishes last writes the averaged metrics and the merged submission and logs the
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import json
 import os
 import shutil
@@ -40,6 +40,7 @@ from pretrain import create_dataloader, create_evaluators, init_train_state, tra
 from utils.checkpoint import load_model_state_dict
 from utils.functions import load_model_class
 from utils.printing import print_info
+from utils.training import apply_to_tensors, tree_to_device
 
 
 torch.set_float32_matmul_precision("high")
@@ -86,6 +87,60 @@ def start_state(ckpt: Dict[str, Any], train_cfg: PretrainConfig) -> Dict[str, to
     return state
 
 
+def _reinit_state(state: Dict[str, torch.Tensor], substrings: List[str]) -> Dict[str, torch.Tensor]:
+    """The checkpoint without the keys containing one of substrings: those modules keep the fresh model's own init."""
+    for s in substrings:
+        if not any(s in k for k in state):
+            raise ValueError(f"reinit_substrings entry {s!r} matches no checkpoint key.")
+    return {k: v for k, v in state.items() if not any(s in k for s in substrings)}
+
+
+def _freeze_except(model: torch.nn.Module, substrings: List[str]) -> int:
+    """Only the parameters whose name contains one of substrings keep requires_grad (the optimizers skip the others;
+    the puzzle-embedding table is a buffer and is not affected). Empty: everything trains. Returns the trainable count."""
+    trainable = 0
+    for name, p in model.named_parameters():
+        keep = not substrings or any(s in name for s in substrings)
+        p.requires_grad_(keep)
+        trainable += p.numel() if keep else 0
+    if trainable == 0:
+        raise ValueError(f"train_only_substrings {substrings} match no parameter.")
+    return trainable
+
+
+def _lprm_phase(config: PretrainConfig, train_state: Any, eval_loader: Any, eval_metadata: Any, passes: int) -> Tuple[float, float]:
+    """Label-free TTT on the task's test inputs: `passes` passes over them, every supervision step raising the model's
+    LPRM value (its own prediction of its correctness, GRAM's v_head) by gradient on the trainable parameters. The
+    model runs in eval mode (the prior's guidance, no posterior, no KL: labels unused) at the optimizers' base lr.
+    Returns the mean value at the last supervision step of the first and the last batch."""
+    model = train_state.model.model
+    model.eval()
+    device = next(model.parameters()).device
+    values: List[float] = []
+    for _ in range(passes):
+        for _set_name, batch, _n in eval_loader:
+            batch = tree_to_device(batch, device)
+            if batch["inputs"].shape[0] == 0:
+                continue
+            mask = (batch["puzzle_identifiers"] != eval_metadata.blank_identifier_id).float()  # padded rows
+            carry = None
+            with torch.enable_grad():
+                for _ in range(model.config.halt_max_steps):
+                    carry, out = model(carry, batch)
+                    if "lprm_value" not in out:
+                        raise ValueError(f"lprm_steps needs a model with an LPRM value; {config.arch.name} has none.")
+                    value = out["lprm_value"].float()
+                    (-(torch.log(value.clamp_min(1e-6)) * mask).sum() / mask.sum().clamp_min(1)).backward()
+                    for optim, base_lr in zip(train_state.optimizers, train_state.optimizer_lrs):
+                        for group in optim.param_groups:
+                            group["lr"] = base_lr
+                        optim.step()
+                        optim.zero_grad()
+                    carry = apply_to_tensors(carry, torch.Tensor.detach)  # the graph never spans supervision steps
+            values.append(float((value.detach() * mask).sum() / mask.sum().clamp_min(1)))
+    return values[0], values[-1]
+
+
 def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.Tensor], data_dir: Path, eval_dir: Path, seed: int) -> Dict[str, float]:
     config = train_cfg.model_copy(deep=True)
     _apply_overrides(config, cfg.train_overrides)
@@ -114,7 +169,8 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         _seed(seed + run, 0)
         train_state = init_train_state(config, train_metadata, rank=0, world_size=1)
         # The new aux tasks' puzzle embeddings start from the mean of the checkpoint's (load_model_state_dict's resize)
-        load_model_state_dict(train_state.model, dict(state), strict=False)
+        load_model_state_dict(train_state.model, _reinit_state(dict(state), cfg.reinit_substrings), strict=False)
+        trainable = _freeze_except(train_state.model, cfg.train_only_substrings)
         if train_state.ema_helper is not None:
             train_state.ema_helper.register(train_state.model)
         config.lr_warmup_steps = cfg.warmup_epochs * train_state.steps_per_epoch
@@ -134,7 +190,10 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             # The sampler fills a batch with whole aux tasks and drops under-filled tails: too few aux tasks (or demos) for
             # the batch size means no training at all, which would silently evaluate the untouched checkpoint
             raise ValueError(f"TTT trained for 0 steps: {train_metadata.total_groups} aux tasks x {train_metadata.mean_puzzle_examples:.1f} demos never fill global_batch_size={config.global_batch_size}.")
-        print_info(f"TTT run {run}: {steps} steps, train lm_loss {losses[0]:.3f} -> {losses[-1]:.3f}" if losses else f"TTT run {run}: {steps} steps")
+        print_info(f"TTT run {run}: {steps} steps on {trainable} trainable parameters" + (f", train lm_loss {losses[0]:.3f} -> {losses[-1]:.3f}" if losses else ""))
+        if cfg.lprm_steps > 0:
+            before, after = _lprm_phase(config, train_state, eval_loader, eval_metadata, cfg.lprm_steps)
+            print_info(f"TTT run {run}: {cfg.lprm_steps} LPRM passes over the test inputs, mean LPRM value {before:.3f} -> {after:.3f}")
 
         if train_state.ema_helper is not None:
             train_state.ema_helper.swap(train_state.model)

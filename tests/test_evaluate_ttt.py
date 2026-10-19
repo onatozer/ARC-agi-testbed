@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from evaluate_ttt import aggregate, build_task_dataset, load_tasks
+from evaluate_ttt import _freeze_except, _reinit_state, aggregate, build_task_dataset, load_tasks
 from evaluators.eval_config import TTTConfig
 
 CONFIG_DIR = str(Path(__file__).resolve().parents[1] / "config")
@@ -75,6 +76,31 @@ def test_load_tasks_reads_a_builds_test_puzzles_without_arc_agi_files(tmp_path):
 def test_task_ids_file_is_a_cli_option():
     cfg = _ttt_cfg("checkpoint=ckpt.pth", "task_ids_file=heldout_tasks.json", "train_overrides.freeze_weights=true")
     assert cfg.task_ids_file == "heldout_tasks.json" and cfg.train_overrides["freeze_weights"] is True
+
+
+def test_l_module_ttt_options_are_cli_options():
+    cfg = _ttt_cfg("checkpoint=ckpt.pth", "reinit_substrings=[inner.L_level.]", "train_only_substrings=[inner.L_level.]", "lprm_steps=3")
+    assert cfg.reinit_substrings == ["inner.L_level."] and cfg.train_only_substrings == ["inner.L_level."] and cfg.lprm_steps == 3
+    assert _ttt_cfg("checkpoint=ckpt.pth").reinit_substrings == [] and _ttt_cfg("checkpoint=ckpt.pth").lprm_steps == 0
+
+
+def test_reinit_and_train_only_reach_just_the_l_module():
+    from models.recursive_reasoning.merged_arch import TRMModel
+    from tests.test_gram import _cfg
+
+    model = TRMModel(_cfg(H_layers=2))
+    state = {f"model.{k}": v for k, v in model.state_dict().items()}
+    kept = _reinit_state(state, ["inner.L_level."])
+    assert all("inner.L_level." not in k for k in kept) and any("inner.H_blocks." in k for k in kept) and len(kept) < len(state)
+    with pytest.raises(ValueError):
+        _reinit_state(state, ["no_such_module."])
+
+    trainable = _freeze_except(model, ["inner.L_level."])
+    assert trainable == sum(p.numel() for p in model.inner.L_level.parameters())
+    assert all(p.requires_grad == ("inner.L_level." in n) for n, p in model.named_parameters())
+    assert _freeze_except(model, []) == sum(p.numel() for p in model.parameters()) and all(p.requires_grad for p in model.parameters())
+    with pytest.raises(ValueError):
+        _freeze_except(model, ["no_such_module."])
 
 
 def test_aggregate_waits_for_every_task_then_averages_and_merges(tmp_path):

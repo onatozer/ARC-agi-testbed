@@ -282,7 +282,7 @@ def create_model(
 
     # With optimizer=muon, the 2D weight matrices of the looped blocks go to Muon and everything else stays on AdamAtan2
     if config.optimizer == "muon":
-        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and ".L_level." in name]
+        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and (".L_level." in name or ".H_blocks." in name)]
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}

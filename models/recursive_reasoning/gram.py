@@ -165,7 +165,7 @@ class GRAM_Inner(InnerNetwork):
         for _ in range(remaining):
             for _ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
-            u = self.L_level(z_H, z_L, **seq_dict)
+            u = self.H_level(z_H, z_L, **seq_dict)
             z_H = u + self.prior_head(u)[0]  # as mean inference (and TreeGRAM's rollouts) continue a trajectory
         z = rms_norm(z_H, self.config.rms_norm_eps)
         logits = self.lm_head(z[:, self.config.puzzle_emb_len :] if self.config.puzzle_emb_ndim != 0 else z)
@@ -199,7 +199,7 @@ class GRAM_Inner(InnerNetwork):
                 for _ in range(self.config.L_cycles):
                     z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
-                u_t = self.L_level(z_H, z_L, **seq_dict)
+                u_t = self.H_level(z_H, z_L, **seq_dict)
                 if bootstrap and self.config.lprm_rollout_cycles == "all":
                     lprm_pairs.append(self._lprm_rollout_pairs(u_t, z_L, x, y, self.config.H_cycles - 1 - cycle))
 
@@ -215,7 +215,7 @@ class GRAM_Inner(InnerNetwork):
             for __ in range(self.config.L_cycles):
                 z_L = self.L_level(z_L, z_H + x, **seq_dict)
 
-            u_t = self.L_level(z_H, z_L, **seq_dict)
+            u_t = self.H_level(z_H, z_L, **seq_dict)
             eps, guidance_loss = self._guidance(u_t, y, use_posterior=self.training, prior_rows=prior_rows)
             kl_loss += guidance_loss
             if bootstrap:
