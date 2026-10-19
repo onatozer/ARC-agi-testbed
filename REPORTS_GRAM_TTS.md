@@ -365,3 +365,45 @@ the paper's GRAM reaches 99.5% at ~10 M params, batch 768, ~28k steps. The ladde
   Sudoku, held-out N-Queens); GRAM emits `q_halt_logits`.
 - Single seed throughout. Not run: a second seed of the Sudoku ladder, augmentation, the paper's scale, a
   compiled full-horizon round (per-length shapes), GRAM tuning for N-Queens / ARC.
+
+## 15. Why the public re-implementations learn N-Queens and ours does not (user, 2026-10-19)
+
+Two researchers diffed https://github.com/ad3002/gram and https://github.com/pixeli99/GRAM (commit 7639e5a)
+against our GRAM, file by file (notes `diff_ad3002.md`, `diff_pixeli99.md`). The KL (balanced, alpha 0.8, summed
+over the hidden dim, averaged over tokens), the reparameterisation and variance floor, guidance on every
+transition, the posterior on the grad transition only and prior draws on the no-grad ones, and the accuracy
+definition are the same on all three sides. The differences:
+
+**ad3002/gram (89.5% held-out N-Queens at 1500 steps, 11 M params)**: its posterior cannot see the label. Its
+default `posterior_y_encoding: decoder_embed_mean` averages the label's embedding over the 64 positions, and every
+valid N-Queens board has exactly 8 queens and 56 empties, so that vector is the same for every puzzle (their own
+docstring: completions differ by 3e-7 on a norm of 10.7; KL 0.007 nats). Their GRAM is TRM plus learned,
+label-blind noise, and its prior trivially matches its posterior. Our per-position label is the arm they also
+built (`per_position`): 29.5% test at 40x our budget, and 0.0% held-out when the no-grad transitions sampled the
+posterior; they call both readings broken. Second-order: they train one canonical (lex-min) completion per unique
+input; our build draws a random solution per row (568 of 2575 unique training inputs carry two or more targets).
+
+**pixeli99/GRAM (98.1% held-out, 10.5 M params, ~27k optimizer steps x 768 x 16 supervision steps, ~33x our
+puzzle-steps)**: the same per-position mechanism as ours, with: CE + beta KL only (no LPRM loss, no prior-sample
+fraction, no bootstrap); fp32 / TF32, with a code comment that bf16 autocast "stalls the recursion because gradients
+to the zero-init Gaussian heads round to zero" (ours runs those heads in bf16); the raw state carried between
+supervision steps (rms-normed only in the decode; ours carries the normed state); lr 1e-4 constant, EMA 0.9999,
+clip 1.0, 16 supervision steps, separate H and L blocks; data enumerating all 92 solutions x all 1/2/3-queen subsets
+with every consistent solution as a row and 15% of unique inputs held out (their deterministic baseline 64.1 vs our
+TRM 68.9). No learning curve is published, so their take-off step is unknown.
+
+**A trap in ours**: `+arch.eval_prior_mean=true` also removed the draws from training's no-grad cycles (every
+section 3 run); fixed (the key now applies at eval only). The held-out runs of section 13 used `false`.
+
+Options added to test the candidates (commits 4570d25, 6866ecb): `posterior_y_pool: position | mean` (ad3002's
+label-blind posterior), `lprm_weight` (0 = pixeli99's objective), `carry_norm: true | false` (the raw carry),
+`forward_dtype=float32` (existing). Runs on the held-out tier at 3000 steps, sampled guidance (TRM 23.7, GRAM
+pool+final 0 at this budget):
+
+| run | what | accuracy at 3000 | train exact |
+|---|---|---|---|
+| gram_ypool | label-blind posterior, otherwise plain | pending | |
+| gram_ypool_pf | label-blind posterior + pooled head, final target, frac 0.25, bootstrap | pending | |
+| gram_plain | pixeli99's objective (no LPRM loss), bf16 | pending | |
+| gram_fp32 | the same in fp32 | pending | |
+| gram_raw | the same with the raw carry | pending | |
