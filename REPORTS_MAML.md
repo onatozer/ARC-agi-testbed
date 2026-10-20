@@ -93,6 +93,9 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
 - 2026-10-20 12:05, `plain_noemb mm_s5`: 0 of 30, token accuracy 0.683, support loss 1.09 -> 1.00. Under the same 5-step
   SGD adaptation the meta-trained separate-H model gets 0.728 and fits the demos further (0.91): a MAML gain in
   token accuracy of ~4.5 points over the plainly trained model, and none in solved tasks (both 0).
+- 2026-10-20 12:30, `plain_noemb mm_s10`: 0 of 30, token accuracy 0.698, support loss 1.09 -> 0.93 (the separate-H MAML
+  model at 10 steps: 0.730, 0.87). The gap holds at 10 steps (~3 points); still no task solved by SGD adaptation on
+  any checkpoint. The three compiled `mm_adam` loops run next.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -138,4 +141,5 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm_sep` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.730 |
 | `maml_trm_sep` | `mm_adam` (compiled follow-up) | (queued) | | | |
 | `plain_noemb` (no MAML, no embeddings) | `mm_s5`: 5 SGD steps, α 0.1 (the paper's fine-tune baseline) | 0 | 0 | 0 | 0.683 |
-| `plain_noemb` | `mm_s10` / `mm_adam` | (running) | | | |
+| `plain_noemb` | `mm_s10`: 10 SGD steps | 0 | 0 | 0 | 0.698 |
+| `plain_noemb` | `mm_adam` (compiled) | (queued) | | | |
