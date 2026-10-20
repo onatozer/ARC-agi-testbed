@@ -386,3 +386,8 @@ Same budget as the re-run: puzzle-level episodes of 16 copies, 4 puzzles per met
 | `gram_ho` | `ms3g_s5` / `s10`: the heads, α 0.01 | (queued) | | | | |
 
 Progress log (partial Meta-SGD):
+- 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
+  support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
+  0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
+  meta-objective wants the rows to move a little more than the probe's α, not less. Adapting the rows alone, the
+  post-adaptation query loss is already below the everything-adapted MAML re-run's at the same step (0.86 vs ~0.95).
