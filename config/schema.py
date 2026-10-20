@@ -47,11 +47,13 @@ class MAMLConfig(BaseModel):
     enabled: bool = False
     inner_steps: int = 1  # cbfinn's num_updates
     inner_lr: float = 0.1  # cbfinn's update_lr (alpha)
+    meta_batch_size: int = 4  # puzzles (tasks) per meta-step
+    support_copies: int = 16  # augmented copies of a puzzle in an episode (evaluate_ttt.py's num_aux_tasks); one row of each is the query
 
     @pydantic.model_validator(mode="after")
     def _validate(self) -> MAMLConfig:
-        if self.enabled and (self.inner_steps < 1 or self.inner_lr <= 0):
-            colored_exception(ValueError, "maml.inner_steps must be >= 1 and maml.inner_lr > 0.")
+        if self.enabled and (self.inner_steps < 1 or self.inner_lr <= 0 or self.meta_batch_size < 1 or self.support_copies < 1):
+            colored_exception(ValueError, "maml.inner_steps, meta_batch_size and support_copies must be >= 1 and maml.inner_lr > 0.")
         return self
 
 

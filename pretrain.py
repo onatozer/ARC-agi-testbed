@@ -1,5 +1,6 @@
 from typing import Optional, Any, List, Dict, Sequence, Tuple
 from dataclasses import replace
+import json
 import os
 import resource
 import math
@@ -37,7 +38,8 @@ except Exception:
 
 from dataset.puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
-from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
+from models.losses import IGNORE_LABEL_ID
+from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed, _sparse_emb_signsgd_dist
 
 from utils.training import (
     build_wandb_run_dir,
@@ -435,6 +437,92 @@ def _trainable(model: nn.Module) -> List[torch.Tensor]:
     return [p for p in model.parameters() if p.requires_grad]
 
 
+def _puzzle_emb(model: nn.Module) -> Optional[nn.Module]:
+    return getattr(model.model, "puzzle_emb", None)
+
+
+def _maml_targets(model: nn.Module) -> List[torch.Tensor]:
+    """What MAML's inner loop adapts: the trainable parameters plus the puzzle-embedding table when the model has one
+    (a task's identifier rows adapt with the weights). CastedSparseEmbedding hands gradients to a fixed-size local
+    buffer; its path is bypassed (emptied) so the table itself takes the gradient, for any batch size."""
+    targets = _trainable(model)
+    emb = _puzzle_emb(model)
+    if emb is not None:
+        if emb.local_weights.shape[0] != 0:
+            emb.local_weights = nn.Buffer(torch.zeros((0, emb.weights.shape[1]), device=emb.weights.device, requires_grad=True), persistent=False)
+        emb.weights.requires_grad_(True)
+        targets.append(emb.weights)
+    return targets
+
+
+def _maml_release(model: nn.Module) -> None:
+    """Undoes _maml_targets' grad flag on the embedding table (the SignSGD optimizer tells its tensors apart by it)."""
+    emb = _puzzle_emb(model)
+    if emb is not None:
+        emb.weights.requires_grad_(False)
+
+
+class EpisodeSampler:
+    """MAML episodes from a build's train split. A task is one puzzle (a group); an episode takes `copies` of its
+    augmented copies, holds one random row of each out as the query and uses the copies' other rows as the support,
+    the structure evaluate_ttt.py's adaptation sees (every aux copy's demos, then the copies' test pairs). Copies
+    with a single row are skipped."""
+
+    FIELDS = ("inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices")
+
+    def __init__(self, data_path: str, meta_batch_size: int, copies: int, device: torch.device, seed: int = 0) -> None:
+        split = os.path.join(data_path, "train")
+        with open(os.path.join(split, "dataset.json")) as f:
+            self.ignore_label_id = json.load(f).get("ignore_label_id")
+        self.data = {k: np.load(os.path.join(split, f"all__{k}.npy"), mmap_mode="r") for k in self.FIELDS}
+        path = os.path.join(split, "all__object_ids.npy")
+        self.object_ids = np.load(path, mmap_mode="r") if os.path.exists(path) else None
+        self.row_puzzle = np.repeat(np.arange(len(self.data["puzzle_indices"]) - 1), np.diff(self.data["puzzle_indices"]))
+        self.meta_batch_size, self.copies, self.device = meta_batch_size, copies, device
+        self.rng = np.random.default_rng(seed)
+
+    def sample(self) -> List[Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
+        group_indices, puzzle_indices = self.data["group_indices"], self.data["puzzle_indices"]
+        episodes = []
+        for g in self.rng.choice(len(group_indices) - 1, size=min(self.meta_batch_size, len(group_indices) - 1), replace=False):
+            puzzles = np.arange(group_indices[g], group_indices[g + 1])
+            support, query = [], []
+            for p in self.rng.choice(puzzles, size=min(self.copies, len(puzzles)), replace=False):
+                rows = np.arange(puzzle_indices[p], puzzle_indices[p + 1])
+                if len(rows) < 2:
+                    continue
+                q = self.rng.choice(rows)
+                support.extend(int(r) for r in rows if r != q)
+                query.append(int(q))
+            if support:
+                episodes.append((self._batch(support), self._batch(query)))
+        return episodes
+
+    def _batch(self, rows: List[int]) -> Dict[str, torch.Tensor]:
+        rows = np.array(sorted(rows))
+        labels = self.data["labels"][rows].astype(np.int32)
+        if self.ignore_label_id is not None:
+            labels[labels == self.ignore_label_id] = IGNORE_LABEL_ID
+        batch = {
+            "inputs": self.data["inputs"][rows].astype(np.int32),
+            "labels": labels,
+            "puzzle_identifiers": self.data["puzzle_identifiers"][self.row_puzzle[rows]].astype(np.int32),
+        }
+        if self.object_ids is not None:
+            batch["object_ids"] = self.object_ids[rows].astype(np.int32)
+        return {k: torch.from_numpy(v).to(self.device) for k, v in batch.items()}
+
+
+_EPISODES: Dict[str, EpisodeSampler] = {}
+
+
+def _episodes(config: PretrainConfig, device: torch.device) -> EpisodeSampler:
+    key = config.dataset.data_path
+    if key not in _EPISODES:
+        _EPISODES[key] = EpisodeSampler(key, config.maml.meta_batch_size, config.maml.support_copies, device, seed=config.seed)
+    return _EPISODES[key]
+
+
 def task_grads(model: nn.Module, batch: Dict[str, torch.Tensor], params: List[torch.Tensor]) -> Tuple[List[Optional[torch.Tensor]], torch.Tensor]:
     """Gradient of a task's loss w.r.t. params and the loss itself (per row): the batch run from a fresh carry through
     every supervision step, as eval runs a puzzle; rows that halt early restart on the same rows. Each step's gradient
@@ -459,7 +547,7 @@ def task_grads(model: nn.Module, batch: Dict[str, torch.Tensor], params: List[to
 def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float) -> List[float]:
     """MAML's inner loop on one task: `steps` SGD steps of size lr on the trainable parameters, in place. Returns the
     task loss before each step. Shared by meta-training (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
-    params = _trainable(model)
+    params = _maml_targets(model)
     losses = []
     for _ in range(steps):
         grads, loss = task_grads(model, batch, params)
@@ -471,26 +559,16 @@ def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr:
     return losses
 
 
-def maml_batch(model: nn.Module, batch: Dict[str, torch.Tensor], cfg: Any) -> Tuple[List[Optional[torch.Tensor]], int, Dict[str, torch.Tensor]]:
-    """First-order MAML over the puzzles of a batch (each augmented copy of a task is one task; its rows are contiguous
-    and share a puzzle identifier): per task, one random row is the query and the rest the support; the support
-    adapts a copy of the weights (maml_adapt), the query's gradient at the adapted weights is summed over the tasks
-    (the paper's first-order meta-gradient), and the weights are restored. Puzzles with a single row (the truncated
-    last one) are skipped. Returns (meta-gradient sums, number of tasks, metrics for train_batch's logging)."""
-    params = _trainable(model)
+def maml_batch(model: nn.Module, episodes: List[Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]], cfg: Any) -> Tuple[List[Optional[torch.Tensor]], int, Dict[str, torch.Tensor]]:
+    """First-order MAML over a meta-batch of episodes (EpisodeSampler: a puzzle's augmented copies, support / query):
+    per task the support adapts a copy of the weights and embedding rows (maml_adapt), the query's gradient at the
+    adapted weights is summed over the tasks (the paper's first-order meta-gradient), and the weights are restored.
+    Returns (meta-gradient sums over _maml_targets, number of tasks, metrics for train_batch's logging)."""
+    params = _maml_targets(model)
     theta = [p.detach().clone() for p in params]
     meta_grads: List[Optional[torch.Tensor]] = [None] * len(params)
-    _, counts = torch.unique_consecutive(batch["puzzle_identifiers"], return_counts=True)
-    parts = {k: torch.split(v, counts.tolist()) for k, v in batch.items()}
     n_tasks, support_loss, query_loss = 0, 0.0, 0.0
-    for t, n in enumerate(counts.tolist()):
-        if n < 2:
-            continue
-        task = {k: v[t] for k, v in parts.items()}
-        q = int(torch.randint(n, (1,)))
-        keep = torch.arange(n, device=task["inputs"].device) != q
-        support = {k: v[keep] for k, v in task.items()}
-        query = {k: v[q : q + 1] for k, v in task.items()}
+    for support, query in episodes:
         support_loss += maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr)[0]
         grads, loss = task_grads(model, query, params)
         query_loss += float(loss)
@@ -501,7 +579,7 @@ def maml_batch(model: nn.Module, batch: Dict[str, torch.Tensor], cfg: Any) -> Tu
             for p, p0 in zip(params, theta):
                 p.copy_(p0)
         n_tasks += 1
-    device = batch["inputs"].device
+    device = params[0].device
     metrics = {  # fprl/ keys are logged as-is by train_batch (not divided by the batch size)
         "count": torch.tensor(float(n_tasks), device=device),
         "fprl/query_loss": torch.tensor(query_loss / max(n_tasks, 1), device=device),
@@ -553,10 +631,21 @@ def train_batch(
     flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
     with flop_counter:
         if config.maml.enabled:
-            # First-order MAML: the meta-gradient replaces backward; the optimizer / schedule / logging below are shared
-            meta_grads, n_tasks, metrics = maml_batch(train_state.model, batch, config.maml)
-            for p, g in zip(_trainable(train_state.model), meta_grads):
-                p.grad = None if g is None else g / max(n_tasks, 1)
+            # First-order MAML: the meta-gradient replaces backward; the optimizer / schedule / logging below are shared.
+            # The loader's batch only paces the steps; the episodes come from the sampler
+            meta_grads, n_tasks, metrics = maml_batch(train_state.model, _episodes(config, device).sample(), config.maml)
+            emb = _puzzle_emb(train_state.model)
+            for p, g in zip(_maml_targets(train_state.model), meta_grads):
+                if emb is not None and p is emb.weights:
+                    if g is not None:  # the embedding table: the recipe's SignSGD on the rows the queries touched
+                        with torch.no_grad():
+                            rows = g.abs().sum(1).nonzero().flatten()
+                            _sparse_emb_signsgd_dist(g[rows] / max(n_tasks, 1), rows.to(torch.int32), emb.weights,
+                                                     lr=compute_lr(train_state.optimizer_lrs[0], config, train_state),
+                                                     weight_decay=config.puzzle_emb_weight_decay, world_size=1)
+                else:
+                    p.grad = None if g is None else g / max(n_tasks, 1)
+            _maml_release(train_state.model)
         elif "compute_target_q" in model_forward_signatures:
             compute_target_q = train_state.step % config.target_q_update_every == 0
             train_state.carry, loss, metrics, _, all_finish = train_state.model(
