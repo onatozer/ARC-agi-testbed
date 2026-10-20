@@ -106,6 +106,31 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
 - 2026-10-20 13:40, `maml_trm mm_adam2`: 0 of 30, token accuracy 0.617: the full AdamAtan2 fine-tune on the shared-block
   MAML checkpoint does no better than its own inner loop (0.61), and far worse than the plainly trained model
   under the same loop (0.72). The separate-H checkpoint's `mm_adam2` is the last run.
+- 2026-10-20 13:55, `maml_trm_sep mm_adam2`: 1 of 30 (pass@1/2/5 all 1), token accuracy 0.739: the only task solved from
+  a MAML checkpoint, by the ordinary 160-step AdamAtan2 loop rather than the meta-trained inner loop. The grid is
+  complete.
+
+## Verdict
+
+1. **MAML's inner loop does not solve held-out MiniARC tasks at this scale.** Both meta-trained checkpoints solve 0 of
+   30 under 1, 5 or 10 SGD steps of the meta-trained adaptation. What meta-training buys is token accuracy under the
+   same adaptation: separate-H MAML 0.728 / 0.730 (5 / 10 steps) against the plainly trained no-embedding model's
+   0.683 / 0.698, about 3-4.5 points, and a lower demo loss after adaptation (0.91 vs 1.00 at 5 steps). The
+   shared-block MAML model adapts worse than the plain model (0.61).
+2. **Against the existing test-time training, MAML loses.** The reference is section 7's full `ttt_mini` fine-tune of
+   the embedding models: 2 of 30 (shared) and 7 of 30 (separate H). The MAML checkpoints under that same loop:
+   0 (shared, token accuracy 0.617) and 1 (separate H, 0.739); the plain no-embedding model under it: 0 (0.723).
+   Dropping the puzzle embedding costs more than meta-training gives back: section 3 found the embedding carries
+   most of TRM's adaptation, and every MAML run here had none.
+3. **The separate H block helps again** (query loss 1.03 vs 1.35 in meta-training, 0.73 vs 0.61 token accuracy at test),
+   consistent with section 7.
+
+Caveats: first-order MAML with one inner step at a fixed α 0.1, 2000 meta-steps of ~3 tasks (6k task episodes,
+against 4000 x 128 rows for plain training), eager and sequential (3 h per run on the laptop GPU), one seed, 30
+tasks, no puzzle embeddings in any MAML run. Untried and cheap to add: keep the puzzle embeddings in the MAML model
+(the inner loop adapts the weights, the embedding trains in the outer loop as usual), 3 inner steps at train,
+longer meta-training, or a smaller α with more steps; second-order MAML would need a functional forward of the
+recursive model.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -149,7 +174,7 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm_sep` (separate H, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.718 |
 | `maml_trm_sep` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.728 |
 | `maml_trm_sep` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.730 |
-| `maml_trm_sep` | `mm_adam2`: the ordinary `ttt_mini` loop | (running) | | | |
+| `maml_trm_sep` | `mm_adam2`: the ordinary `ttt_mini` loop | 1 | 1 | 1 | 0.739 |
 | `plain_noemb` (no MAML, no embeddings) | `mm_s5`: 5 SGD steps, α 0.1 (the paper's fine-tune baseline) | 0 | 0 | 0 | 0.683 |
 | `plain_noemb` | `mm_s10`: 10 SGD steps | 0 | 0 | 0 | 0.698 |
 | `plain_noemb` | `mm_adam`: the ordinary `ttt_mini` loop (160 AdamAtan2 steps) | 0 | 0 | 0 | 0.723 |
