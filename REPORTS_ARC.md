@@ -376,4 +376,22 @@ parameters, and the LPRM phase moves the mean value (0.82 -> 0.98 on a 40-step m
 satisfiable); every variant evaluates and reports pass@k.
 
 ### Results
-(pending: filled in as the queue lands)
+Raw numbers: each variant's `ttt_metrics.json` under
+`~/ARC-agi-testbed/autoresearch_runs/miniarc5/<run>/outputs/*/*/*/eval_preds/step_4000_lr_<variant>/` (per-task
+`tasks/<name>.json` next to it), the per-task training lines in `<run dir>/ttt_lr_<variant>.log`, and the eval rows
+under `eval/lr_<variant>/*` in each run's W&B page. Pretrain wall: `trm_sep_ho` 503 s, `trm_ho2` 677 s,
+`gram_sep_ho` 2541 s (the 4 bootstrap draws), no errors. Counts out of 30 held-out tasks; `ttt_mini` throughout.
+
+| checkpoint | variant | pass@1 | pass@2 | pass@5 | token acc |
+|---|---|---|---|---|---|
+| TRM, separate H (`trm_sep_ho`) | `lr_full`: everything trains (control) | 3 | 7 | 8 | 0.803 |
+| TRM, separate H | `lr_lonly`: pretrained L block only | 3 | 3 | 5 | 0.793 |
+| TRM, separate H | `lr_lreinit`: L block re-initialised, trained alone | 1 | 1 | 2 | 0.703 |
+| TRM, shared (`trm_ho2`) | `lr_full` | (running) | | | |
+| GRAM, separate H (`gram_sep_ho`) | `lr_full` / `lr_lonly` / `lr_lreinit` / `lr_lonly_lprm` / `lr_lreinit_lprm` | (queued) | | | |
+
+First reading (TRM): re-initialising the L block hurts. Training only the pretrained L block keeps about half of full
+fine-tuning's gain (3 vs 7 at pass@2), and starting it from scratch keeps almost none (1): 160 steps on 16 aux
+copies of ~3 demos do not fit a fresh 2-layer block well enough (token accuracy 0.70 vs 0.80). The separate-H model's
+own full fine-tune, 7 of 30 at pass@2, is well above the shared TRM's 2 of 30 in section 3; the `trm_ho2` control on
+the same rebuilt build says whether that is the separate H block or seed spread.
