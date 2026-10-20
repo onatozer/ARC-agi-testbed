@@ -56,6 +56,8 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   no errors. Final blocks: query loss after adaptation 1.35 (from 1.49), support loss before adaptation 1.64 (from
   1.95): both moved in the second half. `maml_trm_sep` (separate H block) is training next, then `plain_noemb`, then
   the TTT variants.
+- 2026-10-20 07:20, `maml_trm_sep` finished: 2000 meta-steps in 9,370 s, no errors; query loss after adaptation 1.38 ->
+  1.03, flat over the last 800 steps. `plain_noemb` (13 min) is training, then the 11 TTT variants.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -70,6 +72,21 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
 In-training eval (no adaptation, the held-out test pairs): pass@2 0 of 30 at steps 1000 and 2000, token accuracy
 0.600 (the background colour's share: without an embedding or an adaptation step the model has nothing to tell the
 tasks apart, as expected).
+
+### Meta-training curve, `maml_trm_sep` (separate H block; 2000 steps, 9,370 s)
+
+| meta-steps | support loss before adaptation | query loss after the adapted step |
+|---|---|---|
+| 1-399 | 1.80 | 1.38 |
+| 400-798 | 1.35 | 1.13 |
+| 799-1197 | 1.35 | 1.06 |
+| 1198-1596 | 1.40 | 1.03 |
+| 1597-1995 | 1.39 | 1.03 |
+
+In-training eval (no adaptation): pass@2 0 of 30 at steps 1000 and 2000, token accuracy 0.612 / 0.654 (above the
+0.600 background share: with its own H block the unadapted model already gets some cells beyond the background).
+The separate-H model meta-trains clearly better than the shared one: post-adaptation query loss 1.03 vs 1.35, and
+its unadapted support loss 1.39 vs 1.64.
 
 ### Held-out TTT results (pass@k counts of 30; filled in as each variant lands)
 
