@@ -197,6 +197,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             losses = maml_adapt(train_state.model, tree_to_device(support, next(train_state.model.parameters()).device), steps, config.maml.inner_lr)
             print_info(f"TTT run {run}: {steps} MAML steps (lr {config.maml.inner_lr}) on {support['inputs'].shape[0]} demos, {trainable} trainable parameters, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
         else:
+            config.maml.enabled = False  # maml_steps=0 on a MAML checkpoint: plain supervision steps, not meta-steps per batch
             for _set_name, batch, global_batch_size in train_loader:
                 step_metrics = train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
                 steps += 1
