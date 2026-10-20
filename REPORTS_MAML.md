@@ -52,16 +52,24 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   step 1.54 / 1.45 / 1.42 / 1.41 / 1.44, flat since step ~400; support loss before adaptation 2.07 / 1.85 / 1.79 /
   2.04 / 2.13, not improving: the shared initialisation is not getting better at a task unadapted, only (slightly)
   after its one SGD step, which is what the meta-objective asks for.
+- 2026-10-20 04:35, `maml_trm` finished: 2000 meta-steps in 11,679 s (3.2 h, GPU clock 600-750 MHz most of the way),
+  no errors. Final blocks: query loss after adaptation 1.35 (from 1.49), support loss before adaptation 1.64 (from
+  1.95): both moved in the second half. `maml_trm_sep` (separate H block) is training next, then `plain_noemb`, then
+  the TTT variants.
 
-### Meta-training curve, `maml_trm` (block means over ~190 meta-steps, ~3 tasks each)
+### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
 | meta-steps | support loss before adaptation | query loss after the adapted step |
 |---|---|---|
-| 1-193 | 2.07 | 1.54 |
-| 194-386 | 1.85 | 1.45 |
-| 387-579 | 1.79 | 1.42 |
-| 580-772 | 2.04 | 1.41 |
-| 773-965 | 2.13 | 1.44 |
+| 1-399 | 1.95 | 1.49 |
+| 400-798 | 1.98 | 1.41 |
+| 799-1197 | 1.86 | 1.42 |
+| 1198-1596 | 1.67 | 1.35 |
+| 1597-1995 | 1.64 | 1.35 |
+
+In-training eval (no adaptation, the held-out test pairs): pass@2 0 of 30 at steps 1000 and 2000, token accuracy
+0.600 (the background colour's share: without an embedding or an adaptation step the model has nothing to tell the
+tasks apart, as expected).
 
 ### Held-out TTT results (pass@k counts of 30; filled in as each variant lands)
 
