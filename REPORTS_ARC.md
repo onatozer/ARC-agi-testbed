@@ -464,4 +464,8 @@ tasks: `mm_s1` / `mm_s5` / `mm_s10` (1 / 5 / 10 inner SGD steps at α 0.1) and `
 AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`+train_overrides.maml.*`).
 
 ### Results
-(pending: filled in as the queue lands)
+Progress log (updated as runs land):
+- 2026-10-20 00:30, `maml_trm` at meta-step 280 of 2000 (4.9 s per step, no errors). Block means over ~55 meta-steps
+  (~3 tasks each): support loss before adaptation 2.2 / 1.8 / 2.4 / 1.8 / 2.1 (noisy: 2-5 rows per task), query
+  loss after the one adapted step 1.53 / 1.53 / 1.51 / 1.51 / 1.45: the post-adaptation query loss is drifting down
+  slowly. `maml_trm_sep`, `plain_noemb` and the TTT runs are queued.
