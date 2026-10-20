@@ -213,7 +213,8 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 |---|---|---|---|---|---|
 | `trm_ho2` (plain, section 7) | `lr_full`: ordinary `ttt_mini` loop | 1 | 2 | 3 | 0.776 |
 | `trm_ho2` | `mm2_s5` / `mm2_s10`: 5 / 10 SGD steps, α 0.1, rows adapted | (queued) | | | |
-| `maml_trm_emb` (MAML, embeddings) | `mm2_s1` / `mm2_s5` / `mm2_s10` | (queued) | | | |
+| `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
+| `maml_trm_emb` | `mm2_s5` / `mm2_s10` | (running) | | | |
 | `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
 
 Progress log:
@@ -229,3 +230,18 @@ Progress log:
 - 2026-10-20 19:25, step 1798 of 2000 (7.6 s per step, the GPU clock low again). Block means over ~356 meta-steps:
   support loss before adaptation 2.15 / 1.14 / 1.02 / 0.96 / 0.93, query loss after the adapted step 1.21 / 0.85 /
   0.75 / 0.71 / 0.67, still falling at the end of the budget.
+- 2026-10-20 20:00, `maml_trm_emb` finished: 2000 meta-steps in 13,349 s (3.7 h), no errors; last block query loss
+  0.67 (first grid's shared model: 1.35, separate H: 1.03). In-training eval at step 2000 (no adaptation): 0 of 30,
+  token accuracy 0.651. First TTT variant `mm2_s1` (one SGD step on the 48 demo rows, the 16 aux copies' embedding
+  rows adapted too): 0 of 30, token accuracy 0.724, support loss before the step 1.20 on average. One step: level
+  with the first grid's separate-H model (0.718), above its shared one (0.598).
+
+### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
+
+| meta-steps | support loss before adaptation | query loss after the adapted step |
+|---|---|---|
+| 1-399 | 2.08 | 1.18 |
+| 400-798 | 1.12 | 0.84 |
+| 799-1197 | 1.01 | 0.75 |
+| 1198-1596 | 0.95 | 0.70 |
+| 1597-1995 | 0.93 | 0.67 |
