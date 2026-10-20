@@ -310,6 +310,19 @@ rows contributed nothing to the adaptation: a per-part step size (Meta-SGD) woul
 heads diverged at α 0.1 on a 40-step smoke checkpoint (support loss 2.2 -> 6.5), so their α is probed on the
 plain `gram_ho` control once it is trained (α 0.01 / 0.1 / 1).
 
+GRAM heads probe (3 steps, 2 tasks, from the plain base-GRAM `gram_ho`, 4000 steps; support loss before step 1 ->
+before step 3 per task, then test token accuracy):
+
+| part adapted | α 0.01 | α 0.03 | α 0.1 | α 1 |
+|---|---|---|---|---|
+| prior + posterior + LPRM heads (494k params) | 1.07 -> 1.07, 1.51 -> 1.54 (0.70) | 1.07 -> 2.87, 1.51 -> 33.7 (0.74) | 1.07 -> 147, 1.51 -> 2.8e6 (0.00) | 1e22, 3e32 (0.00) |
+| prior + LPRM heads (no posterior) | 1.07 -> 1.07, 1.51 -> 1.44 (0.70) | 1.07 -> 1.99, 1.51 -> 20.8 (0.76) | 1.07 -> 98, 1.51 -> 4.8e5 (0.01) | |
+
+Plain SGD on the Gaussian guidance heads is unstable above α 0.01 (the KL and the variance outputs amplify a step;
+the posterior is not the cause), and at 0.01 the step barely moves the demo loss. The queue runs at α 0.01 with all
+three heads, as specified: the question becomes whether meta-training can find head weights for which that small
+step is useful, since a larger one cannot be taken from the plain start.
+
 **Queues** (`scripts/miniarc5/queue_maml_{emb,lh,gramheads}.sh`, runner `queue_maml_parts.sh`): `maml_emb`
 (embedding rows, α 10), `maml_lh` (the block, α 0.1), `maml_gramheads` (GRAM heads, α from the probe), each with
 the meta-trained inner loop at 1 / 5 / 10 steps (`mm3e_*`, `mm3l_*`, `mm3g_*`), the same subset adaptation on the
