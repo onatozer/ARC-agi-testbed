@@ -226,3 +226,6 @@ Progress log:
   adaptation 2.56 / 1.29 / 1.11 / 1.04 / 1.00, query loss after the adapted step 1.31 / 0.96 / 0.83 / 0.77 / 0.73,
   still falling. In-training eval at step 1000 (held-out test pairs, no adaptation, untrained identifiers): 0 of 30,
   token accuracy 0.617, as expected for the no-adaptation control.
+- 2026-10-20 19:25, step 1798 of 2000 (7.6 s per step, the GPU clock low again). Block means over ~356 meta-steps:
+  support loss before adaptation 2.15 / 1.14 / 1.02 / 0.96 / 0.93, query loss after the adapted step 1.21 / 0.85 /
+  0.75 / 0.71 / 0.67, still falling at the end of the budget.
