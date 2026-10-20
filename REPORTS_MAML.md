@@ -78,6 +78,10 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   separate-H model does move toward the task in one step; no grid is complete yet.
 - 2026-10-20 09:40, `maml_trm_sep mm_s5`: 0 of 30, token accuracy 0.728, support loss 1.09 -> 0.91 before step 5: four
   more steps fit the demos further but add only one point of token accuracy and no solved task.
+- 2026-10-20 09:55, `maml_trm_sep mm_s10`: 0 of 30, token accuracy 0.730, support loss 1.09 -> 0.87. The meta-trained
+  inner loop saturates at ~0.73 token accuracy on the held-out tasks whatever the step count; the section-7 full
+  fine-tune of the embedding model reached 0.80 and 7 solved tasks. Its eager `mm_adam` was stopped at start (to be
+  re-run compiled); the plain control's SGD variants run next.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -120,6 +124,6 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm` | `mm_adam`: the ordinary `ttt_mini` loop | (running) | | | |
 | `maml_trm_sep` (separate H, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.718 |
 | `maml_trm_sep` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.728 |
-| `maml_trm_sep` | `mm_s10` | (running) | | | |
+| `maml_trm_sep` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.730 |
 | `maml_trm_sep` | `mm_adam` (compiled follow-up) | (queued) | | | |
 | `plain_noemb` | `mm_s5` / `mm_s10` / `mm_adam` | (queued) | | | |
