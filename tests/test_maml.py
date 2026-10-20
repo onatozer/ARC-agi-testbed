@@ -56,6 +56,24 @@ def test_maml_adapt_lowers_the_loss_and_moves_only_the_tasks_embedding_rows():
     assert not torch.equal(table[1], table_before[1]) and torch.equal(table[0], table_before[0]) and torch.equal(table[2], table_before[2])
 
 
+def test_adapt_substrings_restrict_the_inner_loop_but_not_the_outer():
+    model, cfg = _head()
+    table = model.model.puzzle_emb.weights
+    assert _maml_targets(model, ["puzzle_emb"]) == [table]
+    block = _maml_targets(model, ["inner.L_level."])
+    assert block and all(p is not table for p in block) and len(block) < len(_trainable(model))
+    with pytest.raises(ValueError):
+        _maml_targets(model, ["no_such_module"])
+
+    # inner loop on the embedding rows only: no parameter moves, the task's rows do
+    before = [p.detach().clone() for p in _trainable(model)]
+    losses = maml_adapt(model, _rows(cfg, 3, [1, 1, 1]), steps=2, lr=1e-2, substrings=["puzzle_emb"])
+    assert len(losses) == 2 and all(torch.equal(p, p0) for p, p0 in zip(_trainable(model), before))
+    # the meta-gradient still covers every parameter and the table
+    meta_grads, n_tasks, _ = maml_batch(model, [(_rows(cfg, 3, [1, 1, 1]), _rows(cfg, 1, [1]))], MAMLConfig(inner_steps=1, inner_lr=1e-2, adapt_substrings=["puzzle_emb"]))
+    assert n_tasks == 1 and len(meta_grads) == len(_trainable(model)) + 1 and all(g is not None for g in meta_grads)
+
+
 def test_maml_adapt_without_puzzle_embeddings():
     model, cfg = _head(puzzle_emb_ndim=0, puzzle_emb_len=0)
     assert len(_maml_targets(model)) == len(_trainable(model))

@@ -441,17 +441,22 @@ def _puzzle_emb(model: nn.Module) -> Optional[nn.Module]:
     return getattr(model.model, "puzzle_emb", None)
 
 
-def _maml_targets(model: nn.Module) -> List[torch.Tensor]:
-    """What MAML's inner loop adapts: the trainable parameters plus the puzzle-embedding table when the model has one
-    (a task's identifier rows adapt with the weights). CastedSparseEmbedding hands gradients to a fixed-size local
-    buffer; its path is bypassed (emptied) so the table itself takes the gradient, for any batch size."""
-    targets = _trainable(model)
+def _maml_targets(model: nn.Module, substrings: Sequence[str] = ()) -> List[torch.Tensor]:
+    """What MAML adapts: the trainable parameters plus the puzzle-embedding table when the model has one (a task's
+    identifier rows adapt with the weights), restricted to names containing one of `substrings` when given (the
+    table's name is model.inner.puzzle_emb.weights, so `puzzle_emb` selects it). CastedSparseEmbedding hands
+    gradients to a fixed-size local buffer; its path is bypassed (emptied) so the table itself takes the gradient."""
+    match = lambda name: not substrings or any(s in name for s in substrings)
+    targets = [p for name, p in model.named_parameters() if p.requires_grad and match(name)]
     emb = _puzzle_emb(model)
     if emb is not None:
         if emb.local_weights.shape[0] != 0:
             emb.local_weights = nn.Buffer(torch.zeros((0, emb.weights.shape[1]), device=emb.weights.device, requires_grad=True), persistent=False)
         emb.weights.requires_grad_(True)
-        targets.append(emb.weights)
+        if match(next(name for name, b in model.named_buffers() if b is emb.weights)):
+            targets.append(emb.weights)
+    if not targets:
+        raise ValueError(f"maml.adapt_substrings {list(substrings)} match no parameter of the model.")
     return targets
 
 
@@ -544,10 +549,10 @@ def task_grads(model: nn.Module, batch: Dict[str, torch.Tensor], params: List[to
     return grads, total
 
 
-def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float) -> List[float]:
-    """MAML's inner loop on one task: `steps` SGD steps of size lr on the trainable parameters, in place. Returns the
-    task loss before each step. Shared by meta-training (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
-    params = _maml_targets(model)
+def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float, substrings: Sequence[str] = ()) -> List[float]:
+    """MAML's inner loop on one task: `steps` SGD steps of size lr on the adapted tensors (_maml_targets), in place.
+    Returns the task loss before each step. Shared by meta-training (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
+    params = _maml_targets(model, substrings)
     losses = []
     for _ in range(steps):
         grads, loss = task_grads(model, batch, params)
@@ -561,15 +566,16 @@ def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr:
 
 def maml_batch(model: nn.Module, episodes: List[Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]], cfg: Any) -> Tuple[List[Optional[torch.Tensor]], int, Dict[str, torch.Tensor]]:
     """First-order MAML over a meta-batch of episodes (EpisodeSampler: a puzzle's augmented copies, support / query):
-    per task the support adapts a copy of the weights and embedding rows (maml_adapt), the query's gradient at the
-    adapted weights is summed over the tasks (the paper's first-order meta-gradient), and the weights are restored.
-    Returns (meta-gradient sums over _maml_targets, number of tasks, metrics for train_batch's logging)."""
+    per task the support adapts a copy of the weights and embedding rows (maml_adapt; only cfg.adapt_substrings when
+    given), the query's gradient at the adapted weights w.r.t. every parameter is summed over the tasks (the paper's
+    first-order meta-gradient; the outer loop trains everything), and the weights are restored.
+    Returns (meta-gradient sums over _maml_targets(model), number of tasks, metrics for train_batch's logging)."""
     params = _maml_targets(model)
     theta = [p.detach().clone() for p in params]
     meta_grads: List[Optional[torch.Tensor]] = [None] * len(params)
     n_tasks, support_loss, query_loss = 0, 0.0, 0.0
     for support, query in episodes:
-        support_loss += maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr)[0]
+        support_loss += maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr, cfg.adapt_substrings)[0]
         grads, loss = task_grads(model, query, params)
         query_loss += float(loss)
         for i, g in enumerate(grads):

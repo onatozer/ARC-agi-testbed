@@ -49,6 +49,7 @@ class MAMLConfig(BaseModel):
     inner_lr: float = 0.1  # cbfinn's update_lr (alpha)
     meta_batch_size: int = 4  # puzzles (tasks) per meta-step
     support_copies: int = 16  # augmented copies of a puzzle in an episode (evaluate_ttt.py's num_aux_tasks); one row of each is the query
+    adapt_substrings: List[str] = []  # the inner loop adapts only parameters (or the puzzle_emb table) whose name contains one of these; empty = everything. The outer loop trains everything (ANIL, arXiv 1909.09157)
 
     @pydantic.model_validator(mode="after")
     def _validate(self) -> MAMLConfig:

@@ -54,3 +54,4 @@ maml: # first-order MAML meta-training (with arch.puzzle_emb_ndim=0 and optimize
   inner_lr: 0.1 # their step size alpha (update_lr)
   meta_batch_size: 4 # puzzles per meta-step (their meta_batch_size)
   support_copies: 16 # augmented copies of the puzzle in an episode: their demos are the support, one held-out row of each the query
+  adapt_substrings: [] # inner loop adapts only these (parameter-name substrings; puzzle_emb = the embedding rows); empty = everything
