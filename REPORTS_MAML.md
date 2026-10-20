@@ -212,7 +212,8 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 | checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | token acc |
 |---|---|---|---|---|---|
 | `trm_ho2` (plain, section 7) | `lr_full`: ordinary `ttt_mini` loop | 1 | 2 | 3 | 0.776 |
-| `trm_ho2` | `mm2_s5` / `mm2_s10`: 5 / 10 SGD steps, α 0.1, rows adapted | (queued) | | | |
+| `trm_ho2` | `mm2_s5`: 5 SGD steps, α 0.1, rows adapted (plain init) | 0 | 0 | 0 | 0.731 |
+| `trm_ho2` | `mm2_s10` | (running) | | | |
 | `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
 | `maml_trm_emb` | `mm2_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.732 |
 | `maml_trm_emb` | `mm2_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.722 |
@@ -242,6 +243,10 @@ Progress log:
   little more and give nothing on the test pairs. The meta-trained inner loop, with embeddings and matched
   episodes, saturates at ~0.73 token accuracy exactly as the first grid's separate-H model did. The plain control
   under the same adaptation (`trm_ho2 mm2_s5` / `mm2_s10`) runs next, then the ordinary loop on this checkpoint.
+- 2026-10-20 21:00, `trm_ho2 mm2_s5` (the plainly trained checkpoint under the same 5-step adaptation): 0 of 30, token
+  accuracy 0.731, support loss 1.60 -> 0.91. Level with the meta-trained checkpoint (0.732) on the test pairs; the
+  meta-trained one starts from a lower demo loss (1.20 vs 1.60) and ends lower (0.85 vs 0.91), the gain the
+  meta-objective bought, but it does not reach the held-out pairs.
 
 ### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
 
