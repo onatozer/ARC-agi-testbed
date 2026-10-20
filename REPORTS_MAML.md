@@ -87,6 +87,9 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   in the foreground finishes a task in seconds (5 SGD steps, demo loss 0.67 -> 0.64, token accuracy 0.80 on that
   task), so the hang was in that process, cause unknown. `scripts/miniarc5/queue_maml_rest.sh` re-runs the plain
   control's 5 / 10-step variants and then the three compiled `mm_adam` loops.
+- 2026-10-20 11:40, cause found: not a hang. The `maml_trm_sep mm_adam` python process had survived its stop (a wrapper
+  was killed instead) and kept the GPU lock for 1.5 h running the eager loop at 5 min per task, so the plain
+  control's run was waiting on the lock with an empty log. Killed; the follow-up queue is now running.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
