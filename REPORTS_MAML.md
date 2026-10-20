@@ -73,6 +73,9 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   compiled. The three `mm_adam` variants (shared, separate H, plain) are re-run compiled after the queue
   (`scripts/miniarc5/queue_maml_adam.sh`; the suffix resumes the 7 finished tasks). The SGD variants on the
   separate-H checkpoint are running.
+- 2026-10-20 09:25, `maml_trm_sep mm_s1`: 0 of 30 but token accuracy 0.718 after one SGD step (the shared model: 0.598;
+  the unadapted separate-H model: 0.654), mean support loss before the step 1.09 (shared: 1.48). The meta-trained
+  separate-H model does move toward the task in one step; no grid is complete yet.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -113,5 +116,7 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.613 |
 | `maml_trm` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.614 |
 | `maml_trm` | `mm_adam`: the ordinary `ttt_mini` loop | (running) | | | |
-| `maml_trm_sep` | `mm_s1` / `mm_s5` / `mm_s10` / `mm_adam` | (queued) | | | |
+| `maml_trm_sep` (separate H, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.718 |
+| `maml_trm_sep` | `mm_s5` / `mm_s10` | (running) | | | |
+| `maml_trm_sep` | `mm_adam` (compiled follow-up) | (queued) | | | |
 | `plain_noemb` | `mm_s5` / `mm_s10` / `mm_adam` | (queued) | | | |
