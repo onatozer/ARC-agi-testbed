@@ -65,6 +65,9 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   background. The 5- and 10-step variants are running.
 - 2026-10-20 08:00, `maml_trm mm_s5`: 0 of 30, token accuracy 0.613; mean support loss 1.48 before step 1 -> 1.27 before
   step 5. Five steps fit the demos somewhat but the test predictions stay near the background.
+- 2026-10-20 08:15, `maml_trm mm_s10`: 0 of 30, token accuracy 0.614, support loss 1.48 -> 1.23: ten steps are no
+  better than five. The shared-block MAML model does not adapt to a held-out task by its own inner loop at any
+  tested step count; the ordinary AdamAtan2 loop on it (`mm_adam`) runs next, then the separate-H model's variants.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -103,6 +106,7 @@ its unadapted support loss 1.39 vs 1.64.
 | TRM separate H, embeddings (section 7) | full fine-tune, `ttt_mini` | 3 | 7 | 8 | 0.803 |
 | `maml_trm` (shared block, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.598 |
 | `maml_trm` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.613 |
-| `maml_trm` | `mm_s10` / `mm_adam` | (running) | | | |
+| `maml_trm` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.614 |
+| `maml_trm` | `mm_adam`: the ordinary `ttt_mini` loop | (running) | | | |
 | `maml_trm_sep` | `mm_s1` / `mm_s5` / `mm_s10` / `mm_adam` | (queued) | | | |
 | `plain_noemb` | `mm_s5` / `mm_s10` / `mm_adam` | (queued) | | | |
