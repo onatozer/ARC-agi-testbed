@@ -217,3 +217,8 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 | `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
 
 Progress log:
+- 2026-10-20 16:40, `maml_trm_emb` at meta-step 597 of 2000 (6.7 s per step, no errors). Block means over ~120
+  meta-steps: support loss before adaptation 2.88 / 2.26 / 1.30 / 1.22 / 1.15, query loss after the adapted step
+  1.46 / 1.15 / 1.01 / 0.90 / 0.82. Unlike the first grid (query loss flat at 1.35-1.45 after step 400), both are
+  still falling steadily: with the embeddings and puzzle-level episodes the meta-objective has something to work
+  with. Below 0.9 already, against the first grid's best of 1.03 after 2000 steps.
