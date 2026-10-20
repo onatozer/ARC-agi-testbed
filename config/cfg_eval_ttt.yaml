@@ -33,6 +33,7 @@ train_overrides:
 reinit_substrings: []
 train_only_substrings: []
 lprm_steps: 0 # GRAM: passes over the test inputs after the demo epochs, maximising the LPRM value (no labels)
+maml_steps: null # MAML checkpoints: inner-loop SGD steps on the demos (null: the checkpoint's inner_steps; 0: the ordinary loop)
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it

@@ -70,6 +70,7 @@ from utils.metrics import (
 from utils.wandb import set_run as wandb_set_run
 from utils.wandb import _config_to_wandb_dict
 from utils.optimizer import compute_lr
+from utils.training import apply_to_tensors
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
 from contextlib import nullcontext, suppress
@@ -430,6 +431,85 @@ def create_evaluators(config: PretrainConfig, eval_metadata: PuzzleDatasetMetada
     return evaluators
 
 
+def _trainable(model: nn.Module) -> List[torch.Tensor]:
+    return [p for p in model.parameters() if p.requires_grad]
+
+
+def task_grads(model: nn.Module, batch: Dict[str, torch.Tensor], params: List[torch.Tensor]) -> Tuple[List[Optional[torch.Tensor]], torch.Tensor]:
+    """Gradient of a task's loss w.r.t. params and the loss itself (per row): the batch run from a fresh carry through
+    every supervision step, as eval runs a puzzle; rows that halt early restart on the same rows. Each step's gradient
+    is taken on its own and the carry detached, because the inner reads the previous step's state with graph and
+    _reset_rows writes into saved tensors in place, so one summed backward would fail."""
+    grads: List[Optional[torch.Tensor]] = [None] * len(params)
+    total = torch.zeros((), device=batch["inputs"].device)
+    carry = model.initial_carry(batch)
+    n_steps = model.model.config.halt_max_steps
+    scale = 1.0 / (batch["inputs"].shape[0] * n_steps)  # per row and supervision step, so the SGD step size is on the paper's scale
+    for _ in range(n_steps):
+        carry, loss, _, _, _ = model(carry=carry, batch=batch, return_keys=[])
+        for i, g in enumerate(torch.autograd.grad(loss, params, allow_unused=True)):
+            if g is not None:
+                g = g * scale
+                grads[i] = g if grads[i] is None else grads[i] + g
+        total += loss.detach() * scale
+        carry = apply_to_tensors(carry, torch.Tensor.detach)
+    return grads, total
+
+
+def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float) -> List[float]:
+    """MAML's inner loop on one task: `steps` SGD steps of size lr on the trainable parameters, in place. Returns the
+    task loss before each step. Shared by meta-training (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
+    params = _trainable(model)
+    losses = []
+    for _ in range(steps):
+        grads, loss = task_grads(model, batch, params)
+        losses.append(float(loss))
+        with torch.no_grad():
+            for p, g in zip(params, grads):
+                if g is not None:
+                    p.sub_(lr * g)
+    return losses
+
+
+def maml_batch(model: nn.Module, batch: Dict[str, torch.Tensor], cfg: Any) -> Tuple[List[Optional[torch.Tensor]], int, Dict[str, torch.Tensor]]:
+    """First-order MAML over the puzzles of a batch (each augmented copy of a task is one task; its rows are contiguous
+    and share a puzzle identifier): per task, one random row is the query and the rest the support; the support
+    adapts a copy of the weights (maml_adapt), the query's gradient at the adapted weights is summed over the tasks
+    (the paper's first-order meta-gradient), and the weights are restored. Puzzles with a single row (the truncated
+    last one) are skipped. Returns (meta-gradient sums, number of tasks, metrics for train_batch's logging)."""
+    params = _trainable(model)
+    theta = [p.detach().clone() for p in params]
+    meta_grads: List[Optional[torch.Tensor]] = [None] * len(params)
+    _, counts = torch.unique_consecutive(batch["puzzle_identifiers"], return_counts=True)
+    parts = {k: torch.split(v, counts.tolist()) for k, v in batch.items()}
+    n_tasks, support_loss, query_loss = 0, 0.0, 0.0
+    for t, n in enumerate(counts.tolist()):
+        if n < 2:
+            continue
+        task = {k: v[t] for k, v in parts.items()}
+        q = int(torch.randint(n, (1,)))
+        keep = torch.arange(n, device=task["inputs"].device) != q
+        support = {k: v[keep] for k, v in task.items()}
+        query = {k: v[q : q + 1] for k, v in task.items()}
+        support_loss += maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr)[0]
+        grads, loss = task_grads(model, query, params)
+        query_loss += float(loss)
+        for i, g in enumerate(grads):
+            if g is not None:
+                meta_grads[i] = g if meta_grads[i] is None else meta_grads[i] + g
+        with torch.no_grad():
+            for p, p0 in zip(params, theta):
+                p.copy_(p0)
+        n_tasks += 1
+    device = batch["inputs"].device
+    metrics = {  # fprl/ keys are logged as-is by train_batch (not divided by the batch size)
+        "count": torch.tensor(float(n_tasks), device=device),
+        "fprl/query_loss": torch.tensor(query_loss / max(n_tasks, 1), device=device),
+        "fprl/support_loss": torch.tensor(support_loss / max(n_tasks, 1), device=device),
+    }
+    return meta_grads, n_tasks, metrics
+
+
 def train_batch(
     config: PretrainConfig,
     train_state: TrainState,
@@ -454,7 +534,8 @@ def train_batch(
 
         
     try:
-        train_state.carry.global_step = int(train_state.step)
+        if train_state.carry is not None:  # MAML keeps no carry between steps
+            train_state.carry.global_step = int(train_state.step)
     except Exception:
         print("*"*80)
         print("Glob step exception", train_state.step, train_state.carry)
@@ -471,7 +552,12 @@ def train_batch(
     measure_flops = _should_log_flops(config, train_state.step)
     flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
     with flop_counter:
-        if "compute_target_q" in model_forward_signatures:
+        if config.maml.enabled:
+            # First-order MAML: the meta-gradient replaces backward; the optimizer / schedule / logging below are shared
+            meta_grads, n_tasks, metrics = maml_batch(train_state.model, batch, config.maml)
+            for p, g in zip(_trainable(train_state.model), meta_grads):
+                p.grad = None if g is None else g / max(n_tasks, 1)
+        elif "compute_target_q" in model_forward_signatures:
             compute_target_q = train_state.step % config.target_q_update_every == 0
             train_state.carry, loss, metrics, _, all_finish = train_state.model(
                 carry=train_state.carry, batch=batch, return_keys=[], compute_target_q=compute_target_q
@@ -484,12 +570,12 @@ def train_batch(
             # dot = make_dot(model(carry=train_state.carry, batch=batch, return_keys=[]), params=dict(model.named_parameters()))
             # dot.render("model_graph", format="png")
 
+        if not config.maml.enabled:
+            # Here we scale the loss by the batch size so that when we take the total sum across the GPUs, we end up with the same gradient
+            loss_to_backprop = (1 / global_batch_size) * loss
 
-        # Here we scale the loss by the batch size so that when we take the total sum across the GPUs, we end up with the same gradient
-        loss_to_backprop = (1 / global_batch_size) * loss
-
-        retain_graph = bool(getattr(config, "retain_graph", False))
-        loss_to_backprop.backward(retain_graph=retain_graph)
+            retain_graph = bool(getattr(config, "retain_graph", False))
+            loss_to_backprop.backward(retain_graph=retain_graph)
 
     if measure_flops:
         train_state.flops_per_step = float(flop_counter.get_total_flops()) * world_size

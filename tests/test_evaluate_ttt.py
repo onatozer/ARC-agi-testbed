@@ -82,6 +82,8 @@ def test_l_module_ttt_options_are_cli_options():
     cfg = _ttt_cfg("checkpoint=ckpt.pth", "reinit_substrings=[inner.L_level.]", "train_only_substrings=[inner.L_level.]", "lprm_steps=3")
     assert cfg.reinit_substrings == ["inner.L_level."] and cfg.train_only_substrings == ["inner.L_level."] and cfg.lprm_steps == 3
     assert _ttt_cfg("checkpoint=ckpt.pth").reinit_substrings == [] and _ttt_cfg("checkpoint=ckpt.pth").lprm_steps == 0
+    assert _ttt_cfg("checkpoint=ckpt.pth").maml_steps is None
+    assert _ttt_cfg("checkpoint=ckpt.pth", "maml_steps=0").maml_steps == 0 and _ttt_cfg("checkpoint=ckpt.pth", "maml_steps=3").maml_steps == 3
 
 
 def test_reinit_and_train_only_reach_just_the_l_module():

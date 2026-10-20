@@ -39,11 +39,28 @@ class DatasetConfig(BaseModel):
     evaluators: List[EvaluatorConfig] = []
 
 
+class MAMLConfig(BaseModel):
+    """First-order MAML (arXiv 1703.03400, section 5.2; cbfinn/maml with stop_grad): each puzzle in a batch is a task,
+    adapted by inner_steps SGD steps of size inner_lr on its support rows; the query row's gradient at the adapted
+    weights trains the shared weights (pretrain.maml_batch)."""
+
+    enabled: bool = False
+    inner_steps: int = 1  # cbfinn's num_updates
+    inner_lr: float = 0.1  # cbfinn's update_lr (alpha)
+
+    @pydantic.model_validator(mode="after")
+    def _validate(self) -> MAMLConfig:
+        if self.enabled and (self.inner_steps < 1 or self.inner_lr <= 0):
+            colored_exception(ValueError, "maml.inner_steps must be >= 1 and maml.inner_lr > 0.")
+        return self
+
+
 class PretrainConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     arch: ArchConfig
     dataset: DatasetConfig
+    maml: MAMLConfig = MAMLConfig()  # enabled: meta-train with first-order MAML instead of plain supervision steps
     optimizer_kwargs: Dict[str, Any] = pydantic.Field(default_factory=dict)
 
     global_batch_size: int

@@ -36,7 +36,7 @@ from dataset.build_miniarc_dataset import MiniARCDataProcessConfig
 from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_checkpoint, _seed, _summarize
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
-from pretrain import create_dataloader, create_evaluators, init_train_state, train_batch
+from pretrain import create_dataloader, create_evaluators, init_train_state, maml_adapt, train_batch
 from utils.checkpoint import load_model_state_dict
 from utils.functions import load_model_class
 from utils.printing import print_info
@@ -141,9 +141,21 @@ def _lprm_phase(config: PretrainConfig, train_state: Any, eval_loader: Any, eval
     return values[0], values[-1]
 
 
+def _support_batch(config: PretrainConfig, train_metadata: Any) -> Dict[str, torch.Tensor]:
+    """Every row of the task's train split (the aux copies' demos) as one batch, in order and without the sampler's
+    dropped tails: a sequential (test-mode) pass over the split, minus its padding rows."""
+    loader, _ = create_dataloader(config, "train", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=0, world_size=1)
+    rows = {k: torch.cat([b[k] for _, b, _ in loader]) for k in ("inputs", "labels", "puzzle_identifiers")}
+    keep = rows["puzzle_identifiers"] != train_metadata.blank_identifier_id
+    if not keep.any():
+        raise ValueError("TTT support set is empty: the task's train split has no demos.")
+    return {k: v[keep] for k, v in rows.items()}
+
+
 def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.Tensor], data_dir: Path, eval_dir: Path, seed: int) -> Dict[str, float]:
     config = train_cfg.model_copy(deep=True)
     _apply_overrides(config, cfg.train_overrides)
+    config = PretrainConfig.model_validate(config.model_dump())  # nested overrides (+train_overrides.maml.inner_lr=...) arrive as dicts
     config.dataset.data_path = str(data_dir)
     config.epochs = cfg.epochs
     config.max_steps = None
@@ -177,20 +189,28 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
 
         train_state.model.train()
         steps, losses = 0, []
-        for _set_name, batch, global_batch_size in train_loader:
-            step_metrics = train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
-            steps += 1
-            if step_metrics and "train/lm_loss" in step_metrics:
-                losses.append(float(step_metrics["train/lm_loss"]))
-            if train_state.ema_helper is not None:
-                train_state.ema_helper.update(train_state.model)
-            if train_state.step >= train_state.total_steps:
-                break
-        if steps == 0:
-            # The sampler fills a batch with whole aux tasks and drops under-filled tails: too few aux tasks (or demos) for
-            # the batch size means no training at all, which would silently evaluate the untouched checkpoint
-            raise ValueError(f"TTT trained for 0 steps: {train_metadata.total_groups} aux tasks x {train_metadata.mean_puzzle_examples:.1f} demos never fill global_batch_size={config.global_batch_size}.")
-        print_info(f"TTT run {run}: {steps} steps on {trainable} trainable parameters" + (f", train lm_loss {losses[0]:.3f} -> {losses[-1]:.3f}" if losses else ""))
+        if config.maml.enabled and cfg.maml_steps != 0:
+            # MAML's inner loop on every demo of every aux copy at once (one sequential pass over the train split)
+            support = _support_batch(config, train_metadata)
+            train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
+            steps = cfg.maml_steps or config.maml.inner_steps
+            losses = maml_adapt(train_state.model, tree_to_device(support, next(train_state.model.parameters()).device), steps, config.maml.inner_lr)
+            print_info(f"TTT run {run}: {steps} MAML steps (lr {config.maml.inner_lr}) on {support['inputs'].shape[0]} demos, {trainable} trainable parameters, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+        else:
+            for _set_name, batch, global_batch_size in train_loader:
+                step_metrics = train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
+                steps += 1
+                if step_metrics and "train/lm_loss" in step_metrics:
+                    losses.append(float(step_metrics["train/lm_loss"]))
+                if train_state.ema_helper is not None:
+                    train_state.ema_helper.update(train_state.model)
+                if train_state.step >= train_state.total_steps:
+                    break
+            if steps == 0:
+                # The sampler fills a batch with whole aux tasks and drops under-filled tails: too few aux tasks (or demos) for
+                # the batch size means no training at all, which would silently evaluate the untouched checkpoint
+                raise ValueError(f"TTT trained for 0 steps: {train_metadata.total_groups} aux tasks x {train_metadata.mean_puzzle_examples:.1f} demos never fill global_batch_size={config.global_batch_size}.")
+            print_info(f"TTT run {run}: {steps} steps on {trainable} trainable parameters" + (f", train lm_loss {losses[0]:.3f} -> {losses[-1]:.3f}" if losses else ""))
         if cfg.lprm_steps > 0:
             before, after = _lprm_phase(config, train_state, eval_loader, eval_metadata, cfg.lprm_steps)
             print_info(f"TTT run {run}: {cfg.lprm_steps} LPRM passes over the test inputs, mean LPRM value {before:.3f} -> {after:.3f}")
