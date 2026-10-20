@@ -103,6 +103,9 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   trained no-embedding model under the full 160-step AdamAtan2 fine-tune reaches the same token accuracy as the
   meta-trained separate-H model under 5-10 SGD steps (0.73) and also solves nothing; the embedding models of
   section 7 solved 2 (shared) and 7 (separate H) under the same loop.
+- 2026-10-20 13:40, `maml_trm mm_adam2`: 0 of 30, token accuracy 0.617: the full AdamAtan2 fine-tune on the shared-block
+  MAML checkpoint does no better than its own inner loop (0.61), and far worse than the plainly trained model
+  under the same loop (0.72). The separate-H checkpoint's `mm_adam2` is the last run.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -142,7 +145,7 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm` (shared block, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.598 |
 | `maml_trm` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.613 |
 | `maml_trm` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.614 |
-| `maml_trm` | `mm_adam2`: the ordinary `ttt_mini` loop | (running) | | | |
+| `maml_trm` | `mm_adam2`: the ordinary `ttt_mini` loop | 0 | 0 | 0 | 0.617 |
 | `maml_trm_sep` (separate H, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.718 |
 | `maml_trm_sep` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.728 |
 | `maml_trm_sep` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.730 |
