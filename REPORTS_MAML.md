@@ -285,3 +285,49 @@ afford more meta-steps.
 | 799-1197 | 1.01 | 0.75 |
 | 1198-1596 | 0.95 | 0.70 |
 | 1597-1995 | 0.93 | 0.67 |
+
+## Partial MAML: meta-learning the initialisation of one part of the network (2026-10-20)
+
+**Idea (user).** Use MAML for a subset of the parameters only: the puzzle embeddings, the reasoning block, or GRAM's
+guidance heads (prior, posterior, LPRM value). Reading taken: the inner loop adapts only that part at train and at
+test, while the outer loop still trains everything (ANIL, Raghu et al. 2020, where the inner loop adapts the head
+alone). `maml.adapt_substrings` selects the part by parameter-name substring (`puzzle_emb` = the embedding table);
+the meta-gradient is still the query gradient w.r.t. every parameter at the adapted point. Everything else is the
+re-run's setup: base architecture (shared block), puzzle-level episodes of 16 copies, 4 puzzles per meta-step,
+2000 meta-steps, eager.
+
+**Step-size probes** (3 inner steps, 2 held-out tasks, from the plain `trm_ho2` checkpoint; support loss before step 1
+-> before step 3, per task, then the test token accuracy):
+
+| part adapted | α 0.1 | α 1.0 | α 10 |
+|---|---|---|---|
+| embedding rows only | 0.87 -> 0.87, 1.22 -> 1.21 (0.69) | 0.87 -> 0.85, 1.22 -> 1.12 (0.70) | 0.87 -> 0.62, 1.22 -> 0.60 (0.81) |
+| L block only | 0.87 -> 0.72, 1.22 -> 0.56 (0.81) | 0.87 -> 0.44, 1.22 -> 0.76 (0.80) | |
+
+The embedding rows' gradient is two orders of magnitude smaller than the block's, so the embedding-only inner loop
+needs α 10 to move at all. This also says that in the re-run above (everything adapted at α 0.1) the embedding
+rows contributed nothing to the adaptation: a per-part step size (Meta-SGD) would be the principled fix. GRAM's
+heads diverged at α 0.1 on a 40-step smoke checkpoint (support loss 2.2 -> 6.5), so their α is probed on the
+plain `gram_ho` control once it is trained (α 0.01 / 0.1 / 1).
+
+**Queues** (`scripts/miniarc5/queue_maml_{emb,lh,gramheads}.sh`, runner `queue_maml_parts.sh`): `maml_emb`
+(embedding rows, α 10), `maml_lh` (the block, α 0.1), `maml_gramheads` (GRAM heads, α from the probe), each with
+the meta-trained inner loop at 1 / 5 / 10 steps (`mm3e_*`, `mm3l_*`, `mm3g_*`), the same subset adaptation on the
+plain checkpoint (`trm_ho2`, `gram_ho`) at 5 / 10 steps, and the ordinary `ttt_mini` loop. `gram_ho` is a new plain
+base-GRAM pretrain on the held-out build (same recipe), also run under the ordinary loop as its full-TTT reference.
+
+### Results (partial MAML)
+
+| checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | token acc |
+|---|---|---|---|---|---|
+| `trm_ho2` (plain) | `lr_full`: ordinary loop (section 7) | 1 | 2 | 3 | 0.776 |
+| `maml_trm_emb` (everything adapted, re-run) | `mm2_adam`: ordinary loop | 2 | 3 | 4 | 0.771 |
+| `maml_emb` (embedding rows) | `mm3e_s1` / `s5` / `s10` / `mm3e_adam` | (queued) | | | |
+| `trm_ho2` | `mm3e_s5` / `s10`: embedding rows, α 10 | (queued) | | | |
+| `maml_lh` (the block) | `mm3l_s1` / `s5` / `s10` / `mm3l_adam` | (queued) | | | |
+| `trm_ho2` | `mm3l_s5` / `s10`: the block, α 0.1 | (queued) | | | |
+| `gram_ho` (plain GRAM) | `mm3g_adam`: ordinary loop | (queued) | | | |
+| `maml_gramheads` (GRAM heads) | `mm3g_s1` / `s5` / `s10` / `mm3g_adam` | (queued) | | | |
+| `gram_ho` | `mm3g_s5` / `s10`: the heads | (queued) | | | |
+
+Progress log (partial MAML):
