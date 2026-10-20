@@ -178,3 +178,42 @@ its unadapted support loss 1.39 vs 1.64.
 | `plain_noemb` (no MAML, no embeddings) | `mm_s5`: 5 SGD steps, α 0.1 (the paper's fine-tune baseline) | 0 | 0 | 0 | 0.683 |
 | `plain_noemb` | `mm_s10`: 10 SGD steps | 0 | 0 | 0 | 0.698 |
 | `plain_noemb` | `mm_adam`: the ordinary `ttt_mini` loop (160 AdamAtan2 steps) | 0 | 0 | 0 | 0.723 |
+
+## Re-run: puzzle-level episodes, base TRM with its puzzle embeddings (2026-10-20)
+
+**Why.** The first grid was not comparable to the TRM recipe: no puzzle embeddings (the recipe's task identifiers,
+and the carrier of most of TRM's adaptation per section 3), copy-level episodes with 2-5 support rows against 48 at
+test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run's 4000 x 128.
+
+**What changed** (`pretrain.EpisodeSampler`, `_maml_targets`; same first-order MAML otherwise).
+- A task is a puzzle. An episode takes 16 of its augmented copies (`maml.support_copies`, the test-time
+  `num_aux_tasks`), holds one random row of each copy out as the query and uses the copies' other rows as the
+  support: ~45 support rows and 16 query rows per task, the structure the test-time adaptation sees (every aux
+  copy's demos, then the copies' test pairs). 4 puzzles per meta-step (`maml.meta_batch_size`).
+- The puzzle-embedding table stays and its rows adapt in the inner loop with the weights (the task's copies each
+  have a row; at test the new aux copies' rows start from the table mean and adapt the same way). The outer loop
+  updates the touched rows with the recipe's SignSGD (`puzzle_emb_lr` 3e-2, the schedule's lr), as plain training
+  does. The TTT log line now counts the rows moved (16 per task, verified on `trm_ho2`).
+- Budget: 2000 meta-steps x 4 puzzles x ~61 rows ≈ 490k example rows, the plain recipe's 4000 x 128 = 512k.
+  Still eager and sequential over puzzles: 5.8 s per meta-step in the smoke, ≈ 3.2 h.
+- Base TRM only: shared block (`H_layers=0`), hidden 128, the section-1 recipe. The control is section 7's
+  `trm_ho2` (same recipe, build and budget, plain training): full `ttt_mini` fine-tune 1 / 2 / 3 of 30 at
+  pass@1/2/5, token accuracy 0.776; and here also under the same SGD adaptation (`mm2_s5` / `mm2_s10`).
+- Step-size probe with the embedding rows adapted (3 steps, 2 tasks, from `trm_ho2`): α 0.1: 0.87 -> 0.71,
+  1.22 -> 0.56; α 1.0: 0.87 -> 0.42, 1.22 -> 0.76 (the same numbers as without the rows: over 2 steps the rows'
+  contribution to the loss is below the print precision). α stays 0.1.
+
+**Runs** (`scripts/miniarc5/queue_maml2.sh`): `maml_trm_emb`; TTT suffixes `mm2_s1` / `mm2_s5` / `mm2_s10`
+(meta-trained inner loop, embedding rows included) and `mm2_adam` (the ordinary loop, compiled); `trm_ho2 mm2_s5` /
+`mm2_s10` (plain checkpoint under the same adaptation).
+
+### Results (re-run)
+
+| checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | token acc |
+|---|---|---|---|---|---|
+| `trm_ho2` (plain, section 7) | `lr_full`: ordinary `ttt_mini` loop | 1 | 2 | 3 | 0.776 |
+| `trm_ho2` | `mm2_s5` / `mm2_s10`: 5 / 10 SGD steps, α 0.1, rows adapted | (queued) | | | |
+| `maml_trm_emb` (MAML, embeddings) | `mm2_s1` / `mm2_s5` / `mm2_s10` | (queued) | | | |
+| `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
+
+Progress log:
