@@ -469,3 +469,8 @@ Progress log (updated as runs land):
   (~3 tasks each): support loss before adaptation 2.2 / 1.8 / 2.4 / 1.8 / 2.1 (noisy: 2-5 rows per task), query
   loss after the one adapted step 1.53 / 1.53 / 1.51 / 1.51 / 1.45: the post-adaptation query loss is drifting down
   slowly. `maml_trm_sep`, `plain_noemb` and the TTT runs are queued.
+- 2026-10-20 02:20, `maml_trm` at meta-step 969 (4.9 s per step after a slower hour at a lower GPU clock following a
+  laptop restart; the process was not interrupted). Block means over ~193 meta-steps: query loss after the adapted
+  step 1.54 / 1.45 / 1.42 / 1.41 / 1.44, flat since step ~400; support loss before adaptation 2.07 / 1.85 / 1.79 /
+  2.04 / 2.13, not improving: the shared initialisation is not getting better at a task unadapted, only (slightly)
+  after its one SGD step, which is what the meta-objective asks for.
