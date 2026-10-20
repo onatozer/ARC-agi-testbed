@@ -96,6 +96,13 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
 - 2026-10-20 12:30, `plain_noemb mm_s10`: 0 of 30, token accuracy 0.698, support loss 1.09 -> 0.93 (the separate-H MAML
   model at 10 steps: 0.730, 0.87). The gap holds at 10 steps (~3 points); still no task solved by SGD adaptation on
   any checkpoint. The three compiled `mm_adam` loops run next.
+- 2026-10-20 13:20, the `mm_adam` runs on the MAML checkpoints were wrong and slow: with `maml_steps=0` the ordinary loop
+  called `train_batch`, which still saw the checkpoint's `maml.enabled` and ran a meta-step per TTT batch (minutes
+  per task). Fixed (`evaluate_ttt.py` disables `maml` for that loop); their partial results are discarded and the
+  loop re-runs as `mm_adam2`. `plain_noemb mm_adam` (unaffected): 0 of 30, token accuracy 0.723, so the plainly
+  trained no-embedding model under the full 160-step AdamAtan2 fine-tune reaches the same token accuracy as the
+  meta-trained separate-H model under 5-10 SGD steps (0.73) and also solves nothing; the embedding models of
+  section 7 solved 2 (shared) and 7 (separate H) under the same loop.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
@@ -135,11 +142,11 @@ its unadapted support loss 1.39 vs 1.64.
 | `maml_trm` (shared block, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.598 |
 | `maml_trm` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.613 |
 | `maml_trm` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.614 |
-| `maml_trm` | `mm_adam`: the ordinary `ttt_mini` loop | (running) | | | |
+| `maml_trm` | `mm_adam2`: the ordinary `ttt_mini` loop | (running) | | | |
 | `maml_trm_sep` (separate H, MAML) | `mm_s1`: 1 inner SGD step, α 0.1 | 0 | 0 | 0 | 0.718 |
 | `maml_trm_sep` | `mm_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.728 |
 | `maml_trm_sep` | `mm_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.730 |
-| `maml_trm_sep` | `mm_adam` (compiled follow-up) | (queued) | | | |
+| `maml_trm_sep` | `mm_adam2`: the ordinary `ttt_mini` loop | (running) | | | |
 | `plain_noemb` (no MAML, no embeddings) | `mm_s5`: 5 SGD steps, α 0.1 (the paper's fine-tune baseline) | 0 | 0 | 0 | 0.683 |
 | `plain_noemb` | `mm_s10`: 10 SGD steps | 0 | 0 | 0 | 0.698 |
-| `plain_noemb` | `mm_adam` (compiled) | (queued) | | | |
+| `plain_noemb` | `mm_adam`: the ordinary `ttt_mini` loop (160 AdamAtan2 steps) | 0 | 0 | 0 | 0.723 |
