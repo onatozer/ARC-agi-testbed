@@ -384,6 +384,10 @@ under `eval/lr_<variant>/*` in each run's W&B page. Pretrain wall: `trm_sep_ho` 
 
 | checkpoint | variant | pass@1 | pass@2 | pass@5 | token acc |
 |---|---|---|---|---|---|
+| TRM, shared, section 3 (`trm_ho`, emb lr 1e-2) | no TTT | 0 | 0 | 0 | 0.65 |
+| TRM, shared, section 3 | Full-TTT (embedding + backbone) | 1 | 2 | 3 | 0.766 |
+| TRM, shared, section 3 | Embed-TTT (embedding only) | 1 | 2 | 2 | 0.740 |
+| TRM, shared, section 3 | Embed-Full-TTT (10 epochs embedding, then 10 backbone) | 1 | 1 | 1 | 0.743 |
 | TRM, separate H (`trm_sep_ho`) | `lr_full`: everything trains (control) | 3 | 7 | 8 | 0.803 |
 | TRM, separate H | `lr_lonly`: pretrained L block only | 3 | 3 | 5 | 0.793 |
 | TRM, separate H | `lr_lreinit`: L block re-initialised, trained alone | 1 | 1 | 2 | 0.703 |
