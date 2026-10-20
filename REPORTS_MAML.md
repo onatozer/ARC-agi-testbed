@@ -82,6 +82,11 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
   inner loop saturates at ~0.73 token accuracy on the held-out tasks whatever the step count; the section-7 full
   fine-tune of the embedding model reached 0.80 and 7 solved tasks. Its eager `mm_adam` was stopped at start (to be
   re-run compiled); the plain control's SGD variants run next.
+- 2026-10-20 11:05, the queue's `plain_noemb mm_s5` sat 54 min with an empty log and no task directory (full CPU, no
+  output at all); stopped, together with the queued `mm_s10` / `mm_adam`, and the main queue ended. The same command
+  in the foreground finishes a task in seconds (5 SGD steps, demo loss 0.67 -> 0.64, token accuracy 0.80 on that
+  task), so the hang was in that process, cause unknown. `scripts/miniarc5/queue_maml_rest.sh` re-runs the plain
+  control's 5 / 10-step variants and then the three compiled `mm_adam` loops.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
