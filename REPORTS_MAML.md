@@ -217,7 +217,7 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 | `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
 | `maml_trm_emb` | `mm2_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.732 |
 | `maml_trm_emb` | `mm2_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.722 |
-| `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
+| `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop (160 AdamAtan2 steps) | 2 | 3 | 4 | 0.771 |
 
 Progress log:
 - 2026-10-20 16:40, `maml_trm_emb` at meta-step 597 of 2000 (6.7 s per step, no errors). Block means over ~120
@@ -250,6 +250,31 @@ Progress log:
 - 2026-10-20 21:20, `trm_ho2 mm2_s10`: 0 / 0 / 1 of 30 at pass@1/2/5, token accuracy 0.740, support loss 1.60 -> 0.76.
   The plain checkpoint under ten SGD steps edges past the meta-trained one (0.722, 0 at pass@5). The last run,
   the ordinary loop on the MAML checkpoint, is going.
+- 2026-10-20 21:40, `maml_trm_emb mm2_adam` (the ordinary 160-step AdamAtan2 loop on the meta-trained checkpoint):
+  2 / 3 / 4 of 30 at pass@1/2/5, token accuracy 0.771, demo loss 1.19 -> 0.48 over the tasks. The grid is complete.
+
+### Verdict (re-run)
+
+1. **The meta-trained inner loop still solves nothing.** With the embeddings adapted and train/test episodes
+   matched, 1 / 5 / 10 SGD steps give 0 of 30 at token accuracy 0.72-0.73, and the plainly trained checkpoint
+   under the identical adaptation gets the same (0.731 at 5 steps, 0.740 and one task at pass@5 at 10 steps).
+   Meta-training did what its objective asks, the demo loss before and after the step is lower (1.20 -> 0.85 vs
+   1.60 -> 0.91 at 5 steps) and the post-adaptation query loss fell from 1.18 to 0.67 over training, but the
+   adapted model's gain on the demos does not transfer to the held-out test pairs.
+2. **As an initialisation for the ordinary fine-tune, MAML is at best a small plus.** The meta-trained checkpoint
+   under the recipe's `ttt_mini` loop solves 2 / 3 / 4 against the plain checkpoint's 1 / 2 / 3 (same recipe,
+   build and row budget), with token accuracy 0.771 vs 0.776. One task at pass@2 is inside the 2-task seed spread
+   of section 3b, so this is "not worse", not a demonstrated gain; a second seed would decide.
+3. **Against the first grid**, keeping the embeddings and matching the episodes fixed the meta-training (query loss
+   0.67 vs 1.35 for the same architecture) and lifted the ordinary-loop result from 0 to 3, i.e. the first grid's
+   failure was the setup, as argued; but the paper's mechanism, adaptation by a few SGD steps from a meta-learned
+   start, does not produce solved MiniARC tasks at this scale either way.
+
+Caveats: first-order, one inner step at a fixed uniform α 0.1 (no learned step sizes), 2000 meta-steps of 4
+puzzles (row budget matched to the plain recipe, puzzle count not: each meta-step sees 4 puzzles against the
+plain batch's ~25), eager and sequential (3.7 h), one seed, 30 tasks. Untried: learned per-parameter step sizes
+(Meta-SGD), 3 inner steps at train, a second seed of both checkpoints, and a batched functional inner loop to
+afford more meta-steps.
 
 ### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
 
