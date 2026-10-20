@@ -214,7 +214,8 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 | `trm_ho2` (plain, section 7) | `lr_full`: ordinary `ttt_mini` loop | 1 | 2 | 3 | 0.776 |
 | `trm_ho2` | `mm2_s5` / `mm2_s10`: 5 / 10 SGD steps, α 0.1, rows adapted | (queued) | | | |
 | `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
-| `maml_trm_emb` | `mm2_s5` / `mm2_s10` | (running) | | | |
+| `maml_trm_emb` | `mm2_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.732 |
+| `maml_trm_emb` | `mm2_s10` | (running) | | | |
 | `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
 
 Progress log:
@@ -235,6 +236,8 @@ Progress log:
   token accuracy 0.651. First TTT variant `mm2_s1` (one SGD step on the 48 demo rows, the 16 aux copies' embedding
   rows adapted too): 0 of 30, token accuracy 0.724, support loss before the step 1.20 on average. One step: level
   with the first grid's separate-H model (0.718), above its shared one (0.598).
+- 2026-10-20 20:20, `mm2_s5`: 0 of 30, token accuracy 0.732, support loss 1.20 -> 0.85 before step 5. The demos are
+  fitted further than in the first grid (0.91) but the held-out test pairs stay at 0.73.
 
 ### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
 
