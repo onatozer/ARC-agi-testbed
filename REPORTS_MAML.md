@@ -215,7 +215,7 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 | `trm_ho2` | `mm2_s5` / `mm2_s10`: 5 / 10 SGD steps, α 0.1, rows adapted | (queued) | | | |
 | `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
 | `maml_trm_emb` | `mm2_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.732 |
-| `maml_trm_emb` | `mm2_s10` | (running) | | | |
+| `maml_trm_emb` | `mm2_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.722 |
 | `maml_trm_emb` | `mm2_adam`: ordinary `ttt_mini` loop | (queued) | | | |
 
 Progress log:
@@ -238,6 +238,10 @@ Progress log:
   with the first grid's separate-H model (0.718), above its shared one (0.598).
 - 2026-10-20 20:20, `mm2_s5`: 0 of 30, token accuracy 0.732, support loss 1.20 -> 0.85 before step 5. The demos are
   fitted further than in the first grid (0.91) but the held-out test pairs stay at 0.73.
+- 2026-10-20 20:40, `mm2_s10`: 0 of 30, token accuracy 0.722, support loss 1.20 -> 0.81: ten steps fit the demos a
+  little more and give nothing on the test pairs. The meta-trained inner loop, with embeddings and matched
+  episodes, saturates at ~0.73 token accuracy exactly as the first grid's separate-H model did. The plain control
+  under the same adaptation (`trm_ho2 mm2_s5` / `mm2_s10`) runs next, then the ordinary loop on this checkpoint.
 
 ### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
 
