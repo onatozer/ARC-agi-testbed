@@ -213,7 +213,7 @@ test, and 2000 meta-steps of ~3 tasks (~30k example rows) against the plain run'
 |---|---|---|---|---|---|
 | `trm_ho2` (plain, section 7) | `lr_full`: ordinary `ttt_mini` loop | 1 | 2 | 3 | 0.776 |
 | `trm_ho2` | `mm2_s5`: 5 SGD steps, α 0.1, rows adapted (plain init) | 0 | 0 | 0 | 0.731 |
-| `trm_ho2` | `mm2_s10` | (running) | | | |
+| `trm_ho2` | `mm2_s10`: 10 SGD steps (plain init) | 0 | 0 | 1 | 0.740 |
 | `maml_trm_emb` (MAML, embeddings) | `mm2_s1`: 1 inner SGD step, α 0.1, 16 rows adapted | 0 | 0 | 0 | 0.724 |
 | `maml_trm_emb` | `mm2_s5`: 5 inner SGD steps | 0 | 0 | 0 | 0.732 |
 | `maml_trm_emb` | `mm2_s10`: 10 inner SGD steps | 0 | 0 | 0 | 0.722 |
@@ -247,6 +247,9 @@ Progress log:
   accuracy 0.731, support loss 1.60 -> 0.91. Level with the meta-trained checkpoint (0.732) on the test pairs; the
   meta-trained one starts from a lower demo loss (1.20 vs 1.60) and ends lower (0.85 vs 0.91), the gain the
   meta-objective bought, but it does not reach the held-out pairs.
+- 2026-10-20 21:20, `trm_ho2 mm2_s10`: 0 / 0 / 1 of 30 at pass@1/2/5, token accuracy 0.740, support loss 1.60 -> 0.76.
+  The plain checkpoint under ten SGD steps edges past the meta-trained one (0.722, 0 at pass@5). The last run,
+  the ordinary loop on the MAML checkpoint, is going.
 
 ### Meta-training curve, `maml_trm_emb` (embeddings, puzzle-level episodes; block means over ~400 meta-steps)
 
