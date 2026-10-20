@@ -395,16 +395,30 @@ under `eval/lr_<variant>/*` in each run's W&B page. Pretrain wall: `trm_sep_ho` 
 | GRAM, separate H (`gram_sep_ho`) | `lr_full` (control) | 1 | 1 | 4 | 0.778 |
 | GRAM, separate H | `lr_lonly` | 2 | 2 | 4 | 0.779 |
 | GRAM, separate H | `lr_lreinit` | 0 | 0 | 0 | 0.627 |
-| GRAM, separate H | `lr_lonly_lprm` (+20 LPRM passes) | (running) | | | |
-| GRAM, separate H | `lr_lreinit_lprm` (+20 LPRM passes) | (queued) | | | |
+| GRAM, separate H | `lr_lonly_lprm` (+20 LPRM passes) | 0 | 0 | 0 | 0.600 |
+| GRAM, separate H | `lr_lreinit_lprm` (+20 LPRM passes) | 0 | 0 | 0 | 0.600 |
 
 Second reading. The shared TRM re-trained on the rebuilt build repeats section 3 (1/2/3 at pass@2 then 1/2/3 now), so
 the separate-H model's 3/7/8 under full fine-tuning is the separate H block, not seed spread: with its own H block
 the model has more to adapt and adapts better (one seed, 30 tasks: 5 tasks is above the ~2-task spread seen between
 seeds in section 3b, but a second seed is the natural check). GRAM with a separate H block adapts less (1/1/4 full;
 L-only 2/2/4 is level with it), and re-initialising its L block solves nothing (token accuracy 0.63, below the
-no-TTT 0.65 of the shared TRM). The label-free LPRM phase lifts the mean LPRM value (0.85 -> 0.92 per task on the
-L-only variant); whether it lifts pass@k is the last two rows.
+no-TTT 0.65 of the shared TRM).
+
+**The label-free LPRM phase games the critic.** Over the 30 tasks the mean LPRM value rises 0.795 -> 0.915 in both
+variants (20 passes x 2 test batches x 8 supervision steps = 320 updates at a flat 3e-4 on the L block), while the
+token accuracy falls from 0.78 (L-only) / 0.63 (L-reinit) to exactly 0.600 in both and no task is solved: the L block
+finds states the frozen head scores as correct that decode to the same degenerate grid regardless of where it
+started. The head was trained on the pretraining tasks' trajectories and is an in-distribution critic, not a
+reward for a module free to move anywhere. Untested cheap variants: far fewer updates (`lprm_steps=1`) or a 10x
+smaller lr, which would show whether a gentle version helps before the collapse; or using the head only to select
+among candidates (REPORTS_GRAM_TTS.md's best-of-N) rather than as a training signal.
+
+**Verdict.** (1) Re-initialising the L block at TTT does not work at this scale: it loses most of full fine-tuning's
+gain for TRM (1 vs 7 at pass@2) and all of it for GRAM (0 vs 1). Training only the pretrained L block keeps part
+of it (TRM 3, GRAM 2). (2) The by-product is the real finding: giving TRM its own H block raises full-TTT from 2 to 7
+of 30 at pass@2 (the shared control re-run repeats 2), one seed. (3) Maximising the frozen LPRM head on the test
+input collapses the prediction; the value is not a usable label-free training signal as is.
 
 First reading (TRM): re-initialising the L block hurts. Training only the pretrained L block keeps about half of full
 fine-tuning's gain (3 vs 7 at pass@2), and starting it from scratch keeps almost none (1): 160 steps on 16 aux
