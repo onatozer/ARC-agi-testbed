@@ -222,3 +222,7 @@ Progress log:
   1.46 / 1.15 / 1.01 / 0.90 / 0.82. Unlike the first grid (query loss flat at 1.35-1.45 after step 400), both are
   still falling steadily: with the embeddings and puzzle-level episodes the meta-objective has something to work
   with. Below 0.9 already, against the first grid's best of 1.03 after 2000 steps.
+- 2026-10-20 18:10, step 1168 of 2000 (6.9 s per step). Block means over ~233 meta-steps: support loss before
+  adaptation 2.56 / 1.29 / 1.11 / 1.04 / 1.00, query loss after the adapted step 1.31 / 0.96 / 0.83 / 0.77 / 0.73,
+  still falling. In-training eval at step 1000 (held-out test pairs, no adaptation, untrained identifiers): 0 of 30,
+  token accuracy 0.617, as expected for the no-adaptation control.
