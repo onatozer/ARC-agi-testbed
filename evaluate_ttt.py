@@ -196,12 +196,13 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             steps = cfg.maml_steps or config.maml.inner_steps
             emb = getattr(train_state.model.model, "puzzle_emb", None)
             table = emb.weights.detach().clone() if emb is not None else None
-            losses = maml_adapt(train_state.model, tree_to_device(support, next(train_state.model.parameters()).device), steps, config.maml.inner_lr, config.maml.adapt_substrings)
-            _maml_release(train_state.model)
+            losses, _ = maml_adapt(train_state.model, tree_to_device(support, next(train_state.model.parameters()).device), steps, config.maml.inner_lr, config.maml.adapt_substrings)
             moved = int((emb.weights != table).any(1).sum()) if emb is not None else 0
             adapted = sum(p.numel() for p in _maml_targets(train_state.model, config.maml.adapt_substrings) if emb is None or p is not emb.weights)
             _maml_release(train_state.model)
-            print_info(f"TTT run {run}: {steps} MAML steps (lr {config.maml.inner_lr}) on {support['inputs'].shape[0]} demos, {adapted} adapted parameters + {moved} embedding rows, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+            meta_sgd = getattr(train_state.model, "meta_sgd", None)
+            lr_text = "learned step sizes, geometric mean %.3g, max %.3g" % meta_sgd.summary() if meta_sgd is not None else f"lr {config.maml.inner_lr}"
+            print_info(f"TTT run {run}: {steps} MAML steps ({lr_text}) on {support['inputs'].shape[0]} demos, {adapted} adapted parameters + {moved} embedding rows, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
         else:
             config.maml.enabled = False  # maml_steps=0 on a MAML checkpoint: plain supervision steps, not meta-steps per batch
             for _set_name, batch, global_batch_size in train_loader:

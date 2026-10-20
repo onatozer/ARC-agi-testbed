@@ -55,3 +55,6 @@ maml: # first-order MAML meta-training (with arch.puzzle_emb_ndim=0 and optimize
   meta_batch_size: 4 # puzzles per meta-step (their meta_batch_size)
   support_copies: 16 # augmented copies of the puzzle in an episode: their demos are the support, one held-out row of each the query
   adapt_substrings: [] # inner loop adapts only these (parameter-name substrings; puzzle_emb = the embedding rows); empty = everything
+  learn_alpha: false # Meta-SGD: learn a step size per element of the adapted tensors (init inner_lr) alongside the initialisation
+  alpha_lr: 1e-3 # Adam lr of the log step sizes
+  alpha_range: 5.0 # log step sizes stay within log(inner_lr) +- this

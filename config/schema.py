@@ -50,6 +50,9 @@ class MAMLConfig(BaseModel):
     meta_batch_size: int = 4  # puzzles (tasks) per meta-step
     support_copies: int = 16  # augmented copies of a puzzle in an episode (evaluate_ttt.py's num_aux_tasks); one row of each is the query
     adapt_substrings: List[str] = []  # the inner loop adapts only parameters (or the puzzle_emb table) whose name contains one of these; empty = everything. The outer loop trains everything (ANIL, arXiv 1909.09157)
+    learn_alpha: bool = False  # Meta-SGD (arXiv 1707.09835): a learned step size per element of every adapted tensor, initialised at inner_lr, trained with the first-order gradient -(g_query * g_support)
+    alpha_lr: float = 1e-3  # Adam lr of the log step sizes (the paper uses the meta lr)
+    alpha_range: float = 5.0  # shortcut: log step sizes are clamped to log(inner_lr) +- this after every meta-step, against runaway steps; drop it when the meta-objective alone keeps alpha bounded
 
     @pydantic.model_validator(mode="after")
     def _validate(self) -> MAMLConfig:

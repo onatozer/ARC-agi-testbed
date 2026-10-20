@@ -344,3 +344,45 @@ base-GRAM pretrain on the held-out build (same recipe), also run under the ordin
 | `gram_ho` | `mm3g_s5` / `s10`: the heads | (queued) | | | |
 
 Progress log (partial MAML):
+- 2026-10-20 23:40, the plain `gram_ho` control trained (4000 steps) and the heads probe ran (table above); `maml_emb`
+  had started. The user then replaced the partial-MAML runs with Meta-SGD ones (next section); the MAML runs were
+  stopped before any result. `gram_ho` and the probes are reused.
+
+## Partial Meta-SGD: learned step sizes per element (2026-10-21)
+
+**Why.** The probes showed the parts of the network need inner step sizes two orders of magnitude apart (embedding
+rows ~10, the block 0.1, GRAM's heads 0.01), so one fixed α makes the adaptation a weights-only one, and the
+partial ablations pick the partition by hand. Meta-SGD (Li et al. 2017, arXiv 1707.09835) learns a step size per
+element of the adapted tensors together with the initialisation; MAML is its special case with one fixed scalar.
+
+**Implementation** (`pretrain.MetaSGD`, `maml.learn_alpha`). α = exp(ρ), one ρ per element of every adapted tensor
+(the puzzle-embedding table gets one per column, shared by its rows, since a test task's rows are new), initialised
+at the probed α of the part. First-order: the inner step is θ' = θ − α ∘ g_support; the query gradient at θ'
+trains θ as before, and ρ gets dL_query/dρ = −(g_query ∘ g_support) ∘ α, which needs no second derivatives
+(g_support does not depend on α). ρ sits on the loss head (saved in the checkpoint, used at test time), trained by
+its own Adam at 1e-3 under the schedule, kept out of AdamAtan2 (whose weight decay would pull α to 1), and clamped
+to log α0 ± 5 after every meta-step against runaway steps (a shortcut; the meta-objective alone should bound α).
+The outer loop trains everything (ANIL); the inner loop adapts the named part. Logged: `train/fprl/alpha_mean`
+(geometric mean over the adapted elements) and `alpha_max`; the TTT line prints them too.
+
+**Runs** (`scripts/miniarc5/queue_msgd_parts.sh`, one GPU in sequence): `msgd_emb` (embedding rows, α0 10), `msgd_lh`
+(the block, α0 0.1), `msgd_gramheads` (GRAM's prior / posterior / LPRM heads, α0 0.01); each with the learned inner
+loop at 1 / 5 / 10 steps (`ms3e_*`, `ms3l_*`, `ms3g_*`), the plain checkpoint (`trm_ho2`, `gram_ho`) under the same
+part at the fixed α0 (5 / 10 steps), and the ordinary `ttt_mini` loop; plus `gram_ho` under the ordinary loop.
+Same budget as the re-run: puzzle-level episodes of 16 copies, 4 puzzles per meta-step, 2000 meta-steps, eager.
+
+### Results (partial Meta-SGD)
+
+| checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | token acc | learned α (geo. mean / max) |
+|---|---|---|---|---|---|---|
+| `trm_ho2` (plain) | `lr_full`: ordinary loop (section 7) | 1 | 2 | 3 | 0.776 | |
+| `maml_trm_emb` (MAML, everything, re-run) | `mm2_adam`: ordinary loop | 2 | 3 | 4 | 0.771 | |
+| `msgd_emb` (embedding rows) | `ms3e_s1` / `s5` / `s10` / `ms3e_adam` | (queued) | | | | |
+| `trm_ho2` | `ms3e_s5` / `s10`: embedding rows, α 10 | (queued) | | | | |
+| `msgd_lh` (the block) | `ms3l_s1` / `s5` / `s10` / `ms3l_adam` | (queued) | | | | |
+| `trm_ho2` | `ms3l_s5` / `s10`: the block, α 0.1 | (queued) | | | | |
+| `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | |
+| `msgd_gramheads` (GRAM heads) | `ms3g_s1` / `s5` / `s10` / `ms3g_adam` | (queued) | | | | |
+| `gram_ho` | `ms3g_s5` / `s10`: the heads, α 0.01 | (queued) | | | | |
+
+Progress log (partial Meta-SGD):

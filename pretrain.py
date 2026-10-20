@@ -356,6 +356,14 @@ def create_model(
             )
         )
         optimizer_lrs.append(config.muon_lr if config.muon_lr is not None else config.lr)
+
+    if config.maml.enabled and config.maml.learn_alpha:
+        # Meta-SGD's step sizes: attached after the optimizers above so they stay out of AdamAtan2 (its weight decay
+        # would pull them to 1); their own Adam, no decay, at alpha_lr under the schedule
+        model.meta_sgd = MetaSGD(_maml_named_targets(model, config.maml.adapt_substrings), config.maml.inner_lr, config.maml.alpha_range)
+        _maml_release(model)
+        optimizers.append(torch.optim.Adam(model.meta_sgd.parameters(), lr=1e-8))
+        optimizer_lrs.append(config.maml.alpha_lr)
     return model, optimizers, optimizer_lrs
 
 def init_train_state(
@@ -441,23 +449,67 @@ def _puzzle_emb(model: nn.Module) -> Optional[nn.Module]:
     return getattr(model.model, "puzzle_emb", None)
 
 
-def _maml_targets(model: nn.Module, substrings: Sequence[str] = ()) -> List[torch.Tensor]:
-    """What MAML adapts: the trainable parameters plus the puzzle-embedding table when the model has one (a task's
-    identifier rows adapt with the weights), restricted to names containing one of `substrings` when given (the
-    table's name is model.inner.puzzle_emb.weights, so `puzzle_emb` selects it). CastedSparseEmbedding hands
-    gradients to a fixed-size local buffer; its path is bypassed (emptied) so the table itself takes the gradient."""
+def _maml_named_targets(model: nn.Module, substrings: Sequence[str] = ()) -> List[Tuple[str, torch.Tensor]]:
+    """What MAML adapts, with names: the trainable parameters plus the puzzle-embedding table when the model has one
+    (a task's identifier rows adapt with the weights), restricted to names containing one of `substrings` when given
+    (the table's name is model.inner.puzzle_emb.weights, so `puzzle_emb` selects it). Meta-SGD's step sizes are
+    never adapted. CastedSparseEmbedding hands gradients to a fixed-size local buffer; its path is bypassed
+    (emptied) so the table itself takes the gradient."""
     match = lambda name: not substrings or any(s in name for s in substrings)
-    targets = [p for name, p in model.named_parameters() if p.requires_grad and match(name)]
+    targets = [(name, p) for name, p in model.named_parameters() if p.requires_grad and match(name) and not name.startswith("meta_sgd.")]
     emb = _puzzle_emb(model)
     if emb is not None:
         if emb.local_weights.shape[0] != 0:
             emb.local_weights = nn.Buffer(torch.zeros((0, emb.weights.shape[1]), device=emb.weights.device, requires_grad=True), persistent=False)
         emb.weights.requires_grad_(True)
-        if match(next(name for name, b in model.named_buffers() if b is emb.weights)):
-            targets.append(emb.weights)
+        name = next(name for name, b in model.named_buffers() if b is emb.weights)
+        if match(name):
+            targets.append((name, emb.weights))
     if not targets:
         raise ValueError(f"maml.adapt_substrings {list(substrings)} match no parameter of the model.")
     return targets
+
+
+def _maml_targets(model: nn.Module, substrings: Sequence[str] = ()) -> List[torch.Tensor]:
+    return [p for _, p in _maml_named_targets(model, substrings)]
+
+
+class MetaSGD(nn.Module):
+    """Meta-SGD (Li et al. 2017, arXiv 1707.09835): a learned step size per element of every adapted tensor,
+    alpha = exp(rho), initialised at the inner lr. rho lives on the loss head (so it is in the checkpoint) and is
+    trained by its own Adam with the first-order gradient dL_query/dalpha = -(g_query * g_support) (maml_batch)."""
+
+    def __init__(self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float) -> None:
+        super().__init__()
+        # The puzzle-embedding table gets one step size per column, shared by its rows: a test task's rows are new
+        # (the table is resized to the aux copies' identifiers), so per-row step sizes could not transfer
+        shape = lambda n, p: (1, p.shape[1]) if n.endswith("puzzle_emb.weights") else p.shape
+        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), math.log(alpha0), dtype=torch.float32, device=p.device)) for n, p in named})
+        self.lo, self.hi = math.log(alpha0) - alpha_range, math.log(alpha0) + alpha_range
+
+    @staticmethod
+    def key(name: str) -> str:
+        return name.replace(".", "|")
+
+    def alpha(self, name: str) -> Optional[torch.Tensor]:
+        rho = self.rho.get(self.key(name))
+        return None if rho is None else rho.exp()
+
+    @torch.no_grad()
+    def clamp_(self) -> None:
+        for rho in self.rho.values():
+            rho.clamp_(self.lo, self.hi)
+
+    def summary(self) -> Tuple[float, float]:
+        """(geometric mean, max) of the step sizes over every adapted element."""
+        rhos = torch.cat([r.detach().flatten() for r in self.rho.values()])
+        return float(rhos.mean().exp()), float(rhos.max().exp())
+
+
+def _step_size(model: nn.Module, name: str, lr: float) -> Any:
+    meta_sgd = getattr(model, "meta_sgd", None)
+    alpha = meta_sgd.alpha(name) if meta_sgd is not None else None
+    return lr if alpha is None else alpha
 
 
 def _maml_release(model: nn.Module) -> None:
@@ -549,19 +601,23 @@ def task_grads(model: nn.Module, batch: Dict[str, torch.Tensor], params: List[to
     return grads, total
 
 
-def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float, substrings: Sequence[str] = ()) -> List[float]:
-    """MAML's inner loop on one task: `steps` SGD steps of size lr on the adapted tensors (_maml_targets), in place.
-    Returns the task loss before each step. Shared by meta-training (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
-    params = _maml_targets(model, substrings)
-    losses = []
+def maml_adapt(model: nn.Module, batch: Dict[str, torch.Tensor], steps: int, lr: float, substrings: Sequence[str] = ()) -> Tuple[List[float], List[List[Optional[torch.Tensor]]]]:
+    """MAML's inner loop on one task: `steps` SGD steps on the adapted tensors (_maml_named_targets), in place, each
+    element stepping by lr or by its Meta-SGD step size when the model learns them. Returns the task loss before
+    each step and each step's support gradients (Meta-SGD's alpha gradient needs them). Shared by meta-training
+    (maml_batch) and test-time adaptation (evaluate_ttt.py)."""
+    named = _maml_named_targets(model, substrings)
+    params = [p for _, p in named]
+    losses, step_grads = [], []
     for _ in range(steps):
         grads, loss = task_grads(model, batch, params)
         losses.append(float(loss))
+        step_grads.append(grads)
         with torch.no_grad():
-            for p, g in zip(params, grads):
+            for (name, p), g in zip(named, grads):
                 if g is not None:
-                    p.sub_(lr * g)
-    return losses
+                    p.sub_(_step_size(model, name, lr) * g)
+    return losses, step_grads
 
 
 def maml_batch(model: nn.Module, episodes: List[Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]], cfg: Any) -> Tuple[List[Optional[torch.Tensor]], int, Dict[str, torch.Tensor]]:
@@ -569,18 +625,34 @@ def maml_batch(model: nn.Module, episodes: List[Tuple[Dict[str, torch.Tensor], D
     per task the support adapts a copy of the weights and embedding rows (maml_adapt; only cfg.adapt_substrings when
     given), the query's gradient at the adapted weights w.r.t. every parameter is summed over the tasks (the paper's
     first-order meta-gradient; the outer loop trains everything), and the weights are restored.
+    With Meta-SGD (model.meta_sgd) the step sizes' gradient is accumulated too: dL_query/drho = -(g_query *
+    g_support) * alpha per element, summed over the inner steps, written to rho.grad.
     Returns (meta-gradient sums over _maml_targets(model), number of tasks, metrics for train_batch's logging)."""
-    params = _maml_targets(model)
+    named = _maml_named_targets(model)
+    params = [p for _, p in named]
+    index = {name: i for i, (name, _) in enumerate(named)}
     theta = [p.detach().clone() for p in params]
     meta_grads: List[Optional[torch.Tensor]] = [None] * len(params)
+    meta_sgd = getattr(model, "meta_sgd", None)
     n_tasks, support_loss, query_loss = 0, 0.0, 0.0
     for support, query in episodes:
-        support_loss += maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr, cfg.adapt_substrings)[0]
+        losses, step_grads = maml_adapt(model, support, cfg.inner_steps, cfg.inner_lr, cfg.adapt_substrings)
+        support_loss += losses[0]
         grads, loss = task_grads(model, query, params)
         query_loss += float(loss)
         for i, g in enumerate(grads):
             if g is not None:
                 meta_grads[i] = g if meta_grads[i] is None else meta_grads[i] + g
+        if meta_sgd is not None:
+            with torch.no_grad():
+                for j, (name, _) in enumerate(_maml_named_targets(model, cfg.adapt_substrings)):
+                    g_q, rho = grads[index[name]], meta_sgd.rho[MetaSGD.key(name)]
+                    for g_s in (sg[j] for sg in step_grads):
+                        if g_q is not None and g_s is not None:
+                            d = -(g_q * g_s) * rho.exp()
+                            if d.shape != rho.shape:  # the table's per-column step sizes: sum over the rows
+                                d = d.sum(0, keepdim=True)
+                            rho.grad = d if rho.grad is None else rho.grad + d
         with torch.no_grad():
             for p, p0 in zip(params, theta):
                 p.copy_(p0)
@@ -591,6 +663,14 @@ def maml_batch(model: nn.Module, episodes: List[Tuple[Dict[str, torch.Tensor], D
         "fprl/query_loss": torch.tensor(query_loss / max(n_tasks, 1), device=device),
         "fprl/support_loss": torch.tensor(support_loss / max(n_tasks, 1), device=device),
     }
+    if meta_sgd is not None:
+        with torch.no_grad():
+            for rho in meta_sgd.rho.values():
+                if rho.grad is not None:
+                    rho.grad.div_(max(n_tasks, 1))
+        mean, high = meta_sgd.summary()
+        metrics["fprl/alpha_mean"] = torch.tensor(mean, device=device)
+        metrics["fprl/alpha_max"] = torch.tensor(high, device=device)
     return meta_grads, n_tasks, metrics
 
 
@@ -721,6 +801,8 @@ def train_batch(
         if train_embeddings is None or (i == 0) == train_embeddings:
             optim.step()
         optim.zero_grad()
+    if getattr(train_state.model, "meta_sgd", None) is not None:
+        train_state.model.meta_sgd.clamp_()
     
 
     

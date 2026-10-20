@@ -50,7 +50,7 @@ def test_task_grads_cover_the_weights_and_the_embedding_table():
 def test_maml_adapt_lowers_the_loss_and_moves_only_the_tasks_embedding_rows():
     model, cfg = _head()
     table_before = model.model.puzzle_emb.weights.detach().clone()
-    losses = maml_adapt(model, _rows(cfg, 3, [1, 1, 1]), steps=4, lr=1e-2)
+    losses, _ = maml_adapt(model, _rows(cfg, 3, [1, 1, 1]), steps=4, lr=1e-2)
     assert len(losses) == 4 and losses[-1] < losses[0]
     table = model.model.puzzle_emb.weights
     assert not torch.equal(table[1], table_before[1]) and torch.equal(table[0], table_before[0]) and torch.equal(table[2], table_before[2])
@@ -67,17 +67,53 @@ def test_adapt_substrings_restrict_the_inner_loop_but_not_the_outer():
 
     # inner loop on the embedding rows only: no parameter moves, the task's rows do
     before = [p.detach().clone() for p in _trainable(model)]
-    losses = maml_adapt(model, _rows(cfg, 3, [1, 1, 1]), steps=2, lr=1e-2, substrings=["puzzle_emb"])
+    losses, _ = maml_adapt(model, _rows(cfg, 3, [1, 1, 1]), steps=2, lr=1e-2, substrings=["puzzle_emb"])
     assert len(losses) == 2 and all(torch.equal(p, p0) for p, p0 in zip(_trainable(model), before))
     # the meta-gradient still covers every parameter and the table
     meta_grads, n_tasks, _ = maml_batch(model, [(_rows(cfg, 3, [1, 1, 1]), _rows(cfg, 1, [1]))], MAMLConfig(inner_steps=1, inner_lr=1e-2, adapt_substrings=["puzzle_emb"]))
     assert n_tasks == 1 and len(meta_grads) == len(_trainable(model)) + 1 and all(g is not None for g in meta_grads)
 
 
+def test_meta_sgd_learned_step_sizes_drive_the_inner_step_and_get_the_first_order_gradient():
+    import math
+
+    from pretrain import MetaSGD, _maml_named_targets
+
+    model, cfg = _head()
+    named = _maml_named_targets(model, ["inner.L_level."])
+    model.meta_sgd = MetaSGD(named, alpha0=1e-2, alpha_range=5.0)
+    assert set(model.meta_sgd.rho) == {MetaSGD.key(n) for n, _ in named}
+    assert all(n not in [m for m, _ in _maml_named_targets(model)] for n in model.meta_sgd.rho)  # rho is never itself adapted
+    # a halved step size on one tensor halves its inner step
+    name, p = named[0]
+    model.meta_sgd.rho[MetaSGD.key(name)].data.fill_(math.log(5e-3))
+    before = p.detach().clone()
+    batch = _rows(cfg, 3, [1, 1, 1])
+    (_, step_grads) = maml_adapt(model, batch, steps=1, lr=1e-2, substrings=["inner.L_level."])
+    torch.testing.assert_close(before - p.detach(), 5e-3 * step_grads[0][0])
+    with torch.no_grad():
+        p.copy_(before)
+    # the meta-step writes -(g_query * g_support) * alpha into rho.grad, averaged over the tasks
+    meta_grads, n_tasks, metrics = maml_batch(model, [(batch, _rows(cfg, 1, [1]))], MAMLConfig(inner_steps=1, inner_lr=1e-2, adapt_substrings=["inner.L_level."]))
+    rho = model.meta_sgd.rho[MetaSGD.key(name)]
+    assert rho.grad is not None and torch.isfinite(rho.grad).all() and rho.grad.abs().sum() > 0
+    assert "fprl/alpha_mean" in metrics and 0 < float(metrics["fprl/alpha_mean"]) <= float(metrics["fprl/alpha_max"])
+    model.meta_sgd.rho[MetaSGD.key(name)].data.fill_(100.0)
+    model.meta_sgd.clamp_()
+    assert float(rho.detach().max()) == pytest.approx(math.log(1e-2) + 5.0)
+
+    # the embedding table's step sizes are per column (its rows are new at test time) and get the row-summed gradient
+    model.meta_sgd = MetaSGD(_maml_named_targets(model, ["puzzle_emb"]), alpha0=10.0, alpha_range=5.0)
+    table_rho = next(iter(model.meta_sgd.rho.values()))
+    assert table_rho.shape == (1, model.model.puzzle_emb.weights.shape[1])
+    maml_batch(model, [(batch, _rows(cfg, 1, [1]))], MAMLConfig(inner_steps=1, inner_lr=10.0, adapt_substrings=["puzzle_emb"]))
+    assert table_rho.grad is not None and table_rho.grad.shape == table_rho.shape and torch.isfinite(table_rho.grad).all()
+
+
 def test_maml_adapt_without_puzzle_embeddings():
     model, cfg = _head(puzzle_emb_ndim=0, puzzle_emb_len=0)
     assert len(_maml_targets(model)) == len(_trainable(model))
-    losses = maml_adapt(model, _rows(cfg, 3, [0, 0, 0]), steps=3, lr=1e-2)
+    losses, _ = maml_adapt(model, _rows(cfg, 3, [0, 0, 0]), steps=3, lr=1e-2)
     assert losses[-1] < losses[0]
 
 
