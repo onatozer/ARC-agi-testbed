@@ -391,8 +391,20 @@ under `eval/lr_<variant>/*` in each run's W&B page. Pretrain wall: `trm_sep_ho` 
 | TRM, separate H (`trm_sep_ho`) | `lr_full`: everything trains (control) | 3 | 7 | 8 | 0.803 |
 | TRM, separate H | `lr_lonly`: pretrained L block only | 3 | 3 | 5 | 0.793 |
 | TRM, separate H | `lr_lreinit`: L block re-initialised, trained alone | 1 | 1 | 2 | 0.703 |
-| TRM, shared (`trm_ho2`) | `lr_full` | (running) | | | |
-| GRAM, separate H (`gram_sep_ho`) | `lr_full` / `lr_lonly` / `lr_lreinit` / `lr_lonly_lprm` / `lr_lreinit_lprm` | (queued) | | | |
+| TRM, shared (`trm_ho2`, emb lr 3e-2) | `lr_full` (control, rebuilt build) | 1 | 2 | 3 | 0.776 |
+| GRAM, separate H (`gram_sep_ho`) | `lr_full` (control) | 1 | 1 | 4 | 0.778 |
+| GRAM, separate H | `lr_lonly` | 2 | 2 | 4 | 0.779 |
+| GRAM, separate H | `lr_lreinit` | 0 | 0 | 0 | 0.627 |
+| GRAM, separate H | `lr_lonly_lprm` (+20 LPRM passes) | (running) | | | |
+| GRAM, separate H | `lr_lreinit_lprm` (+20 LPRM passes) | (queued) | | | |
+
+Second reading. The shared TRM re-trained on the rebuilt build repeats section 3 (1/2/3 at pass@2 then 1/2/3 now), so
+the separate-H model's 3/7/8 under full fine-tuning is the separate H block, not seed spread: with its own H block
+the model has more to adapt and adapts better (one seed, 30 tasks: 5 tasks is above the ~2-task spread seen between
+seeds in section 3b, but a second seed is the natural check). GRAM with a separate H block adapts less (1/1/4 full;
+L-only 2/2/4 is level with it), and re-initialising its L block solves nothing (token accuracy 0.63, below the
+no-TTT 0.65 of the shared TRM). The label-free LPRM phase lifts the mean LPRM value (0.85 -> 0.92 per task on the
+L-only variant); whether it lifts pass@k is the last two rows.
 
 First reading (TRM): re-initialising the L block hurts. Training only the pretrained L block keeps about half of full
 fine-tuning's gain (3 vs 7 at pass@2), and starting it from scratch keeps almost none (1): 160 steps on 16 aux
