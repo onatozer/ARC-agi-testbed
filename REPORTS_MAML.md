@@ -68,6 +68,11 @@ AdamAtan2 loop, `maml_steps=0`), the plain model with the same SGD adaptation (`
 - 2026-10-20 08:15, `maml_trm mm_s10`: 0 of 30, token accuracy 0.614, support loss 1.48 -> 1.23: ten steps are no
   better than five. The shared-block MAML model does not adapt to a held-out task by its own inner loop at any
   tested step count; the ordinary AdamAtan2 loop on it (`mm_adam`) runs next, then the separate-H model's variants.
+- 2026-10-20 09:05, `maml_trm mm_adam` stopped after 7 tasks: the queue runs every TTT eager (`DISABLE_COMPILE=1`, needed
+  for the MAML inner loop), and the ordinary 160-step AdamAtan2 loop takes ~5 min per task eager against 12 s
+  compiled. The three `mm_adam` variants (shared, separate H, plain) are re-run compiled after the queue
+  (`scripts/miniarc5/queue_maml_adam.sh`; the suffix resumes the 7 finished tasks). The SGD variants on the
+  separate-H checkpoint are running.
 
 ### Meta-training curve, `maml_trm` (block means over ~400 meta-steps, ~3 tasks each; 2000 steps, 11,679 s)
 
