@@ -393,7 +393,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
 | `trm_ho2` (plain) | `ms3l_s5`: 5 fixed steps (α 0.1) on the block | (queued) | | | | | | |
 | `trm_ho2` | `ms3l_s10`: 10 fixed steps on the block | (queued) | | | | | | |
-| `varc_ho2` (plain VARC, rebuilt build) | `ms3v_adam`: ordinary loop | (queued) | | | | | | |
+| `varc_ho2` (plain VARC, rebuilt build) | `ms3v_adam`: ordinary loop | 4 | 4 | 4 | 6 | 6 | 0.811 |  |
 | `msgd_varc_emb` (VARC, task-token rows) | `ms3ve_s1`: 1 learned step on the rows | 0 | 0 | 0 | 0 | 0 | 0.680 | 1.71 / 2.48 |
 | `msgd_varc_emb` | `ms3ve_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.730 | 1.71 / 2.48 |
 | `msgd_varc_emb` | `ms3ve_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.729 | 1.71 / 2.48 |
@@ -457,6 +457,17 @@ Progress log (partial Meta-SGD):
   held-out pairs, as everywhere else in this grid. Left for VARC: the two ordinary loops (`ms3vl_adam`, `ms3v_adam`).
 - 2026-10-21 04:15, `msgd_varc_lh ms3vl_adam` (ordinary loop on the VARC layers-Meta-SGD checkpoint): 1 / 1 / 1 of 30
   (2 at pass@100), token accuracy 0.748. The plain VARC's own ordinary loop (`ms3v_adam`) is the last VARC run.
+- 2026-10-21 04:30, `varc_ho2 ms3v_adam` (the plain VARC under the ordinary `ttt_mini` loop, rebuilt build): 4 / 4 / 4 of
+  30 (6 at pass@100), token accuracy 0.811, which replicates section 3's VARC Full-TTT (3 / 4 / 4). The VARC part of
+  the chain is complete; the TRM block (`msgd_lh`) is meta-training.
+
+**VARC verdict.** The two VARC Meta-SGD checkpoints lose on every count against the plainly trained VARC. Under the
+ordinary fine-tune: plain 4 / 4 / 4 (6 produced) at 0.811 vs 1 / 2 / 2 (2) at 0.750 for the task-token Meta-SGD start
+and 1 / 1 / 1 (2) at 0.748 for the layers one. Under their own learned inner loops: 0 of 30 at 1 / 5 / 10 steps
+(nothing produced), while the plain VARC under the same parts at the fixed probed α gets 0.74-0.75 and produces a
+task. Meta-training the VARC start for a one-step adaptation of a part costs it most of what plain training gives
+the ordinary fine-tune (4 -> 1-2 at pass@2), a larger loss than for TRM (2 -> 1), and VARC's single task token
+adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same single-seed, 30-task caveat.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
