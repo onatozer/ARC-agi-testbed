@@ -400,8 +400,8 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_varc_emb` | `ms3ve_adam`: ordinary loop | 1 | 2 | 2 | 2 | 2 | 0.750 |  |
 | `varc_ho2` (plain) | `ms3ve_s5`: 5 fixed steps (α 1) on the rows | 0 | 0 | 0 | 1 | 1 | 0.744 | fixed 1.0 |
 | `varc_ho2` | `ms3ve_s10`: 10 fixed steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.752 | fixed 1.0 |
-| `msgd_varc_lh` (VARC, transformer layers) | `ms3vl_s1`: 1 learned step on the layers | (queued) | | | | | | |
-| `msgd_varc_lh` | `ms3vl_s5`: 5 learned steps | (queued) | | | | | | |
+| `msgd_varc_lh` (VARC, transformer layers) | `ms3vl_s1`: 1 learned step on the layers | 0 | 0 | 0 | 0 | 0 | 0.731 | 0.0108 / 0.0265 |
+| `msgd_varc_lh` | `ms3vl_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.722 | 0.0108 / 0.0265 |
 | `msgd_varc_lh` | `ms3vl_s10`: 10 learned steps | (queued) | | | | | | |
 | `msgd_varc_lh` | `ms3vl_adam`: ordinary loop | (queued) | | | | | | |
 | `varc_ho2` (plain) | `ms3vl_s5`: 5 fixed steps (α 0.01) on the layers | (queued) | | | | | | |
@@ -448,6 +448,10 @@ Progress log (partial Meta-SGD):
 - 2026-10-21 03:10, `msgd_varc_emb ms3ve_adam` (the ordinary `ttt_mini` loop on the VARC rows-Meta-SGD checkpoint):
   1 / 2 / 2 of 30 (2 at pass@100), token accuracy 0.750. The plain VARC under the same loop on this build
   (`ms3v_adam`) runs next and is the number this compares to (section 3's old build: 3 / 4 / 4).
+- 2026-10-21 03:35, `msgd_varc_lh` finished (560 s): query loss after the adapted step 1.48 -> 1.07, the layers' step
+  sizes barely moving on average (geometric mean 0.010 -> 0.011) with a few elements climbing to 0.05: the
+  meta-objective keeps the layers' steps small. TTT: 1 / 5 learned steps 0 of 30 (0 at pass@100), token accuracy
+  0.731 / 0.722; the 10-step run, the ordinary loop, and the plain VARC under the layers are going.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
