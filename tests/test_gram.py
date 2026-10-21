@@ -14,7 +14,7 @@ def _cfg(**overrides):
         batch_size=4, seq_len=16, vocab_size=6, H_cycles=2, L_cycles=2, H_layers=0, L_layers=1,
         hidden_size=32, expansion=2, num_heads=2, pos_encodings="rope", halt_max_steps=4,
         halt_exploration_prob=0.1, puzzle_emb_ndim=32, puzzle_emb_len=2, num_puzzle_identifiers=3,
-        noise_scale=0.0, random_initialization=False, causal=False,
+        noise_scale=0.0, random_initialization=False, causal=False, eval_prior_mean=False,
     )
     cfg.update(overrides)
     return cfg
@@ -33,10 +33,114 @@ def _batch(cfg):
 
 def _gram_head(**overrides):
     torch.manual_seed(0)
-    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, **overrides})
+    cfg = _cfg(**{"kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "lprm_weight": 0.5, "carry_norm": True, "kl_reduction": "mean", "value_bootstrap_weight": 0.5, "lprm_rollout_cycles": "grad", "lprm_pool": "first", "lprm_target": "step", **overrides})
     with torch.device("cuda"):
         model = LossHeadGRAM(GRAM(cfg), loss_type="stablemax_cross_entropy")
     return model, _batch(cfg)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lprm_prior_rollouts_train_only_the_value_head_on_prior_draws():
+    model, batch = _gram_head(lprm_prior_rollouts=3)
+    model.train()
+    _, loss, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
+    inner = model.model.inner
+    # The bootstrap's contribution reaches the value head only: it is the extra kl_loss, and the backbone's gradient
+    # from it is zero (the draws are decoded without gradient), so the lm/KL gradients alone are left when it is off
+    loss.backward()
+    v_grad = inner.v_head.weight.grad.clone()
+    model_off, batch = _gram_head(lprm_prior_rollouts=0)
+    model_off.train()
+    _, loss_off, metrics_off, _, _ = model_off(return_keys=[], carry=model_off.initial_carry(batch), batch=batch)
+    loss_off.backward()
+    assert metrics["kl_loss"] > metrics_off["kl_loss"]
+    assert not torch.equal(v_grad, model_off.model.inner.v_head.weight.grad)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_kl_reduction_sum_is_the_token_count_times_the_mean():
+    """The official release's token-sum KL is the per-token mean times the number of tokens (the puzzle prefix included)."""
+    kls = {}
+    for reduction in ("mean", "sum"):
+        model, batch = _gram_head(kl_reduction=reduction)
+        inner = model.model.inner
+        with torch.no_grad():  # the Gaussian heads start at zero (KL exactly 0): give both models the same non-zero heads
+            g = torch.Generator(device="cuda").manual_seed(1)
+            for head in (inner.prior_head, inner.posterior_head.head):
+                head.to_stats.weight.copy_(torch.randn(head.to_stats.weight.shape, generator=g, device="cuda") * 0.1)
+        model.train()
+        torch.manual_seed(0)
+        _, _, metrics, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+        kls[reduction] = float(metrics["kl_loss"])
+    tokens = model.model.inner.config.seq_len  # the inner's seq_len includes the puzzle prefix
+    assert kls["sum"] > 0 and abs(kls["sum"] / kls["mean"] - tokens) < 0.05 * tokens
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_posterior_y_pool_mean_is_blind_to_where_the_label_tokens_are():
+    model, batch = _gram_head(posterior_y_pool="mean")
+    inner = model.model.inner
+    u_t = torch.randn(2, inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
+    y = batch["labels"][:2]
+    y_perm = y[:, torch.randperm(y.shape[1], generator=torch.Generator().manual_seed(1))]  # the same token multiset, moved
+    model_pos, _ = _gram_head()
+    with torch.no_grad():
+        for m in (model, model_pos):  # the Gaussian head starts at zero weights (mu = 0 whatever the input)
+            torch.nn.init.normal_(m.model.inner.posterior_head.head.to_stats.weight, std=0.1)
+        mu, var = inner.posterior_head(u_t, y)
+        mu2, var2 = inner.posterior_head(u_t, y_perm)
+        torch.testing.assert_close(mu, mu2)
+        torch.testing.assert_close(var, var2)
+        mu, _ = model_pos.model.inner.posterior_head(u_t, y)
+        mu2, _ = model_pos.model.inner.posterior_head(u_t, y_perm)
+    assert not torch.equal(mu, mu2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lprm_pool_mean_reads_every_token():
+    model, batch = _gram_head(lprm_pool="mean")
+    inner = model.model.inner
+    z = torch.randn(2, inner.config.seq_len, inner.config.hidden_size, device="cuda", dtype=inner.forward_dtype)
+    with torch.no_grad():
+        expected = torch.sigmoid(inner.v_head(z.mean(dim=1)).to(torch.float32)).squeeze(-1)
+        torch.testing.assert_close(inner._lprm_value(z), expected)
+        # Perturbing a token other than the first changes the pooled value, never the first-token one
+        z2 = z.clone()
+        z2[:, 1] += 1.0
+        assert not torch.equal(inner._lprm_value(z2), inner._lprm_value(z))
+    model_first, _ = _gram_head()
+    with torch.no_grad():
+        assert torch.equal(model_first.model.inner._lprm_value(z2), model_first.model.inner._lprm_value(z))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lprm_rollout_cycles_all_scores_draws_from_every_cycle():
+    seen = []
+    model, batch = _gram_head(lprm_prior_rollouts=2, lprm_rollout_cycles="all")
+    inner = model.model.inner
+    original = inner._lprm_rollout_pairs
+    inner._lprm_rollout_pairs = lambda u_t, z_L, x, y, remaining: seen.append(remaining) or original(u_t, z_L, x, y, remaining)
+    model.train()
+    _, loss, _, _, _ = model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert torch.isfinite(loss)
+    assert seen == [1, 0]  # H_cycles 2: the no-grad cycle with one cycle left, then the grad cycle with none
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lprm_target_final_is_the_trajectory_end_and_leaves_eval_alone():
+    model, batch = _gram_head(lprm_target="final")
+    model.train()
+    carry = model.initial_carry(batch)
+    _, loss, metrics, outputs, _ = model(return_keys=["lprm_target"], carry=carry, batch=batch)
+    assert torch.isfinite(loss) and "lprm_loss" in metrics
+    target = outputs["lprm_target"]
+    assert target.shape == (batch["labels"].shape[0],) and set(target.unique().tolist()) <= {0.0, 1.0}
+    assert model.model.inner.training  # the rollout restores the inner's mode
+    model.eval()
+    with torch.inference_mode():
+        _, info = model.model(carry=model.initial_carry(batch), batch=batch)
+    assert "lprm_target" not in info
 
 
 def _count_posterior_calls(model):
@@ -73,7 +177,7 @@ def test_gram_has_no_halt_head_and_runs_every_supervision_step():
     for step in range(1, 5):  # halt_max_steps = 4
         carry, loss, metrics, outputs, _ = model(return_keys=["q_halt_logits"], carry=carry, batch=batch)
         assert bool(carry.halted.all()) == (step == 4) and bool(carry.halted.any()) == (step == 4)
-    assert torch.isfinite(loss) and not outputs and not any(k.startswith(("q_halt", "halted_q")) for k in metrics)
+    assert torch.isfinite(loss) and set(outputs) <= {"q_halt_logits"} and not any(k.startswith(("q_halt", "halted_q")) for k in metrics)  # q_halt_logits is the LPRM stand-in
 
 
 def test_gram_inference_loss_head_needs_no_halt_head():

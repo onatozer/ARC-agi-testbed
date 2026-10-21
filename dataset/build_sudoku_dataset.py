@@ -104,7 +104,24 @@ def _solve(board: np.ndarray, grid_size: int, box_rows: int, box_cols: int) -> b
     return True
 
 
-def generate_puzzle(grid_size: int, clue_ratio: float = 0.3) -> Tuple[np.ndarray, np.ndarray]:
+def _count_solutions(board: np.ndarray, grid_size: int, box_rows: int, box_cols: int, limit: int = 2) -> int:
+    """Counts the board's solutions by backtracking, stopping at limit."""
+    for i in range(grid_size):
+        for j in range(grid_size):
+            if board[i, j] == 0:
+                count = 0
+                for num in range(1, grid_size + 1):
+                    if _is_valid(board, i, j, num, box_rows, box_cols):
+                        board[i, j] = num
+                        count += _count_solutions(board, grid_size, box_rows, box_cols, limit - count)
+                        board[i, j] = 0
+                        if count >= limit:
+                            return count
+                return count
+    return 1
+
+
+def generate_puzzle(grid_size: int, clue_ratio: float = 0.3, unique_solution: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     box_rows, box_cols = get_box_dims(grid_size)
 
     solution = np.zeros((grid_size, grid_size), dtype=np.int64)
@@ -117,6 +134,13 @@ def generate_puzzle(grid_size: int, clue_ratio: float = 0.3) -> Tuple[np.ndarray
     num_remove = grid_size ** 2 - num_clues
     for cell in cells[:num_remove]:
         puzzle[cell // grid_size, cell % grid_size] = 0
+
+    # Reveal removed cells (in the reverse removal order) until the puzzle has exactly one solution
+    if unique_solution:
+        for cell in reversed(cells[:num_remove]):
+            if _count_solutions(puzzle.copy(), grid_size, box_rows, box_cols) == 1:
+                break
+            puzzle[cell // grid_size, cell % grid_size] = solution[cell // grid_size, cell % grid_size]
 
     return puzzle, solution
 
@@ -152,7 +176,7 @@ def _generate_subset(set_name: str, config: DictConfig, exclude: frozenset = fro
     inputs, labels = [], []
     progress = tqdm(total=n, desc=f"Generating {config.grid_size}x{config.grid_size} {set_name}")
     while len(inputs) < n:
-        puzzle, solution = generate_puzzle(config.grid_size, config.clue_ratio)
+        puzzle, solution = generate_puzzle(config.grid_size, config.clue_ratio, bool(config.get("unique_solution", False)))
         if puzzle.tobytes() in exclude:
             continue
         inputs.append(puzzle)

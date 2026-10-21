@@ -11,10 +11,20 @@ loss:
   loss_type: stablemax_cross_entropy
   
 
+posterior_y_pool: position # how the label enters the posterior: position = embedded per position (the paper's reading; the label-carrying posterior that shortcuts multi-solution tasks); mean = its embedding averaged over the positions, as ad3002/gram defaults to (label-blind on N-Queens, whose boards all hold 8 queens; REPORTS_GRAM_TTS.md section 15)
 kl_grad_prior: 0.8 # KL balancing alpha: share of the KL gradient that trains the prior (paper App. B.2)
-kl_strength: 0.05 # KL weight beta; the paper uses 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2, 0.07 N-Queens 8x8
+kl_strength: 0.07 # KL weight beta, with kl_reduction sum as in the official release; the paper uses 0.07 N-Queens 8x8, 0.1 Sudoku, 0.04 / 0.1 ARC-AGI-1 / 2
+kl_reduction: sum # how the per-token KL is reduced before beta: sum over the tokens (the official gram-release) or mean (this codebase's earlier choice, also ad3002/gram and pixeli99/GRAM: ~S times weaker, which let the posterior carry the label on 8x8 N-Queens, 0% held-out vs 66% with the sum; REPORTS_GRAM_TTS.md section 16)
+eval_prior_mean: false # inference guidance: false = a prior sample per transition (the paper's N=1); true = the prior's mean (deterministic)
 # No halt head: every puzzle runs halt_max_steps supervision steps, so halt_exploration_prob / act_inference / halt_* don't apply
 grad_cycles: 1 # how many of the H_cycles carry the gradient (and the posterior + its KL); 1 is the paper's truncation
 posterior_nograd_cycles: False # also sample the posterior in the no-grad cycles while training (they pay no KL, so y leaks into z_H for free)
 prior_sample_frac: 0.0 # fraction of puzzles whose grad cycle takes the prior's guidance instead of the posterior's (lm loss on the inference trajectory)
 prior_sample_per_puzzle: False # draw the prior_sample_frac choice once per puzzle (its whole trajectory) instead of at every supervision step
+lprm_prior_rollouts: 0 # value bootstrapping for the LPRM head (REPORTS_GRAM_TTS.md section 8): K prior draws per cycle, each rolled out with plain updates to the end of the step (the search's rollout) and scored by its token accuracy; 0 = the loss head's target only (posterior-guided states)
+lprm_rollout_cycles: grad # which cycles draw them: grad = the grad cycle (depth 0, the draw itself); all = every cycle, as the search draws at eval
+value_bootstrap_weight: 0.5 # weight of that loss (TreeRM's key)
+lprm_pool: first # what the LPRM head reads of a state: first = its first token (the paper); mean = the mean over tokens (a draw's noise on the other tokens is invisible to the first until an update mixes them)
+lprm_weight: 0.5 # weight of the LPRM loss in the loss head (ad3002/gram 1.0; pixeli99/GRAM trains no LPRM: 0)
+carry_norm: true # carry the rms-normed z_H between supervision steps (ad3002/gram) or the raw one (pixeli99/GRAM norms only in the decode)
+lprm_target: step # the loss head's LPRM target: step = this step's exact match (ad3002/gram); final = the trajectory's final correctness (the paper, App. A.4), each row's remaining supervision steps rolled out without gradient as inference runs them
