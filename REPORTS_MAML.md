@@ -381,7 +381,8 @@ Same budget as the re-run: puzzle-level episodes of 16 copies, 4 puzzles per met
 | `msgd_emb` | `ms3e_s5`: 5 learned steps on the rows | 0 | 0 | 0 | 0.729 | 12.5 / 14.3 |
 | `msgd_emb` | `ms3e_s10`: 10 learned steps on the rows | 0 | 0 | 1 | 0.739 | 12.5 / 14.3 |
 | `msgd_emb` | `ms3e_adam`: ordinary loop | (queued) | | | | |
-| `trm_ho2` | `ms3e_s5` / `s10`: embedding rows, α 10 | (queued) | | | | |
+| `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 0.738 | fixed 10 |
+| `trm_ho2` | `ms3e_s10` | (running) | | | | |
 | `msgd_lh` (the block) | `ms3l_s1` / `s5` / `s10` / `ms3l_adam` | (queued) | | | | |
 | `trm_ho2` | `ms3l_s5` / `s10`: the block, α 0.1 | (queued) | | | | |
 | `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | |
@@ -422,3 +423,8 @@ throughout.
   learned steps on the rows: one task reaches the top 5, the same as the plain checkpoint under ten fixed SGD steps on
   everything (`mm2_s10`: 0 / 0 / 1, 0.740). The plain checkpoint under the rows alone at α 10 runs next, then the
   ordinary loop on this checkpoint.
+- 2026-10-20 23:45, `trm_ho2 ms3e_s5` (the plainly trained checkpoint, 5 fixed steps at α 10 on the 16 rows only): 0 / 1
+  / 1 of 30, token accuracy 0.738, support loss 1.60 -> 0.61. The plain start under embedding-only SGD is level with
+  the Meta-SGD checkpoint (0.729, 0 solved) and even solves one task at pass@2. So far meta-learning the
+  initialisation and the rows' step sizes buys nothing on the held-out pairs that a large fixed step on the rows
+  from the plain start does not already give.
