@@ -402,6 +402,17 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `gram_ho` | `ms3g_s10`: 10 fixed steps on the heads | (queued) | | | | | | |
 
 Progress log (partial Meta-SGD):
+- 2026-10-21 01:50, the user put VARC at the head of the chain. `msgd_lh` (the TRM block) was stopped at step ~700 and
+  will rerun from scratch after the VARC runs; `msgd_emb`'s grid is complete. New runner
+  `scripts/miniarc5/queue_msgd_varc_parts.sh`: the plain VARC control `varc_ho2` on the rebuilt held-out build (the
+  MiniARC VARC recipe of section 1: hidden 128, 4 layers, mlp 256, canvas 10, 606,768 params, batch 128, 4000
+  steps, `puzzle_emb_lr` 3e-2 as the TRM runs here; section 3's `varc_ho` trained on the deleted build), step-size
+  probes on it (embedding rows at α 1 / 10 / 100, the transformer layers `inner.layers.` at 0.01 / 0.1 / 1; 3 steps,
+  2 tasks) with `pick_alpha.py` choosing the largest α whose demo loss fell ≥ 5% on every probed task, then Meta-SGD of
+  the VARC embedding rows (`msgd_varc_emb`, grid `ms3ve_*`) and of its layers (`msgd_varc_lh`, `ms3vl_*`), with
+  `varc_ho2` under the same parts at the fixed α and under the ordinary loop (`ms3v_adam`). VARC's forward is one
+  pass (`halt_max_steps` 1) so a meta-step costs ~0.7 s: 2000 meta-steps ≈ 25 min against TRM's 3.8 h. Section 3's
+  VARC reference: Full-TTT 3 / 4 / 4 of 30 (flat lr: 4 / 4 / 7), Embed-TTT 1 / 1 / 2.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
