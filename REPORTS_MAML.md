@@ -386,7 +386,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_emb` | `ms3e_s10`: 10 learned steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.739 | 12.5 / 14.3 |
 | `msgd_emb` | `ms3e_adam`: ordinary loop | (queued) | | | | | | |
 | `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 1 | 1 | 0.738 | fixed 10.0 |
-| `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | (queued) | | | | | | |
+| `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | 0 | 1 | 1 | 1 | 1 | 0.757 | fixed 10.0 |
 | `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | (queued) | | | | | | |
 | `msgd_lh` | `ms3l_s5`: 5 learned steps | (queued) | | | | | | |
 | `msgd_lh` | `ms3l_s10`: 10 learned steps | (queued) | | | | | | |
@@ -440,3 +440,6 @@ throughout.
   the Meta-SGD checkpoint (0.729, 0 solved) and even solves one task at pass@2. So far meta-learning the
   initialisation and the rows' step sizes buys nothing on the held-out pairs that a large fixed step on the rows
   from the plain start does not already give.
+- 2026-10-21 00:10, `trm_ho2 ms3e_s10` (plain, 10 fixed steps at α 10 on the rows): 0 / 1 / 1 of 30 (1 at pass@100),
+  token accuracy 0.757, above the Meta-SGD checkpoint's ten learned steps (0.739). The embedding-rows ablation's
+  last run, the ordinary loop on `msgd_emb`, is going; the block ablation follows.
