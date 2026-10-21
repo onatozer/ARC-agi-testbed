@@ -389,7 +389,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | 0 | 1 | 1 | 1 | 1 | 0.757 | fixed 10.0 |
 | `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | 0 | 0 | 0 | 0 | 0 | 0.727 | 0.106 / 0.242 |
 | `msgd_lh` | `ms3l_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.726 | 0.106 / 0.242 |
-| `msgd_lh` | `ms3l_s10`: 10 learned steps | (queued) | | | | | | |
+| `msgd_lh` | `ms3l_s10`: 10 learned steps | 0 | 0 | 0 | 1 | 1 | 0.729 | 0.106 / 0.242 |
 | `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
 | `trm_ho2` (plain) | `ms3l_s5`: 5 fixed steps (α 0.1) on the block | (queued) | | | | | | |
 | `trm_ho2` | `ms3l_s10`: 10 fixed steps on the block | (queued) | | | | | | |
@@ -493,6 +493,8 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
 - 2026-10-21 08:50, `msgd_lh ms3l_s5`: 0 of 30 (0 at pass@100), token accuracy 0.726, support loss 1.24 -> 0.87 before
   step 5. The block's learned steps fit the demos as the MAML re-run did (0.85) and give the same 0.73 on the test
   pairs.
+- 2026-10-21 09:10, `msgd_lh ms3l_s10`: 0 of 30 at pass@1/2/5, 1 at pass@100, token accuracy 0.729, support loss
+  1.24 -> 0.81. The plain checkpoint under the block at fixed α 0.1 and the ordinary loop are next.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
