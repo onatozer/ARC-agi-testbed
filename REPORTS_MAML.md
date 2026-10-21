@@ -387,7 +387,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_emb` | `ms3e_adam`: ordinary loop | 1 | 1 | 1 | 1 | 1 | 0.743 |  |
 | `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 1 | 1 | 0.738 | fixed 10.0 |
 | `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | 0 | 1 | 1 | 1 | 1 | 0.757 | fixed 10.0 |
-| `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | (queued) | | | | | | |
+| `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | 0 | 0 | 0 | 0 | 0 | 0.727 | 0.106 / 0.242 |
 | `msgd_lh` | `ms3l_s5`: 5 learned steps | (queued) | | | | | | |
 | `msgd_lh` | `ms3l_s10`: 10 learned steps | (queued) | | | | | | |
 | `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
@@ -473,6 +473,22 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
   0.82 / 0.73, the block's step sizes nearly flat on average (0.10 -> 0.107) with the largest elements up to 0.3. The
   in-training eval at step 1000 (no adaptation, untrained identifiers) shows one held-out task solved (pass@2 0.033,
   token accuracy 0.615), the first unadapted solve in this whole grid.
+- 2026-10-21 08:30, `msgd_lh` finished: 2000 meta-steps in 11,737 s (3.3 h). Last block: query loss after the adapted
+  step 0.65 (support before it 1.24), step sizes 0.109 geometric mean, max 0.39, so the meta-objective leaves the
+  block's steps near the probed 0.1 but lets a small set of elements grow 3-4x. The step-2000 eval no longer has the
+  unadapted solve (0 of 30, token accuracy 0.651). (The run dir's W&B history also holds the ~260 steps of the
+  stopped first attempt, so block boundaries above are approximate.) First TTT run `ms3l_s1`: 0 of 30 (0 at
+  pass@100), token accuracy 0.727, the checkpoint's sizes 0.106 / 0.24.
+
+### Meta-training curve, `msgd_lh` (the block adapted, learned per-element step sizes)
+
+| meta-steps (approx.) | support loss before the step | query loss after the adapted step | step size, geometric mean / max |
+|---|---|---|---|
+| 1-450 | 2.40 | 1.33 | 0.100 / 0.107 |
+| 450-900 | 1.30 | 0.93 | 0.103 / 0.15 |
+| 900-1350 | 1.08 | 0.76 | 0.106 / 0.26 |
+| 1350-1800 | 1.25 | 0.69 | 0.108 / 0.33 |
+| 1800-2000 | 1.24 | 0.65 | 0.109 / 0.39 |
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
