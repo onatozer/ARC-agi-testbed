@@ -377,7 +377,8 @@ Same budget as the re-run: puzzle-level episodes of 16 copies, 4 puzzles per met
 |---|---|---|---|---|---|---|
 | `trm_ho2` (plain) | `lr_full`: ordinary loop (section 7) | 1 | 2 | 3 | 0.776 | |
 | `maml_trm_emb` (MAML, everything, re-run) | `mm2_adam`: ordinary loop | 2 | 3 | 4 | 0.771 | |
-| `msgd_emb` (embedding rows) | `ms3e_s1` / `s5` / `s10` / `ms3e_adam` | (queued) | | | | |
+| `msgd_emb` (embedding rows) | `ms3e_s1`: 1 learned step on the 16 rows | 0 | 0 | 0 | 0.725 | 12.5 / 14.3 |
+| `msgd_emb` | `ms3e_s5` / `s10` / `ms3e_adam` | (running) | | | | |
 | `trm_ho2` | `ms3e_s5` / `s10`: embedding rows, α 10 | (queued) | | | | |
 | `msgd_lh` (the block) | `ms3l_s1` / `s5` / `s10` / `ms3l_adam` | (queued) | | | | |
 | `trm_ho2` | `ms3l_s5` / `s10`: the block, α 0.1 | (queued) | | | | |
@@ -408,3 +409,7 @@ Adapting the embedding rows alone reaches the same post-adaptation query loss as
 (0.67 at the end of both) with a lower unadapted support loss (0.77 vs 0.93), and the step sizes keep drifting up
 (10 -> 13.6, max 17), still rising when the budget ends: the meta-objective asks for larger embedding steps
 throughout.
+- 2026-10-20 22:45, `msgd_emb ms3e_s1` (one learned step on the 16 aux copies' rows, backbone untouched): 0 of 30,
+  token accuracy 0.725, support loss before the step 1.16 (the checkpoint's learned sizes: geometric mean 12.5, max
+  14.3 at the end of training). Level with the everything-adapted MAML re-run's one step (0.724) while moving only
+  the 16 embedding rows.
