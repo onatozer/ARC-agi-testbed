@@ -393,6 +393,19 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
 | `trm_ho2` (plain) | `ms3l_s5`: 5 fixed steps (α 0.1) on the block | (queued) | | | | | | |
 | `trm_ho2` | `ms3l_s10`: 10 fixed steps on the block | (queued) | | | | | | |
+| `varc_ho2` (plain VARC, rebuilt build) | `ms3v_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_varc_emb` (VARC, task-token rows) | `ms3ve_s1`: 1 learned step on the rows | 0 | 0 | 0 | 0 | 0 | 0.680 | 1.71 / 2.48 |
+| `msgd_varc_emb` | `ms3ve_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.730 | 1.71 / 2.48 |
+| `msgd_varc_emb` | `ms3ve_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.729 | 1.71 / 2.48 |
+| `msgd_varc_emb` | `ms3ve_adam`: ordinary loop | (queued) | | | | | | |
+| `varc_ho2` (plain) | `ms3ve_s5`: 5 fixed steps (α 1) on the rows | 0 | 0 | 0 | 1 | 1 | 0.744 | fixed 1.0 |
+| `varc_ho2` | `ms3ve_s10`: 10 fixed steps on the rows | (queued) | | | | | | |
+| `msgd_varc_lh` (VARC, transformer layers) | `ms3vl_s1`: 1 learned step on the layers | (queued) | | | | | | |
+| `msgd_varc_lh` | `ms3vl_s5`: 5 learned steps | (queued) | | | | | | |
+| `msgd_varc_lh` | `ms3vl_s10`: 10 learned steps | (queued) | | | | | | |
+| `msgd_varc_lh` | `ms3vl_adam`: ordinary loop | (queued) | | | | | | |
+| `varc_ho2` (plain) | `ms3vl_s5`: 5 fixed steps (α 0.01) on the layers | (queued) | | | | | | |
+| `varc_ho2` | `ms3vl_s10`: 10 fixed steps on the layers | (queued) | | | | | | |
 | `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
 | `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | (queued) | | | | | | |
 | `msgd_gramheads` | `ms3g_s5`: 5 learned steps | (queued) | | | | | | |
@@ -423,6 +436,12 @@ Progress log (partial Meta-SGD):
 
   Picked: embedding rows α 1 (VARC's task token has a 10x larger gradient than TRM's zero-initialised embedding
   slot, so a 10x smaller step), layers α 0.01 (0.1 already diverges on one task). `msgd_varc_emb` is meta-training.
+- 2026-10-21 02:35, `msgd_varc_emb` finished (2000 meta-steps in 537 s) and its three learned-loop TTT runs landed.
+  Meta-training: query loss after the adapted step 1.48 -> 1.07 (block means; support before the step 1.56 ->
+  1.11), the task-token step sizes rising 1 -> 2.2 (max 4.9). Much less adaptation than the TRM embedding rows
+  (0.67) : VARC's single task token has less to give than TRM's embedding slot. TTT: 1 / 5 / 10 learned steps on the
+  rows 0 of 30 each (0 at pass@100), token accuracy 0.680 / 0.730 / 0.729, demo loss 1.68 -> 1.03 / 0.98. The plain
+  VARC under the same rows and the ordinary loops are running, then the layers ablation.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
