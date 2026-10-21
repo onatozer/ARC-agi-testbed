@@ -468,6 +468,11 @@ and 1 / 1 / 1 (2) at 0.748 for the layers one. Under their own learned inner loo
 task. Meta-training the VARC start for a one-step adaptation of a part costs it most of what plain training gives
 the ordinary fine-tune (4 -> 1-2 at pass@2), a larger loss than for TRM (2 -> 1), and VARC's single task token
 adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same single-seed, 30-task caveat.
+- 2026-10-21 06:40, `msgd_lh` (the TRM block, rerun) at meta-step 1180 of 2000 (5.7 s per step). Block means over ~360
+  meta-steps: support loss before the step 2.43 / 1.68 / 1.05 / 1.16, query loss after the adapted step 1.34 / 1.06 /
+  0.82 / 0.73, the block's step sizes nearly flat on average (0.10 -> 0.107) with the largest elements up to 0.3. The
+  in-training eval at step 1000 (no adaptation, untrained identifiers) shows one held-out task solved (pass@2 0.033,
+  token accuracy 0.615), the first unadapted solve in this whole grid.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
