@@ -413,6 +413,16 @@ Progress log (partial Meta-SGD):
   `varc_ho2` under the same parts at the fixed α and under the ordinary loop (`ms3v_adam`). VARC's forward is one
   pass (`halt_max_steps` 1) so a meta-step costs ~0.7 s: 2000 meta-steps ≈ 25 min against TRM's 3.8 h. Section 3's
   VARC reference: Full-TTT 3 / 4 / 4 of 30 (flat lr: 4 / 4 / 7), Embed-TTT 1 / 1 / 2.
+- 2026-10-21 02:10, `varc_ho2` trained (4000 steps, 264 s) and probed (support loss before step 1 -> before step 3,
+  per task):
+
+  | part adapted | α 0.01 | α 0.1 | α 1 | α 10 | α 100 |
+  |---|---|---|---|---|---|
+  | embedding rows (the task token) | | | 0.90 -> 0.62, 0.96 -> 0.69 | 0.90 -> 1.20, 0.96 -> 0.69 | 0.90 -> 1.50, 0.96 -> 0.88 |
+  | transformer layers | 0.90 -> 0.68, 0.96 -> 0.85 | 0.90 -> 2.77, 0.96 -> 0.81 | 0.90 -> 2.76, 0.96 -> 1.18 | | |
+
+  Picked: embedding rows α 1 (VARC's task token has a 10x larger gradient than TRM's zero-initialised embedding
+  slot, so a 10x smaller step), layers α 0.01 (0.1 already diverges on one task). `msgd_varc_emb` is meta-training.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
