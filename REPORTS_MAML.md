@@ -406,7 +406,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_varc_lh` | `ms3vl_adam`: ordinary loop | 1 | 1 | 1 | 2 | 2 | 0.748 |  |
 | `varc_ho2` (plain) | `ms3vl_s5`: 5 fixed steps (α 0.01) on the layers | 0 | 0 | 0 | 0 | 0 | 0.715 | fixed 0.01 |
 | `varc_ho2` | `ms3vl_s10`: 10 fixed steps on the layers | 0 | 0 | 1 | 1 | 1 | 0.726 | fixed 0.01 |
-| `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
+| `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | 2 | 2 | 3 | 3 | 3 | 0.750 |  |
 | `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | 0 | 0 | 0 | 0 | 0 | 0.640 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.641 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.646 | 0.0101 / 0.0185 |
@@ -537,6 +537,46 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
   drift further). The two ordinary loops (`msgd_gramheads ms3g_adam`, `gram_ho ms3g_adam`) close the chain.
 - 2026-10-21 15:00, `msgd_gramheads ms3g_adam` (ordinary loop on the GRAM-heads Meta-SGD checkpoint): 2 / 2 / 2 of 30
   (2 at pass@100), token accuracy 0.724. The plain GRAM's ordinary loop (`gram_ho ms3g_adam`) is the last run.
+- 2026-10-21 15:20, `gram_ho ms3g_adam` (the plain base GRAM under the ordinary loop, its full-TTT reference on this
+  build): 2 / 2 / 3 of 30 (3 at pass@100), token accuracy 0.750. The chain is complete (table above rebuilt).
+
+## Verdict (partial Meta-SGD, three architectures)
+
+Every row of the grid, ordinary fine-tune (`ttt_mini`, 160 AdamAtan2 steps) at pass@1 / 2 / 5 (tasks ever produced):
+
+| architecture | plain start | Meta-SGD start, which part adapted | Meta-SGD's own learned loop, best of 1 / 5 / 10 steps |
+|---|---|---|---|
+| TRM (shared block) | 1 / 2 / 3 (6), 0.776 | embedding rows: 1 / 1 / 1 (1), 0.743; the block: 2 / 2 / 2 (2), 0.750 | 0 / 0 / 1 (1), 0.74; 0 / 0 / 0 (1), 0.73 |
+| VARC | 4 / 4 / 4 (6), 0.811 | task-token rows: 1 / 2 / 2 (2), 0.750; layers: 1 / 1 / 1 (2), 0.748 | 0 (0), 0.73; 0 (0), 0.73 |
+| GRAM (base) | 2 / 2 / 3 (3), 0.750 | prior / posterior / LPRM heads: 2 / 2 / 2 (2), 0.724 | 0 (0), 0.65 |
+
+and the plainly trained checkpoint under the same part at the fixed probed α, 5 / 10 steps: TRM rows 0 / 1 / 1 and
+0 / 1 / 1 (0.738, 0.757), TRM block 0 and 0 / 0 / 1 (0.732, 0.738); VARC rows 0 (1 produced) and 0 / 0 / 1 (0.744,
+0.752), VARC layers 0 and 0 / 0 / 1 (0.715, 0.726); GRAM heads 0 and 0 (0.645, 0.649).
+
+1. **The meta-learned inner loop never solves a held-out task at pass@2**, on any architecture, for any part, at 1, 5
+   or 10 steps, with learned per-element step sizes. Its token accuracy (0.73-0.74 for TRM and VARC, 0.65 for GRAM)
+   is matched or beaten by the plainly trained checkpoint under the same part and a fixed step size: meta-training
+   the start and the step sizes adds nothing the probe's α does not give.
+2. **As a start for the ordinary fine-tune, partial Meta-SGD is neutral to harmful.** TRM: level at pass@2 (block 2
+   vs 2) or worse (rows 1 vs 2), and fewer tasks ever produced (1-2 vs 6). VARC: a clear loss (2 and 1 vs 4 at pass@2;
+   2 vs 6 produced). GRAM: level (2 vs 2) with one fewer produced. Only the earlier full-model MAML re-run
+   (`maml_trm_emb`, 3 vs 2 at pass@2, 4 vs 6 produced) is ahead of its plain start at pass@2, inside seed spread.
+3. **What the step sizes learned.** Embedding rows: up (TRM 10 -> 13.6, VARC 1 -> 2.2), the meta-objective wants the
+   identifier rows to move more. The reasoning block / layers: nearly flat on average with a few elements growing
+   3-5x. GRAM's heads: not at all (0.010 -> 0.010); no step the Gaussian heads tolerate is large enough to matter, so
+   that run was plain training on the query rows. Per-element step sizes did not change the conclusion a single
+   fixed α gave; they fix the scale mismatch between parts and nothing else.
+4. **What did move the needle in this whole study** was not the initialisation: the separate H block (section 7:
+   full fine-tune 2 -> 7 of 30) and VARC's architecture (4 of 30 under the same recipe). Across the MAML / Meta-SGD
+   grids the held-out token accuracy under few-step adaptation sits at 0.72-0.75 for every variant, i.e. the demos
+   are fitted (support loss 1.6 -> 0.6-0.9) without the test pairs following, which is a generalisation limit of a
+   0.5-0.6M-parameter model on 3-4 demos, not an optimisation one.
+
+Caveats, as before: first-order, one inner step at train, 2000 meta-steps of 4 puzzles (rows matched to the plain
+recipe, puzzle count not), one seed, 30 tasks (one task = 3.3 points), eager and sequential (3-4 h per TRM / GRAM
+meta-training, 9 min for VARC). Code: `maml.learn_alpha`, `maml.adapt_substrings`; queues
+`scripts/miniarc5/queue_msgd_varc_parts.sh`, `queue_msgd_parts.sh`.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
