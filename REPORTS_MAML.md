@@ -410,7 +410,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | 0 | 0 | 0 | 0 | 0 | 0.640 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.641 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.646 | 0.0101 / 0.0185 |
-| `msgd_gramheads` | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_gramheads` | `ms3g_adam`: ordinary loop | 2 | 2 | 2 | 2 | 2 | 0.724 |  |
 | `gram_ho` (plain) | `ms3g_s5`: 5 fixed steps (α 0.01) on the heads | 0 | 0 | 0 | 0 | 0 | 0.645 | fixed 0.01 |
 | `gram_ho` | `ms3g_s10`: 10 fixed steps on the heads | 0 | 0 | 0 | 0 | 0 | 0.649 | fixed 0.01 |
 
@@ -535,6 +535,8 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
   instability at a smaller scale), while the meta-trained heads at least held it (1.64 -> 1.59).
 - 2026-10-21 14:40, `gram_ho ms3g_s10`: 0 of 30, 0.649, support loss 2.31 -> 3.17 (ten fixed steps on the plain heads
   drift further). The two ordinary loops (`msgd_gramheads ms3g_adam`, `gram_ho ms3g_adam`) close the chain.
+- 2026-10-21 15:00, `msgd_gramheads ms3g_adam` (ordinary loop on the GRAM-heads Meta-SGD checkpoint): 2 / 2 / 2 of 30
+  (2 at pass@100), token accuracy 0.724. The plain GRAM's ordinary loop (`gram_ho ms3g_adam`) is the last run.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
