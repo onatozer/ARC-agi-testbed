@@ -397,7 +397,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_varc_emb` (VARC, task-token rows) | `ms3ve_s1`: 1 learned step on the rows | 0 | 0 | 0 | 0 | 0 | 0.680 | 1.71 / 2.48 |
 | `msgd_varc_emb` | `ms3ve_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.730 | 1.71 / 2.48 |
 | `msgd_varc_emb` | `ms3ve_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.729 | 1.71 / 2.48 |
-| `msgd_varc_emb` | `ms3ve_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_varc_emb` | `ms3ve_adam`: ordinary loop | 1 | 2 | 2 | 2 | 2 | 0.750 |  |
 | `varc_ho2` (plain) | `ms3ve_s5`: 5 fixed steps (α 1) on the rows | 0 | 0 | 0 | 1 | 1 | 0.744 | fixed 1.0 |
 | `varc_ho2` | `ms3ve_s10`: 10 fixed steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.752 | fixed 1.0 |
 | `msgd_varc_lh` (VARC, transformer layers) | `ms3vl_s1`: 1 learned step on the layers | (queued) | | | | | | |
@@ -445,6 +445,9 @@ Progress log (partial Meta-SGD):
 - 2026-10-21 02:55, `varc_ho2 ms3ve_s5` / `s10` (plain VARC, fixed α 1 on the rows): 0 / 0 / 0 (1 at pass@100), 0.744
   and 0 / 0 / 1 (1 at pass@100), 0.752. As for TRM, the plain start under fixed steps on the rows is level with or
   above the Meta-SGD checkpoint's learned loop (0.730 / 0.729, nothing produced). The two ordinary loops run next.
+- 2026-10-21 03:10, `msgd_varc_emb ms3ve_adam` (the ordinary `ttt_mini` loop on the VARC rows-Meta-SGD checkpoint):
+  1 / 2 / 2 of 30 (2 at pass@100), token accuracy 0.750. The plain VARC under the same loop on this build
+  (`ms3v_adam`) runs next and is the number this compares to (section 3's old build: 3 / 4 / 4).
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
