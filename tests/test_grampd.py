@@ -1,6 +1,8 @@
 import pytest
 import torch
+import torch.nn.functional as F
 
+from models.layers import apply_rotary_pos_emb, rms_norm
 from models.losses.base import kl_balanced_logits
 from models.losses.loss_heads import LossHeadGRAM, MaxStepsInferenceLossHead
 from models.recursive_reasoning.grampd import GRAMDP
@@ -112,6 +114,30 @@ def test_candidate_scorer_ranking_depends_on_context_and_cell_positions():
     assert (centred(logits_a) - centred(logits_b)).abs().max() > 1e-3
     # Same context, candidate content moved to different cells -> different preference (RoPE aligns cells)
     assert (centred(logits_a) - centred(logits_rolled)).abs().max() > 1e-3
+
+
+def test_candidate_scorer_rotating_the_query_before_repeating_it_changes_nothing():
+    model, batch = _grampd_head()
+    inner = model.model.inner
+    scorer = inner.prior_head
+    torch.manual_seed(2)
+    B, K, S, H = batch["inputs"].shape[0], inner.config.noise_options, inner.config.seq_len, inner.config.hidden_size
+    ctx = torch.randn(B, S, H, device="cuda", dtype=inner.forward_dtype)
+    cand = torch.randn(B, K, S, H, device="cuda", dtype=inner.forward_dtype)
+    cos, sin = inner._cos_sin()
+    with torch.no_grad():
+        logits = scorer(ctx, cand, (cos, sin))
+
+        # Reference: repeat the query per candidate first, then rotate (the order before this change)
+        query = scorer.q_proj(rms_norm(ctx, variance_epsilon=scorer.norm_eps)).view(B, 1, S, scorer.num_heads, scorer.head_dim)
+        query = query.expand(-1, K, -1, -1, -1).reshape(B * K, S, scorer.num_heads, scorer.head_dim)
+        key, value = scorer.kv_proj(rms_norm(cand, variance_epsilon=scorer.norm_eps)).view(B * K, S, 2, scorer.num_heads, scorer.head_dim).unbind(2)
+        query, key = apply_rotary_pos_emb(query, key, cos, sin)
+        attended = F.scaled_dot_product_attention(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
+        attended = scorer.o_proj(attended.transpose(1, 2).reshape(B * K, S, H))
+        reference = scorer.to_logit(attended.mean(dim=1)).view(B, K).float()
+
+    assert torch.equal(logits, reference)
 
 
 def test_grampd_anneals_gumbel_temperature_with_global_step():
