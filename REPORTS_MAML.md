@@ -391,3 +391,20 @@ Progress log (partial Meta-SGD):
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
   meta-objective wants the rows to move a little more than the probe's α, not less. Adapting the rows alone, the
   post-adaptation query loss is already below the everything-adapted MAML re-run's at the same step (0.86 vs ~0.95).
+- 2026-10-20 22:20, `msgd_emb` finished: 2000 meta-steps in 13,523 s (3.8 h), no errors. In-training eval (no
+  adaptation): 0 of 30, token accuracy 0.65 at both evals. Its six TTT runs are going.
+
+### Meta-training curve, `msgd_emb` (embedding rows adapted, learned per-column step sizes; block means over ~400 meta-steps)
+
+| meta-steps | support loss before the step | query loss after the adapted step | step size, geometric mean / max |
+|---|---|---|---|
+| 1-399 | 1.33 | 1.20 | 11.3 / 11.8 |
+| 400-798 | 1.04 | 0.84 | 12.3 / 13.8 |
+| 799-1197 | 0.93 | 0.75 | 12.6 / 14.3 |
+| 1198-1596 | 0.83 | 0.70 | 13.1 / 15.4 |
+| 1597-1995 | 0.77 | 0.67 | 13.6 / 16.9 |
+
+Adapting the embedding rows alone reaches the same post-adaptation query loss as the everything-adapted MAML re-run
+(0.67 at the end of both) with a lower unadapted support loss (0.77 vs 0.93), and the step sizes keep drifting up
+(10 -> 13.6, max 17), still rising when the budget ends: the meta-objective asks for larger embedding steps
+throughout.
