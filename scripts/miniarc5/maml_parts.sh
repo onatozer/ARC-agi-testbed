@@ -8,8 +8,15 @@ MAML_COMMON="global_batch_size=16 optimizer=adam_atan2 lr=1e-3 lr_warmup_steps=1
 max_steps=2000 eval_interval_steps=1000 max_eval_steps=null seed=0 +project_name=ARC-agi-testbed +entity=ozeronatwanb puzzle_emb_lr=3e-2"
 MAML_BASE="maml.enabled=true maml.inner_steps=1 maml.meta_batch_size=4 maml.support_copies=16"
 
-# maml_pretrain <name> <alpha> <adapt_substrings e.g. [puzzle_emb]> <extra overrides...>
+# maml_pretrain <name> <alpha> <adapt_substrings e.g. [puzzle_emb]> <extra overrides...>: TRM-family recipe
 maml_pretrain() { local name=$1 alpha=$2 parts=$3; shift 3; DISABLE_COMPILE=1 bash "$HERE/run.sh" "$name" cfg_pretrain_miniarc dataset.data_path="$DATA_HO" $MAML_COMMON $BACKBONE $MAML_BASE maml.inner_lr=$alpha "maml.adapt_substrings=$parts" +run_name="$name" "$@"; }
+# maml_pretrain_varc <name> <alpha> <parts> <extra...>: the VARC recipe (cfg_pretrain_miniarc_varc: hidden 128, 4 layers, mlp 256, canvas 10)
+maml_pretrain_varc() { local name=$1 alpha=$2 parts=$3; shift 3; DISABLE_COMPILE=1 bash "$HERE/run.sh" "$name" cfg_pretrain_miniarc_varc dataset.data_path="$DATA_HO" $MAML_COMMON $MAML_BASE maml.inner_lr=$alpha "maml.adapt_substrings=$parts" +run_name="$name" "$@"; }
+# probe <run> <suffix> <alpha> <parts>: 3 fixed SGD steps on 2 held-out tasks from a plain checkpoint (step-size probe)
+probe() { local run=$1 suffix=$2 alpha=$3 parts=$4; DISABLE_COMPILE=1 bash "$HERE/ttt.sh" "$(ckpt_of "$run")" "$suffix" task_ids_file="$HO" max_tasks=2 wandb_mode=disabled \
+  +train_overrides.maml.enabled=true +train_overrides.maml.inner_lr=$alpha "+train_overrides.maml.adapt_substrings=$parts" maml_steps=3; }
+# pick_alpha <run> <suffix prefix> <alphas...>: the largest probed alpha whose support loss fell on every task (none: the smallest)
+pick_alpha() { local run=$1 pfx=$2; shift 2; python3 "$HERE/pick_alpha.py" "$(dirname "$(dirname "$(ckpt_of "$run")")")" "$pfx" "$@"; }
 # ttt_maml <run> <suffix> <overrides...>: the meta-trained inner loop (eager)
 ttt_maml() { local run=$1 suffix=$2; shift 2; DISABLE_COMPILE=1 bash "$HERE/ttt.sh" "$(ckpt_of "$run")" "$suffix" task_ids_file="$HO" "$@"; }
 # ttt_plain_subset <run> <suffix> <alpha> <parts> <steps>: the same subset adaptation on a plainly trained checkpoint
