@@ -373,21 +373,33 @@ Same budget as the re-run: puzzle-level episodes of 16 copies, 4 puzzles per met
 
 ### Results (partial Meta-SGD)
 
-| checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | token acc | learned α (geo. mean / max) |
-|---|---|---|---|---|---|---|
-| `trm_ho2` (plain) | `lr_full`: ordinary loop (section 7) | 1 | 2 | 3 | 0.776 | |
-| `maml_trm_emb` (MAML, everything, re-run) | `mm2_adam`: ordinary loop | 2 | 3 | 4 | 0.771 | |
-| `msgd_emb` (embedding rows) | `ms3e_s1`: 1 learned step on the 16 rows | 0 | 0 | 0 | 0.725 | 12.5 / 14.3 |
-| `msgd_emb` | `ms3e_s5`: 5 learned steps on the rows | 0 | 0 | 0 | 0.729 | 12.5 / 14.3 |
-| `msgd_emb` | `ms3e_s10`: 10 learned steps on the rows | 0 | 0 | 1 | 0.739 | 12.5 / 14.3 |
-| `msgd_emb` | `ms3e_adam`: ordinary loop | (queued) | | | | |
-| `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 0.738 | fixed 10 |
-| `trm_ho2` | `ms3e_s10` | (running) | | | | |
-| `msgd_lh` (the block) | `ms3l_s1` / `s5` / `s10` / `ms3l_adam` | (queued) | | | | |
-| `trm_ho2` | `ms3l_s5` / `s10`: the block, α 0.1 | (queued) | | | | |
-| `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | |
-| `msgd_gramheads` (GRAM heads) | `ms3g_s1` / `s5` / `s10` / `ms3g_adam` | (queued) | | | | |
-| `gram_ho` | `ms3g_s5` / `s10`: the heads, α 0.01 | (queued) | | | | |
+Counts of 30 held-out tasks. pass@k: the task's test grid is among the top-k voted predictions; ARC's rule is
+pass@2. pass@100 / @1000 count the tasks whose correct grid appears anywhere in the vote (16 augmentation copies
+give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved by some copy").
+
+| checkpoint | TTT variant | pass@1 | pass@2 | pass@5 | pass@100 | pass@1000 | token acc | step sizes (geo. mean / max) |
+|---|---|---|---|---|---|---|---|---|
+| `trm_ho2` (plain) | `lr_full`: ordinary loop (section 7) | 1 | 2 | 3 | 6 | 6 | 0.776 |  |
+| `maml_trm_emb` (MAML, everything, re-run) | `mm2_adam`: ordinary loop | 2 | 3 | 4 | 4 | 4 | 0.771 |  |
+| `msgd_emb` (embedding rows) | `ms3e_s1`: 1 learned step on the 16 rows | 0 | 0 | 0 | 0 | 0 | 0.725 | 12.5 / 14.3 |
+| `msgd_emb` | `ms3e_s5`: 5 learned steps on the rows | 0 | 0 | 0 | 0 | 0 | 0.729 | 12.5 / 14.3 |
+| `msgd_emb` | `ms3e_s10`: 10 learned steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.739 | 12.5 / 14.3 |
+| `msgd_emb` | `ms3e_adam`: ordinary loop | (queued) | | | | | | |
+| `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 1 | 1 | 0.738 | fixed 10.0 |
+| `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | (queued) | | | | | | |
+| `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | (queued) | | | | | | |
+| `msgd_lh` | `ms3l_s5`: 5 learned steps | (queued) | | | | | | |
+| `msgd_lh` | `ms3l_s10`: 10 learned steps | (queued) | | | | | | |
+| `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
+| `trm_ho2` (plain) | `ms3l_s5`: 5 fixed steps (α 0.1) on the block | (queued) | | | | | | |
+| `trm_ho2` | `ms3l_s10`: 10 fixed steps on the block | (queued) | | | | | | |
+| `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | (queued) | | | | | | |
+| `msgd_gramheads` | `ms3g_s5`: 5 learned steps | (queued) | | | | | | |
+| `msgd_gramheads` | `ms3g_s10`: 10 learned steps | (queued) | | | | | | |
+| `msgd_gramheads` | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
+| `gram_ho` (plain) | `ms3g_s5`: 5 fixed steps (α 0.01) on the heads | (queued) | | | | | | |
+| `gram_ho` | `ms3g_s10`: 10 fixed steps on the heads | (queued) | | | | | | |
 
 Progress log (partial Meta-SGD):
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
