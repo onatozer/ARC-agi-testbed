@@ -384,7 +384,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_emb` (embedding rows) | `ms3e_s1`: 1 learned step on the 16 rows | 0 | 0 | 0 | 0 | 0 | 0.725 | 12.5 / 14.3 |
 | `msgd_emb` | `ms3e_s5`: 5 learned steps on the rows | 0 | 0 | 0 | 0 | 0 | 0.729 | 12.5 / 14.3 |
 | `msgd_emb` | `ms3e_s10`: 10 learned steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.739 | 12.5 / 14.3 |
-| `msgd_emb` | `ms3e_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_emb` | `ms3e_adam`: ordinary loop | 1 | 1 | 1 | 1 | 1 | 0.743 |  |
 | `trm_ho2` (plain) | `ms3e_s5`: 5 fixed steps (α 10) on the rows | 0 | 1 | 1 | 1 | 1 | 0.738 | fixed 10.0 |
 | `trm_ho2` | `ms3e_s10`: 10 fixed steps on the rows | 0 | 1 | 1 | 1 | 1 | 0.757 | fixed 10.0 |
 | `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | (queued) | | | | | | |
@@ -443,3 +443,9 @@ throughout.
 - 2026-10-21 00:10, `trm_ho2 ms3e_s10` (plain, 10 fixed steps at α 10 on the rows): 0 / 1 / 1 of 30 (1 at pass@100),
   token accuracy 0.757, above the Meta-SGD checkpoint's ten learned steps (0.739). The embedding-rows ablation's
   last run, the ordinary loop on `msgd_emb`, is going; the block ablation follows.
+- 2026-10-21 00:40, `msgd_emb ms3e_adam` (the ordinary 160-step AdamAtan2 loop on the embedding-rows Meta-SGD
+  checkpoint): 1 / 1 / 1 of 30 (1 at pass@100), token accuracy 0.743, against 1 / 2 / 3 (6 at pass@100), 0.776 for
+  the plain checkpoint under the same loop. The embedding-rows ablation is complete: as a start for the ordinary
+  fine-tune this checkpoint is worse than plain training (1 vs 2 at pass@2, 1 vs 6 tasks ever produced), and its own
+  learned inner loop is level with fixed large steps on the rows from the plain start. `msgd_lh` (the block) is
+  meta-training.
