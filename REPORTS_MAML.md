@@ -505,6 +505,11 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
   pass@100), token accuracy 0.750, against the plain checkpoint's 1 / 2 / 3 (6 produced), 0.776: equal at pass@2, one
   more at pass@1, fewer tasks ever produced. The block ablation is complete; the GRAM heads (`msgd_gramheads`, α0
   0.01) are meta-training, the last ablation of the chain.
+- 2026-10-21 12:00, `msgd_gramheads` at meta-step 1128 of 2000 (4.8 s per step). The inner step does nothing here:
+  block means support loss before the step 1.16 / 1.06 / 1.00, query loss after it 1.16 / 1.06 / 1.01, and the
+  heads' step sizes stay at 0.01 (max 0.016). With the only stable α for the guidance heads, the adaptation is
+  invisible and the meta-objective reduces to plain training on the query rows; the meta-gradient for the step
+  sizes is too weak to grow them. In-training eval at step 1000: 0 of 30, token accuracy 0.620.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
