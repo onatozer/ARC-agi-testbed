@@ -399,7 +399,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_varc_emb` | `ms3ve_s10`: 10 learned steps | 0 | 0 | 0 | 0 | 0 | 0.729 | 1.71 / 2.48 |
 | `msgd_varc_emb` | `ms3ve_adam`: ordinary loop | (queued) | | | | | | |
 | `varc_ho2` (plain) | `ms3ve_s5`: 5 fixed steps (α 1) on the rows | 0 | 0 | 0 | 1 | 1 | 0.744 | fixed 1.0 |
-| `varc_ho2` | `ms3ve_s10`: 10 fixed steps on the rows | (queued) | | | | | | |
+| `varc_ho2` | `ms3ve_s10`: 10 fixed steps on the rows | 0 | 0 | 1 | 1 | 1 | 0.752 | fixed 1.0 |
 | `msgd_varc_lh` (VARC, transformer layers) | `ms3vl_s1`: 1 learned step on the layers | (queued) | | | | | | |
 | `msgd_varc_lh` | `ms3vl_s5`: 5 learned steps | (queued) | | | | | | |
 | `msgd_varc_lh` | `ms3vl_s10`: 10 learned steps | (queued) | | | | | | |
@@ -442,6 +442,9 @@ Progress log (partial Meta-SGD):
   (0.67) : VARC's single task token has less to give than TRM's embedding slot. TTT: 1 / 5 / 10 learned steps on the
   rows 0 of 30 each (0 at pass@100), token accuracy 0.680 / 0.730 / 0.729, demo loss 1.68 -> 1.03 / 0.98. The plain
   VARC under the same rows and the ordinary loops are running, then the layers ablation.
+- 2026-10-21 02:55, `varc_ho2 ms3ve_s5` / `s10` (plain VARC, fixed α 1 on the rows): 0 / 0 / 0 (1 at pass@100), 0.744
+  and 0 / 0 / 1 (1 at pass@100), 0.752. As for TRM, the plain start under fixed steps on the rows is level with or
+  above the Meta-SGD checkpoint's learned loop (0.730 / 0.729, nothing produced). The two ordinary loops run next.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
