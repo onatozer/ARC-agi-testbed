@@ -408,7 +408,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `varc_ho2` | `ms3vl_s10`: 10 fixed steps on the layers | 0 | 0 | 1 | 1 | 1 | 0.726 | fixed 0.01 |
 | `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
 | `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | 0 | 0 | 0 | 0 | 0 | 0.640 | 0.0101 / 0.0185 |
-| `msgd_gramheads` | `ms3g_s5`: 5 learned steps | (queued) | | | | | | |
+| `msgd_gramheads` | `ms3g_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.641 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s10`: 10 learned steps | (queued) | | | | | | |
 | `msgd_gramheads` | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
 | `gram_ho` (plain) | `ms3g_s5`: 5 fixed steps (α 0.01) on the heads | (queued) | | | | | | |
@@ -525,6 +525,9 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
 | 799-1197 | 1.01 | 1.01 | 0.010 / 0.016 |
 | 1198-1596 | 1.04 | 1.04 | 0.010 / 0.021 |
 | 1597-1995 | 1.19 | 1.11 | 0.010 / 0.029 |
+
+- 2026-10-21 13:40, `msgd_gramheads ms3g_s5`: 0 of 30, token accuracy 0.641, support loss 1.64 -> 1.59 before step 5: five
+  learned steps on the heads move the demo loss by 0.05 and the test pairs not at all.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
