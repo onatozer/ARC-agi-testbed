@@ -390,7 +390,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `msgd_lh` (the block) | `ms3l_s1`: 1 learned step on the block | 0 | 0 | 0 | 0 | 0 | 0.727 | 0.106 / 0.242 |
 | `msgd_lh` | `ms3l_s5`: 5 learned steps | 0 | 0 | 0 | 0 | 0 | 0.726 | 0.106 / 0.242 |
 | `msgd_lh` | `ms3l_s10`: 10 learned steps | 0 | 0 | 0 | 1 | 1 | 0.729 | 0.106 / 0.242 |
-| `msgd_lh` | `ms3l_adam`: ordinary loop | (queued) | | | | | | |
+| `msgd_lh` | `ms3l_adam`: ordinary loop | 2 | 2 | 2 | 2 | 2 | 0.750 |  |
 | `trm_ho2` (plain) | `ms3l_s5`: 5 fixed steps (α 0.1) on the block | 0 | 0 | 0 | 0 | 0 | 0.732 | fixed 0.1 |
 | `trm_ho2` | `ms3l_s10`: 10 fixed steps on the block | 0 | 0 | 1 | 1 | 1 | 0.738 | fixed 0.1 |
 | `varc_ho2` (plain VARC, rebuilt build) | `ms3v_adam`: ordinary loop | 4 | 4 | 4 | 6 | 6 | 0.811 |  |
@@ -501,6 +501,10 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
 - 2026-10-21 09:50, `trm_ho2 ms3l_s10`: 0 / 0 / 1 of 30 (1 at pass@100), token accuracy 0.738, support loss 1.60 -> 0.78,
   a shade above the Meta-SGD block checkpoint's ten learned steps (0.729, 1 produced). The ordinary loop on `msgd_lh`
   is the block ablation's last run.
+- 2026-10-21 10:10, `msgd_lh ms3l_adam` (ordinary loop on the TRM block Meta-SGD checkpoint): 2 / 2 / 2 of 30 (2 at
+  pass@100), token accuracy 0.750, against the plain checkpoint's 1 / 2 / 3 (6 produced), 0.776: equal at pass@2, one
+  more at pass@1, fewer tasks ever produced. The block ablation is complete; the GRAM heads (`msgd_gramheads`, α0
+  0.01) are meta-training, the last ablation of the chain.
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
