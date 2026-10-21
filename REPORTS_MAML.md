@@ -407,7 +407,7 @@ give at most 16 distinct candidates, so pass@100 and pass@1000 coincide: "solved
 | `varc_ho2` (plain) | `ms3vl_s5`: 5 fixed steps (α 0.01) on the layers | 0 | 0 | 0 | 0 | 0 | 0.715 | fixed 0.01 |
 | `varc_ho2` | `ms3vl_s10`: 10 fixed steps on the layers | 0 | 0 | 1 | 1 | 1 | 0.726 | fixed 0.01 |
 | `gram_ho` (plain GRAM) | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
-| `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | (queued) | | | | | | |
+| `msgd_gramheads` (GRAM heads) | `ms3g_s1`: 1 learned step on the heads | 0 | 0 | 0 | 0 | 0 | 0.640 | 0.0101 / 0.0185 |
 | `msgd_gramheads` | `ms3g_s5`: 5 learned steps | (queued) | | | | | | |
 | `msgd_gramheads` | `ms3g_s10`: 10 learned steps | (queued) | | | | | | |
 | `msgd_gramheads` | `ms3g_adam`: ordinary loop | (queued) | | | | | | |
@@ -510,6 +510,21 @@ adapts far less in meta-training (post-step query loss 1.07 vs TRM's 0.67). Same
   heads' step sizes stay at 0.01 (max 0.016). With the only stable α for the guidance heads, the adaptation is
   invisible and the meta-objective reduces to plain training on the query rows; the meta-gradient for the step
   sizes is too weak to grow them. In-training eval at step 1000: 0 of 30, token accuracy 0.620.
+- 2026-10-21 13:20, `msgd_gramheads` finished: 2000 meta-steps in 9,646 s (2.7 h). Over the whole run the support loss
+  before the step and the query loss after it stay equal (1.07 / 1.07, 1.01 / 1.01, 1.04 / 1.04, last block 1.19 /
+  1.11), and the step sizes end at 0.010 geometric mean, max 0.034: the heads never acquire a useful one-step
+  adaptation. Step-2000 eval: 0 of 30, token accuracy 0.639. First TTT run `ms3g_s1`: 0 of 30 (0 at pass@100),
+  token accuracy 0.640, i.e. the unadapted number, as the curve predicts.
+
+### Meta-training curve, `msgd_gramheads` (GRAM prior / posterior / LPRM heads adapted, learned step sizes)
+
+| meta-steps | support loss before the step | query loss after the adapted step | step size, geometric mean / max |
+|---|---|---|---|
+| 1-399 | 3.06 | 1.54 | 0.010 / 0.011 |
+| 400-798 | 1.07 | 1.07 | 0.010 / 0.012 |
+| 799-1197 | 1.01 | 1.01 | 0.010 / 0.016 |
+| 1198-1596 | 1.04 | 1.04 | 0.010 / 0.021 |
+| 1597-1995 | 1.19 | 1.11 | 0.010 / 0.029 |
 - 2026-10-20 20:00, `msgd_emb` at meta-step 520 of 2000 (7 s per step, no errors). Block means over 130 meta-steps:
   support loss before the step 1.57 / 1.22 / 1.19 / 1.09, query loss after the adapted step 1.56 / 1.07 / 0.99 /
   0.86. The learned embedding step sizes drift up from 10 (geometric mean 10.3 -> 12.2, max 13.5): the
