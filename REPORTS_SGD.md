@@ -108,6 +108,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd7_init1 | round 7: alpha init 1; then ttt_mini | 3 | 3 | 3 | 5 | 0.807 |
 | msgd7_norm | round 7: RMS-normalised inner step, alpha per tensor (init 1e-3 weights / 3e-2 rows); learned loop 1 / 5 / 10 steps | 0 / 0 / 1 | 0 / 0 / 1 | 0 / 0 / 1 | 0 / 1 / 1 | .662 / .697 / .738 |
 | msgd7_norm | round 7: normalised step; then ttt_mini | 3 | 3 | 3 | 3 | 0.806 |
+| msgd7_norm | round 8: normalised learned loop, 30 steps | 2 | 3 | 4 | 6 | 0.795 |
+| msgd7_norm | round 8: normalised learned loop, 120 steps (ttt_mini's step count) | 7 | 7 | 8 | 9 | 0.833 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -229,6 +231,20 @@ Three ways to let the inner step move the weights, each on round 3's recipe with
   learned loop to solve a held-out task at pass@1, at a lower token accuracy than the raw-gradient loops (.752), and still
   climbing with steps. ttt_mini from it: 3/3/3 (0.806). Round 8 (`msgd8_eval.sh`) runs this loop for 30 and
   120 steps against the plain checkpoint's 1/2/2 (.777) and 2/3/4 (.801).
+
+## Round 8 (2026-10-23 14:05): the normalised learned loop at ttt_mini's step count
+
+| steps, same 48 aux rows | normalised learned loop (round 7 checkpoint) | raw-gradient learned loop (round 3) | plain, raw gradient, hand-set alpha | plain, ttt_mini |
+|---|---|---|---|---|
+| 10 | 1/1/1, .738, demos -> 0.93 | 0/0/0, .751 | 0/0/1, .752 | |
+| 30 | 2/3/4, .795, demos -> 0.75 | 0/1/1, .772 | 1/2/2, .777 | |
+| 120 | **7/7/8** (p@100 9), **.833**, demos -> 0.53 | 0/2/3, .791 | 2/3/4, .801 | 4/4/4, .811 (seeds 2-4 / 4-5 / 4-6) |
+
+The first result on this build above the plain checkpoint's test-time training, by 3 tasks at pass@1 and 4 at pass@5,
+with the token accuracy .833 above anything measured (the 40-epoch ttt_mini reached .831, 5/5/5). It fits the demos to
+0.53, where the raw-gradient loops stop at 0.72-0.78 and ttt_mini's lm_loss after training is ~0.46. Pending controls
+(round 9, `msgd9_eval.sh`): the plain checkpoint under the same normalised rule with the hand-set alphas the meta-run
+started from (rule or meta-training?), and a second eval seed of the 120-step result.
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -392,3 +408,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   no-adaptation .641). ttt_mini from it: 3/3/3 (0.807). Normalised-step run training.
 - **2026-10-23 14:01. Round 7 done (normalised step):** loop .662/.697/.738 with 1/1/1 at 10 steps, ttt_mini
   3/3/3 (0.806). Section "Round 7" above. Round 8 (30/120 steps of this loop) started.
+- **2026-10-23 14:05. Round 8 done:** normalised learned loop 30 steps 2/3/4 (.795), 120 steps 7/7/8 (.833), demos 1.53
+  -> 0.53. Section "Round 8" above. Round 9 controls started.
