@@ -27,6 +27,9 @@ train_overrides:
   # arXiv 2609.21181's embeddings-then-weights. Declared here so it can be set without a +, and null so TTT never
   # inherits a pretraining value counted in pretraining epochs
   freeze_alternation_epochs: null
+# > 0: Meta-SGD inner steps on the task's demos with the checkpoint's learned alpha instead of the epochs above; a plain
+# checkpoint takes a fixed alpha via +train_overrides.meta_sgd.enabled=true +train_overrides.meta_sgd.inner_lr=... [+adapt_substrings]
+meta_sgd_steps: 0
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it

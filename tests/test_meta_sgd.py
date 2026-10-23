@@ -7,7 +7,8 @@ from omegaconf import OmegaConf
 
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
-from pretrain import _adapt, _episodes_from_batch, _meta_sgd_targets, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from evaluate_ttt import meta_sgd_adapt
+from pretrain import _adapt, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -140,6 +141,30 @@ def test_supervised_loss_runs_each_row_until_act_halts_it():
     rows = [n for n, _ in calls]
     assert 1 <= len(calls) <= 3 and rows[0] == 2 and all(a >= b for a, b in zip(rows, rows[1:])) and rows[-1] >= 1
     torch.testing.assert_close(total, sum(l for _, l in calls))
+
+
+def test_episode_overrides_stand_the_batch_rows_in_for_the_table():
+    config, train_state, batch = _state()
+    model = train_state.model
+    named, overrides, remapped, ids = _episode_overrides(model, _meta_sgd_targets(model, []), _puzzle_emb_name(model), batch)
+    assert ids.tolist() == [1, 2, 3] and remapped["puzzle_identifiers"].tolist() == [0, 0, 0, 1, 1, 1, 2, 2, 2]
+    emb = overrides[_puzzle_emb_name(model)]
+    assert emb.shape == (3, 32) and emb.requires_grad and torch.equal(emb, model.model.puzzle_emb.weights[1:4])
+    assert dict(named)[_puzzle_emb_name(model)] is emb and overrides[_puzzle_emb_name(model)[: -len("weights")] + "local_weights"].shape == (0, 32)
+
+
+def test_meta_sgd_adapt_writes_the_inner_steps_into_the_weights_and_the_support_rows():
+    """Test-time use of a Meta-SGD checkpoint: the support batch (every aux copy's demos) adapts the weights and the rows' embeddings in place."""
+    config, train_state, batch = _state()
+    model = train_state.model
+    support = {k: v[batch["validation"] == 0] for k, v in batch.items() if k != "validation"}
+    table = model.model.puzzle_emb.weights.detach().clone()
+    weights = {n: p.detach().clone() for n, p in model.named_parameters() if not n.startswith("meta_sgd.")}
+    losses = meta_sgd_adapt(model, support, 2, [])
+    assert len(losses) == 2 and all(l > 0 for l in losses)
+    assert (table != model.model.puzzle_emb.weights).any(1).nonzero().flatten().tolist() == [1, 2, 3]
+    assert all(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+    assert all(torch.equal(r, model.meta_sgd.rho[k]) for k, r in [(k, r.detach().clone()) for k, r in model.meta_sgd.rho.items()])  # alpha is not trained at test time
 
 
 def test_disabled_config_is_the_ordinary_setup():

@@ -61,5 +61,6 @@ class TTTConfig(pydantic.BaseModel):
     ttt_runs_per_task: int  # independent runs whose votes are pooled
     num_views: int  # eval passes per run, pooled; > 1 only helps models with random views (e.g. VARC's canvas)
     train_overrides: Dict[str, Any] = Field(default_factory=dict)  # PretrainConfig fields for the TTT training, e.g. lr
+    meta_sgd_steps: int = 0  # > 0: that many Meta-SGD inner steps (the checkpoint's learned alpha, or train_overrides.meta_sgd.*) on the task's demos instead of the TTT epochs
     seed: int = 0
     wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

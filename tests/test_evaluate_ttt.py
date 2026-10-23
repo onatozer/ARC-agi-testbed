@@ -77,6 +77,12 @@ def test_task_ids_file_is_a_cli_option():
     assert cfg.task_ids_file == "heldout_tasks.json"
 
 
+def test_meta_sgd_steps_is_a_cli_option():
+    cfg = _ttt_cfg("checkpoint=ckpt.pth", "meta_sgd_steps=5", "+train_overrides.meta_sgd.enabled=true", "+train_overrides.meta_sgd.inner_lr=1")
+    assert cfg.meta_sgd_steps == 5 and cfg.train_overrides["meta_sgd"] == {"enabled": True, "inner_lr": 1}
+    assert _ttt_cfg("checkpoint=ckpt.pth").meta_sgd_steps == 0
+
+
 def test_aggregate_waits_for_every_task_then_averages_and_merges(tmp_path):
     (tmp_path / "tasks").mkdir()
     for name, score in (("a", 1.0), ("b", 0.0)):

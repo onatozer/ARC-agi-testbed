@@ -737,6 +737,22 @@ def _adapt(
     return loss_s, theta1
 
 
+def _episode_overrides(
+    model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str], batch: Dict[str, torch.Tensor],
+) -> Tuple[List[Tuple[str, torch.Tensor]], Dict[str, torch.Tensor], Dict[str, torch.Tensor], Optional[torch.Tensor]]:
+    """(targets with the embedding rows as a leaf, functional_call overrides, batch with its ids remapped, the ids). The rows
+    of the table the batch uses stand in for the whole table, so they are a differentiable leaf and the forward takes its
+    gather path (the row count differs from the emptied local_weights buffer). No embeddings: the inputs pass through."""
+    if emb_name is None:
+        return list(targets), {}, batch, None
+    table = model.get_buffer(emb_name)
+    ids, inv = torch.unique(batch["puzzle_identifiers"], return_inverse=True)
+    emb_rows = table[ids].detach().requires_grad_()
+    overrides = {emb_name: emb_rows, emb_name[: -len("weights")] + "local_weights": table.new_zeros(0, table.shape[1])}
+    named = [(n, emb_rows if n == emb_name else p) for n, p in targets]
+    return named, overrides, {**batch, "puzzle_identifiers": inv.to(batch["puzzle_identifiers"].dtype)}, ids
+
+
 def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str], pid: int,
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor,
@@ -744,22 +760,15 @@ def _task_outer_backward(
     """Meta-SGD on one puzzle: theta1 = theta - alpha * grad of the per-row support loss (graph kept), then the query loss
     at theta1, times loss_scale, is backpropagated into theta (second order, through theta1), rho and the puzzle-embedding
     row. Returns (support loss per row, query loss per row, the embedding row's gradient or None)."""
-    overrides, emb_rows = {}, None
+    named, overrides, support, _ = _episode_overrides(model, targets, emb_name, support)
     if emb_name is not None:
-        # The task's row of the table as a leaf in place of the whole table (ids remapped to 0); the forward then takes its
-        # differentiable gather path because the row count differs from the (emptied) local_weights buffer
-        table = model.get_buffer(emb_name)
-        emb_rows = table[[pid]].detach().requires_grad_()
-        overrides = {emb_name: emb_rows, emb_name[: -len("weights")] + "local_weights": table.new_zeros(0, table.shape[1])}
-        support = {**support, "puzzle_identifiers": torch.zeros_like(support["puzzle_identifiers"])}
-        query = {**query, "puzzle_identifiers": torch.zeros_like(query["puzzle_identifiers"])}
-    named = [(n, emb_rows if n == emb_name else p) for n, p in targets]
+        query = {**query, "puzzle_identifiers": torch.zeros_like(query["puzzle_identifiers"])}  # the one row, as in support
 
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
         loss_s, theta1 = _adapt(model, named, overrides, support)
         loss_q = _supervised_loss(model, theta1, query)
         (loss_q * loss_scale).backward()
-    return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], None if emb_rows is None else emb_rows.grad
+    return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], None if emb_name is None else overrides[emb_name].grad
 
 
 def meta_sgd_batch(

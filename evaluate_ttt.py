@@ -36,10 +36,11 @@ from dataset.build_miniarc_dataset import MiniARCDataProcessConfig
 from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_checkpoint, _seed, _summarize
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
-from pretrain import create_dataloader, create_evaluators, init_train_state, train_batch
+from pretrain import _adapt, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, create_dataloader, create_evaluators, init_train_state, train_batch
 from utils.checkpoint import load_model_state_dict
 from utils.functions import load_model_class
 from utils.printing import print_info
+from utils.training import tree_to_device
 
 
 torch.set_float32_matmul_precision("high")
@@ -86,9 +87,42 @@ def start_state(ckpt: Dict[str, Any], train_cfg: PretrainConfig) -> Dict[str, to
     return state
 
 
+def _support_batch(config: PretrainConfig, train_metadata: Any) -> Dict[str, torch.Tensor]:
+    """Every row of the task's train split (the aux copies' demos) as one batch: a sequential (test-mode) pass over the
+    split, minus its padding rows."""
+    loader, _ = create_dataloader(config, "train", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=0, world_size=1)
+    rows = {k: torch.cat([b[k] for _, b, _ in loader]) for k in ("inputs", "labels", "puzzle_identifiers")}
+    keep = rows["puzzle_identifiers"] != train_metadata.blank_identifier_id
+    if not keep.any():
+        raise ValueError("TTT support set is empty: the task's train split has no demos.")
+    return {k: v[keep] for k, v in rows.items()}
+
+
+def meta_sgd_adapt(model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, substrings: List[str]) -> List[float]:
+    """Test-time Meta-SGD: `steps` inner steps with the model's learned alpha (model.meta_sgd) on the task's support rows,
+    written into the weights and the rows' puzzle embeddings. Returns the per-row support loss before each step."""
+    if getattr(model, "meta_sgd", None) is None:
+        raise ValueError("meta_sgd_steps needs meta_sgd.enabled: the checkpoint's, or +train_overrides.meta_sgd.enabled=true with inner_lr (and adapt_substrings).")
+    targets, emb_name, losses = _meta_sgd_targets(model, substrings), _puzzle_emb_name(model), []
+    for _ in range(steps):
+        named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
+        loss, theta1 = _adapt(model, named, overrides, batch)
+        losses.append(float(loss))
+        with torch.no_grad():
+            for name, p in targets:
+                if name == emb_name:
+                    model.get_buffer(emb_name)[ids] = theta1[name]
+                elif name in theta1:
+                    p.copy_(theta1[name])
+    return losses
+
+
 def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.Tensor], data_dir: Path, eval_dir: Path, seed: int) -> Dict[str, float]:
     config = train_cfg.model_copy(deep=True)
     _apply_overrides(config, cfg.train_overrides)
+    config = PretrainConfig.model_validate(config.model_dump())  # nested overrides (+train_overrides.meta_sgd.inner_lr=...) arrive as dicts
+    if cfg.meta_sgd_steps == 0:
+        config.meta_sgd.enabled = False  # the ordinary TTT loop, also from a Meta-SGD checkpoint (its alpha is simply not loaded)
     config.dataset.data_path = str(data_dir)
     config.epochs = cfg.epochs
     config.max_steps = None
@@ -120,12 +154,19 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         config.lr_warmup_steps = cfg.warmup_epochs * train_state.steps_per_epoch
 
         train_state.model.train()
-        for _set_name, batch, global_batch_size in train_loader:
-            train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
-            if train_state.ema_helper is not None:
-                train_state.ema_helper.update(train_state.model)
-            if train_state.step >= train_state.total_steps:
-                break
+        if cfg.meta_sgd_steps > 0:
+            train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
+            support = tree_to_device(_support_batch(config, train_metadata), next(train_state.model.parameters()).device)
+            losses = meta_sgd_adapt(train_state.model, support, cfg.meta_sgd_steps, config.meta_sgd.adapt_substrings)
+            alpha_mean, alpha_max = train_state.model.meta_sgd.summary()
+            print_info(f"TTT run {run}: {cfg.meta_sgd_steps} Meta-SGD steps (alpha geometric mean {alpha_mean:.3g}, max {alpha_max:.3g}) on {support['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+        else:
+            for _set_name, batch, global_batch_size in train_loader:
+                train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
+                if train_state.ema_helper is not None:
+                    train_state.ema_helper.update(train_state.model)
+                if train_state.step >= train_state.total_steps:
+                    break
 
         if train_state.ema_helper is not None:
             train_state.ema_helper.swap(train_state.model)
