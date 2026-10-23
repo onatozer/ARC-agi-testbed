@@ -119,6 +119,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd7_norm | round 10: normalised learned loop, 120 steps, eval seed 2 | 6 | 8 | 9 | 9 | 0.839 |
 | msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | 0.862 |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
+| msgd7_norm | round 11: normalised learned loop, 1000 steps | 10 | 13 | 15 | 16 | 0.887 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -484,3 +485,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 15:44. Round 11, plain checkpoint, normalised rule, 300 steps:** 7/9/10 (p@100 11), tok .853, demos 1.74
   -> 0.46. Against the meta-trained 8/9/9 (.862): the gap at 300 steps is +1 pass@1, -1 pass@5, +.009 tok; the plain
   checkpoint keeps improving as fast (120 -> 300: +3 pass@1 both). 1000-step loops running.
+- **2026-10-23 16:04. Round 11, learned loop 1000 steps** (20 min for 30 tasks): 10/13/15 (p@100 16), tok .887, demos
+  1.53 -> 0.36. Half the held-out tasks solved at pass@5; still climbing (120 / 300 / 1000: 6/7/9 -> 8/9/9 -> 10/13/15).
+  Plain checkpoint's 1000-step control running.
