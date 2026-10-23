@@ -70,7 +70,7 @@ class MaxStepsLossHead(BaseLossHead):
     """Training loss head for models without a halt head: every puzzle runs halt_max_steps supervision steps.
     Subclasses add loss terms in compute_losses and metrics in _build_step_metrics."""
 
-    def __init__(self, model: nn.Module, loss_type: str, **kwargs: Any) -> None:
+    def __init__(self, model: nn.Module, loss_type: str, hsw_lambda: Optional[float] = None, **kwargs: Any) -> None:
         del kwargs
         super().__init__()
         self.model = model
@@ -78,9 +78,20 @@ class MaxStepsLossHead(BaseLossHead):
             "stablemax_cross_entropy": stablemax_cross_entropy,
             "softmax_cross_entropy": softmax_cross_entropy,
         }[loss_type]
+        self.hsw_lambda = hsw_lambda
 
     def initial_carry(self, *args: Any, **kwargs: Any) -> Any:
         return self.model.initial_carry(*args, **kwargs)  # type: ignore[attr-defined]
+
+    def _step_weights(self, steps: torch.Tensor) -> torch.Tensor:
+        """Per-row supervision weight of this step (ones when hsw_lambda is off). Hierarchical Supervision Weighting
+        (arXiv 2608.01534 eq. 7): w_t = lambda^(t-1) / Z, Z = sum_{s=1..N} lambda^(s-1), N = halt_max_steps, so the
+        weights are a distribution over the supervision steps that favours the early ones (lambda=1: uniform 1/N)."""
+        if self.hsw_lambda is None:
+            return torch.ones_like(steps, dtype=torch.float32)
+        n = self.model.config.halt_max_steps
+        z = n if self.hsw_lambda == 1 else (1 - self.hsw_lambda ** n) / (1 - self.hsw_lambda)
+        return self.hsw_lambda ** (steps.to(torch.float32) - 1) / z
 
     def forward(
         self,
@@ -128,7 +139,10 @@ class MaxStepsLossHead(BaseLossHead):
                 count=count,
             )
 
-        total_loss, losses = self.compute_losses(outputs=outputs, labels=labels, mask=mask, loss_divisor=loss_divisor, seq_is_correct=seq_is_correct)
+        total_loss, losses = self.compute_losses(
+            outputs=outputs, labels=labels, mask=mask, loss_divisor=loss_divisor, seq_is_correct=seq_is_correct,
+            step_weight=self._step_weights(new_carry.steps),
+        )
         metrics.update({key: value.detach() for key, value in losses.items()})
         metrics["total_loss"] = total_loss.detach()
 
@@ -143,11 +157,12 @@ class MaxStepsLossHead(BaseLossHead):
         mask: torch.Tensor,
         loss_divisor: torch.Tensor,
         seq_is_correct: torch.Tensor,
+        step_weight: torch.Tensor,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """Returns (total loss, the unweighted loss terms to log)."""
+        """Returns (total loss, the unweighted loss terms to log). step_weight (B,) scales each row's loss (HSW)."""
         del seq_is_correct
-        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
-        return lm_loss, {"lm_loss": lm_loss}
+        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum(-1)
+        return (step_weight * lm_loss).sum(), {"lm_loss": lm_loss.sum()}
 
     def _build_step_metrics(
         self,
@@ -207,14 +222,15 @@ class MaxStepsLossHead(BaseLossHead):
 class ACTLossHead(MaxStepsLossHead):
     """MaxStepsLossHead plus the halt head (ACT): its q_halt loss and metrics."""
 
-    def compute_losses(self, *, outputs: Dict[str, torch.Tensor], seq_is_correct: torch.Tensor, **kwargs: Any) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        total_loss, losses = super().compute_losses(outputs=outputs, seq_is_correct=seq_is_correct, **kwargs)
-        losses["q_halt_loss"] = F.binary_cross_entropy_with_logits(
+    def compute_losses(self, *, outputs: Dict[str, torch.Tensor], seq_is_correct: torch.Tensor, step_weight: torch.Tensor, **kwargs: Any) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        total_loss, losses = super().compute_losses(outputs=outputs, seq_is_correct=seq_is_correct, step_weight=step_weight, **kwargs)
+        q_halt_loss = F.binary_cross_entropy_with_logits(
             outputs["q_halt_logits"],
             seq_is_correct.to(outputs["q_halt_logits"].dtype),
-            reduction="sum",
+            reduction="none",
         )
-        return total_loss + 0.5 * losses["q_halt_loss"], losses
+        losses["q_halt_loss"] = q_halt_loss.sum()
+        return total_loss + 0.5 * (step_weight * q_halt_loss).sum(), losses
 
     def _build_step_metrics(self, **kwargs: Any) -> Dict[str, torch.Tensor]:
         metrics = super()._build_step_metrics(**kwargs)
@@ -296,7 +312,10 @@ class MaxStepsInferenceLossHead(MaxStepsLossHead):
                 max_steps=max_steps,
             )
 
-        total_loss, losses = self.compute_losses(outputs=outputs, labels=labels, mask=mask, loss_divisor=loss_divisor, seq_is_correct=seq_is_correct)
+        total_loss, losses = self.compute_losses(
+            outputs=outputs, labels=labels, mask=mask, loss_divisor=loss_divisor, seq_is_correct=seq_is_correct,
+            step_weight=self._step_weights(steps),
+        )
         metrics.update({key: value.detach() for key, value in losses.items()})
 
         # return_keys=None returns every tensor output (the eval loop holds them per row)
@@ -453,18 +472,20 @@ class LossHeadGRAM(MaxStepsLossHead):
         mask: torch.Tensor,
         loss_divisor: torch.Tensor,
         seq_is_correct: torch.Tensor,
+        step_weight: torch.Tensor,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Returns (total loss, the unweighted loss terms to log): lm + KL + 0.5 * LPRM."""
-        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
-        # Already beta-weighted: GRAM computes the KL in its forward, on the grad cycles' posterior samples
+        lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum(-1)
+        # Already beta-weighted: GRAM computes the KL in its forward, on the grad cycles' posterior samples. It is a
+        # batch scalar, so HSW's per-row step_weight cannot reach it
         kl_loss = outputs["kl_loss"]
         # LPRM (paper App. A.4): regress the value head onto this step's exact-match accuracy, as in ad3002/gram, or
         # onto the trajectory's final correctness when the model provides it (arch.lprm_target=final)
         target = outputs["lprm_target"] if "lprm_target" in outputs else seq_is_correct
-        lprm_loss = F.mse_loss(outputs["lprm_value"], target.to(outputs["lprm_value"].dtype), reduction="sum")
+        lprm_loss = F.mse_loss(outputs["lprm_value"], target.to(outputs["lprm_value"].dtype), reduction="none")
 
-        total_loss = lm_loss + kl_loss + self.model.config.lprm_weight * lprm_loss
-        return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}
+        total_loss = (step_weight * lm_loss).sum() + kl_loss + self.model.config.lprm_weight * (step_weight * lprm_loss).sum()
+        return total_loss, {"lm_loss": lm_loss.sum(), "kl_loss": kl_loss, "lprm_loss": lprm_loss.sum()}
 
 
 class LossHeadTreeRM(LossHeadGRAM):

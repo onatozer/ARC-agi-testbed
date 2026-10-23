@@ -4,6 +4,7 @@ loss:
   name: losses@ACTLossHead
   loss_type: stablemax_cross_entropy
   inference_name: losses@InferenceLossHead # loss head used for eval
+  hsw_lambda: null # Hierarchical Supervision Weighting (arXiv 2608.01534): weight supervision step t's loss by lambda^(t-1), normalised over halt_max_steps; null = off, 1 = uniform 1/N. Other archs: +arch.loss.hsw_lambda=0.5
 
 halt_exploration_prob: 0.1
 halt_max_steps: 16
