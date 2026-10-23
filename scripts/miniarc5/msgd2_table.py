@@ -31,6 +31,11 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd2_varc_all_ft", "ms4vaf_s10", "Meta-SGD everything from the plain checkpoint, learned loop 10 steps"),
     ("msgd2_varc_all_full", "ms4vafull_adam", "Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini"),
     ("msgd2_varc_all_full", "ms4vafull_s10", "Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps"),
+    ("varc_ho2_cont2", "ms5vc_adam", "plain VARC continued 1000 steps (batch 256, lr 1e-4), then ttt_mini"),
+    ("msgd3_varc_ft", "ms5va_s1", "round 3: meta-fine-tuned, 16-copy episodes, fresh rows, alpha0 rows 1 / weights 0.01; learned loop 1 step"),
+    ("msgd3_varc_ft", "ms5va_s5", "round 3, learned loop 5 steps"),
+    ("msgd3_varc_ft", "ms5va_s10", "round 3, learned loop 10 steps"),
+    ("msgd3_varc_ft", "ms5va_adam", "round 3, then ttt_mini"),
 ]
 
 

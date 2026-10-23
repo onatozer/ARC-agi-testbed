@@ -110,6 +110,28 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
    85 s per 32-row batch on this GPU, i.e. days for the previous loop's recipe; with VARC null across the board there is no
    signal that would justify it. The user allowed skipping it.
 
+## Post-mortem (2026-10-23, after the 2000-step VARC runs)
+
+Measured on the all-parameters checkpoint over 45 training-task episodes (CPU, train mode): support loss per row at θ
+1.54 on its *own* training tasks (the plain checkpoint: 0.90 on unseen ones); the inner step lowers the query loss
+1.47 -> 1.19; replacing the task's trained row by the table mean changes that to 1.51 -> 1.23, i.e. the rows carry nothing;
+the sign of ∂L_query/∂ρ agrees across 12 batches at chance level (0.26 vs 0.23 for coin flips; 1.7% of elements consistent).
+
+- α's gradient is noise, so Adam random-walks ρ by ~lr·√T = 0.045 nats (the measured 4-10% drift); even a consistent
+  gradient could only move it lr·T = 2 nats in this budget, while the rows need a factor 100 from the 0.01 start.
+- The gradient is noisy because an episode is one augmented copy: 2-3 demo rows and one test pair, ~4 tasks per step; α's
+  gradient per element is a product of two such small gradients. The previous loop averaged 16 copies per task.
+- Under-training dominates: 2000 x 16 rows is under two passes; the baseline had ~29. Rows got ~2 sign-SGD updates each.
+- Train/test mismatch for the row: at test a held-out task's rows are fresh (table mean); in training the outer loop trains
+  them, so a fitted model would put the task in the row and leave the inner step nothing to learn.
+
+Fixes (user: implement all): (1) meta-fine-tune the plain checkpoint at its batch size and a tenth of its lr; (2) α
+initialised per group (rows 1, weights 0.01) with a 10x larger lr; (3) the episode is the task with 16 augmented copies
+(`meta_sgd.copies_per_group`, sampler draws k copies of a group and tags `batch["group_ids"]`); (4) fresh rows
+(`meta_sgd.fresh_rows`: the episode's rows start from the table mean, the table is not trained). Round 3 =
+`scripts/miniarc5/msgd3_varc.sh`: `msgd3_varc_ft` (all four) against `varc_ho2_cont2` (the plain checkpoint continued with
+the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1e-4, 1000 steps.
+
 ## Log
 
 - **2026-10-22 23:30.** Baseline re-evaluated through the new eval path: 4/4/4, tok .811, identical to the previous loop's
