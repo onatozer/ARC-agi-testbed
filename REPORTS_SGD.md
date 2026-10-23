@@ -78,8 +78,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2_cont | plain VARC continued 2000 steps (batch 16), then ttt_mini | 1 | 1 | 1 | 1 | 0.750 |
 | msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, 2000 meta-steps, then ttt_mini | 1 | 1 | 1 | 1 | 0.747 |
 | msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.667 |
-| msgd2_varc_all_full | Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini | pending | pending | pending | pending | pending |
-| msgd2_varc_all_full | Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps | pending | pending | pending | pending | pending |
+| msgd2_varc_all_full | Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini | 1 | 2 | 2 | 2 | 0.787 |
+| msgd2_varc_all_full | Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.727 |
 
 Previous loop, for reference (first-order, leave-one-out query, same baseline and eval): Meta-SGD rows s1/s5/s10 0/0/0
 (tok .680/.730/.729), then ttt_mini 1/2/2; Meta-SGD layers s1/s5/s10 0/0/0, then ttt_mini 1/1/1.
@@ -104,8 +104,10 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
    1e-3. Both land at 1/1/1 after ttt_mini (tok .747 vs .750), down from the plain checkpoint's 4/4/4 (.811), and the
    meta-trained one's support loss on a new task before adaptation is 1.35, the same as the from-scratch meta runs'. So 2000
    steps at batch 16 / lr 1e-3 degrade the checkpoint whichever step is used, and the meta step is neutral against ordinary
-   training at that recipe. The learned loop from it: 0/0/0, tok .667. The remaining question is Meta-SGD at the baseline's
-   own recipe (4000 steps x batch 128, ~30 tasks per meta-step), running.
+   training at that recipe. The learned loop from it: 0/0/0, tok .667. Meta-SGD from scratch at the baseline's own recipe
+   (4000 steps x batch 128, ~30 tasks per meta-step, 3.5 h) closes most but not all of the gap: ttt_mini 1/2/2 (tok .787)
+   against the plain 4/4/4 (.811), learned loop 10 steps 0/0/0 (.727). α again did not move (weights geometric mean 0.0104,
+   max 0.17, 0.3% of elements above 0.02) in 4000 steps, so the data budget was part of the gap and the meta-step the rest.
 6. **TRM not run.** Its meta-step unrolls each row's ACT trajectory (up to 16 supervision steps) inside both losses, about
    85 s per 32-row batch on this GPU, i.e. days for the previous loop's recipe; with VARC null across the board there is no
    signal that would justify it. The user allowed skipping it.
@@ -158,3 +160,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   2000 meta-steps at batch 16, 14.5 min; α stayed at 0.01, max 0.022): ttt_mini 1/1/1 tok .747, learned loop 10 steps
   0/0/0 tok .667, support loss 1.35 -> 1.24. Control `varc_ho2_cont` (plain, continued 2000 steps at batch 16, 2 min):
   ttt_mini 1/1/1 tok .750. Conclusion 5 rewritten. `msgd2_varc_all_full` (from scratch, 4000 x batch 128) started.
+- **2026-10-23 04:31. Baseline-budget run (`msgd2_varc_all_full`) done; round-2 queue finished.** 3 h 33 min for 4000
+  meta-steps at batch 128 (3.2 s/step, 2.3 GB resident). ttt_mini from it: 1/2/2, tok .787; learned loop 10 steps: 0/0/0,
+  tok .727. α unchanged from 0.01 (geometric mean 0.0104, max 0.17). Conclusion 5 extended. Round 3
+  (`scripts/miniarc5/msgd3_varc.sh`) started on the GPU; `msgd2_varc.sh` now sources `msgd_common.sh`.
