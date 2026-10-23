@@ -76,6 +76,8 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd7_norm", "ms8n_s5", "round 7: RMS-normalised inner step, alpha per tensor (init 1e-3 / rows 3e-2); learned loop 5 steps"),
     ("msgd7_norm", "ms8n_s10", "round 7: RMS-normalised inner step, alpha per tensor (init 1e-3 / rows 3e-2); learned loop 10 steps"),
     ("msgd7_norm", "ms8n_adam", "round 7: RMS-normalised inner step, alpha per tensor (init 1e-3 / rows 3e-2); then ttt_mini"),
+    ("msgd7_norm", "ms8n_s30", "round 7: RMS-normalised inner step; learned loop 30 steps"),
+    ("msgd7_norm", "ms8n_s120", "round 7: RMS-normalised inner step; learned loop 120 steps"),
     ("varc_ho2", "ms6v_none", "plain VARC, no adaptation (0 epochs)"),
     ("varc_ho2", "ms6v_seed1", "plain VARC, ttt_mini, eval seed 1"),
     ("varc_ho2", "ms6v_seed2", "plain VARC, ttt_mini, eval seed 2"),
