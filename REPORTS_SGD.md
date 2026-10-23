@@ -117,6 +117,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 1 | 4 | 7 | 8 | 11 | 0.829 |
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 2 | 5 | 8 | 8 | 11 | 0.824 |
 | msgd7_norm | round 10: normalised learned loop, 120 steps, eval seed 2 | 6 | 8 | 9 | 9 | 0.839 |
+| msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | 0.862 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -476,3 +477,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   above. GPU idle.
 - **2026-10-23 14:35. Round 11 queued** (user: next steps 1-3): long loops, 5/10-step normalised meta-training, from
   scratch. ETAs in the queued-runs table.
+- **2026-10-23 15:39. Round 11, learned loop 300 steps:** 8/9/9 (p@100 13), tok .862, demos 1.53 -> 0.43 (5.6 min for 30
+  tasks). Still climbing past 120 (6/7/9, .836). The queue's first job started only at 15:33, 58 min after launch
+  (cause being checked); plain 300-step control running.
