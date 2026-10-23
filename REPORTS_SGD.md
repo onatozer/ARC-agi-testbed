@@ -85,6 +85,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd3_varc_ft | round 3, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.737 |
 | msgd3_varc_ft | round 3, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.751 |
 | msgd3_varc_ft | round 3, then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
+| msgd3_varc_ft | round 3, learned loop 30 steps | 0 | 1 | 1 | 1 | 0.772 |
 | varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
 | msgd5_pt | round 5: alpha per tensor; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .753 |
 | msgd5_pt | round 5: alpha per tensor; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
@@ -325,3 +326,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   three fixes for the immobile weights), ETAs in the queued-runs table.
 - **2026-10-23 13:09. Round 5 done (MAML++ run):** .687/.740/.754, ttt_mini 3/3/3 (.810). Section "Round 5 complete".
   Round 6 (30/120-step loops) running.
+- **2026-10-23 13:10. Round 6, round-3 checkpoint at 30 learned steps:** 0/1/1 (p@100 1), tok .772, demo fit 1.51 ->
+  0.87. First held-out task a learned loop has solved (at pass@2), and still improving with steps (.751 at 10). 120 steps
+  and the plain checkpoint's fixed-alpha loops running.
