@@ -102,6 +102,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd5_cos | round 5: cosine outer lr (min 0.1); then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
 | msgd5_pp | round 5: MAML++ (5 inner steps, multi-step loss, alpha per tensor and step, first order 300 steps); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .687 / .740 / .754 |
 | msgd5_pp | round 5: MAML++; then ttt_mini | 3 | 3 | 3 | 5 | 0.810 |
+| msgd7_range10 | round 7: alpha per tensor, clamp e^10 (alpha up to 220); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .752 |
+| msgd7_range10 | round 7: clamp e^10; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -359,3 +361,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 13:16. Round 6 done.** Plain checkpoint, hand-set alpha, 120 steps: 2/3/4, tok .801, demos 1.74 -> 0.72:
   better than the meta-trained checkpoint's 0/2/3 (.791) under the same rule. Section "Round 6" above. Round 7 started
   (`msgd7_range10`).
+- **2026-10-23 13:30. Round 7, wide clamp done** (10 min training): learned loop .673/.738/.752, ttt_mini 3/3/3
+  (0.809), demo fit 1.51 -> 0.95. Alpha used the range only a little: layer-0 MLP input 2.75 (was at the 1.48 clamp),
+  layer-2 MLP 0.89, pos_embed 0.86, the rest as in round 5. Same result as every run since round 3. Alpha-init-1 run
+  training.
