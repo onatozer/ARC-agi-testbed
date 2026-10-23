@@ -96,6 +96,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd5_lr3e-4 | round 5: outer lr 3e-4; then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
 | msgd5_cos | round 5: cosine outer lr (min 0.1); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .671 / .736 / .750 |
 | msgd5_cos | round 5: cosine outer lr (min 0.1); then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
+| msgd5_pp | round 5: MAML++ (5 inner steps, multi-step loss, alpha per tensor and step, first order 300 steps); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .687 / .740 / .754 |
+| msgd5_pp | round 5: MAML++; then ttt_mini | 3 | 3 | 3 | 5 | 0.810 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -171,6 +173,17 @@ Round 5 (`scripts/miniarc5/msgd5_varc.sh`, on round 3's recipe from the plain ch
 1e-3 / 1e-1; outer lr 3e-4; cosine outer lr; and the full MAML++ step (5 inner steps, multi-step loss annealed over the
 first 30%, alpha per tensor and per step, first order for the first 300 steps). New options `meta_sgd.inner_steps`,
 `msl_anneal_fraction`, `alpha_per_tensor`, `alpha_per_step`, `first_order_steps`, all off by default.
+
+## Round 5 complete (2026-10-23 13:09): six variants, one result
+
+The MAML++ run (37 min: 1.9 s/step first-order, ~2.5 s/step second-order through 5 steps) is the same as the rest: learned
+loop .687 / .740 / .754 at 1 / 5 / 10 steps (the one-step number is the best one-step so far, +.014 over round 3, as a
+loop trained for 5 steps should be), ttt_mini 3/3/3 (.810), demo fit 1.50 -> 0.94. Its per-step alphas learned a
+structure (layer-2 MLP input at the clamp for steps 1-3; layer-0 MLP and patch_embed large at step 3 only; rows 1.1 ->
+1.6 -> 0.75 across steps; layer 3 ~0.01 throughout), with 5 tensors at the clamp in step 3. Round 5's six variants
+(per-tensor alpha, alpha_lr 1e-3 / 1e-1, outer lr 3e-4, cosine, MAML++) span .748-.754 at 10 steps and .807-.810 after
+ttt_mini: the meta-step's optimiser settings and the MAML++ machinery are irrelevant while the inner step cannot move the
+weights (section above). Round 7 is the test of that.
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -310,3 +323,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 12:28. Round 5, cosine outer lr done:** .671/.736/.750, ttt_mini 3/3/3 (.808), demo fit 1.51 -> 0.95. All
   five single-step variants of round 5 equal round 3. MAML++ run training (1.9 s/step first-order). Round 7 queued (user's
   three fixes for the immobile weights), ETAs in the queued-runs table.
+- **2026-10-23 13:09. Round 5 done (MAML++ run):** .687/.740/.754, ttt_mini 3/3/3 (.810). Section "Round 5 complete".
+  Round 6 (30/120-step loops) running.
