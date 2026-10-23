@@ -86,6 +86,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd3_varc_ft | round 3, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.751 |
 | msgd3_varc_ft | round 3, then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | msgd3_varc_ft | round 3, learned loop 30 steps | 0 | 1 | 1 | 1 | 0.772 |
+| varc_ho2 | plain VARC, fixed alpha 0.01 weights / 1 rows, 30 steps (round 6 control) | 1 | 2 | 2 | 2 | 0.777 |
 | varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
 | msgd5_pt | round 5: alpha per tensor; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .753 |
 | msgd5_pt | round 5: alpha per tensor; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
@@ -329,3 +330,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 13:10. Round 6, round-3 checkpoint at 30 learned steps:** 0/1/1 (p@100 1), tok .772, demo fit 1.51 ->
   0.87. First held-out task a learned loop has solved (at pass@2), and still improving with steps (.751 at 10). 120 steps
   and the plain checkpoint's fixed-alpha loops running.
+- **2026-10-23 13:11. Round 6, plain checkpoint under the same rule, 30 steps** (alpha 0.01 weights / 1 rows, hand-set):
+  1/2/2, tok .777, demo fit 1.74 -> 0.78. Equal-procedure comparison at 30 steps: plain 1/2/2 .777 against meta-trained
+  0/1/1 .772, i.e. no advantage for the meta-trained checkpoint (differences within noise). 120-step runs next.
