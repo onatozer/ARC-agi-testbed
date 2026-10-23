@@ -92,6 +92,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd5_alr1e-3 | round 5: alpha_lr 1e-3; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | msgd5_alr1e-1 | round 5: alpha_lr 1e-1; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .675 / .738 / .754 |
 | msgd5_alr1e-1 | round 5: alpha_lr 1e-1; then ttt_mini | 3 | 3 | 3 | 4 | 0.807 |
+| msgd5_lr3e-4 | round 5: outer lr 3e-4; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .671 / .737 / .751 |
+| msgd5_lr3e-4 | round 5: outer lr 3e-4; then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -298,3 +300,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   Alpha: weights 0.010 (unchanged), rows up to 1.8. Section above; round 5 queued (`msgd5_varc_queue.log`).
 - **2026-10-23 12:10. Round 5, first three variants done** (per tensor, alpha_lr 1e-3, 1e-1): all equal to round 3; alpha
   learned a clear structure and hit the clamp on the early MLPs; see the section above. lr 3e-4 run training.
+- **2026-10-23 12:14. Round 5, outer lr 3e-4 done:** learned loop .671/.737/.751, ttt_mini 3/3/3 (.808), demo fit
+  1.53 -> 0.96, alpha weights 0.011 (max at the clamp), rows 1.5. Same as round 3. Cosine-lr run training.
