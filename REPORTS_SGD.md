@@ -123,6 +123,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
+| msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
+| msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -338,6 +340,26 @@ Evaluated with the last alpha held past step 5 (the smallest): 1/1/1 (.753), 2/2
 checkpoint (.738 / .795 / .836), slightly ahead at 10 steps. Round 12 evaluates the same checkpoint with the alphas
 stretched over the loop (user's idea) and at 300 / 1000 steps.
 
+## Round 11c (2026-10-23 18:08): the deferred from-scratch run
+
+`msgd11_scratch`: the normalised recipe (16-copy episodes, fresh rows, alpha per tensor, init 1e-3 / 3e-2, alpha_lr 1e-2)
+from random init at the baseline's budget, 4000 steps x batch 128, lr 1e-3; 31 min (under two tasks per step). Plain
+control = the baseline `varc_ho2` (same build, budget, seed). Query loss noisy, 0.7-1.8 at the end; the weights' alpha
+collapsed (geometric mean 0.0001; only the final norm 0.33 and a few norm / embedding tensors ~0.01), rows 0.08.
+
+| 120 normalised steps | pass@1/2/5 | token acc |
+|---|---|---|
+| meta-trained from scratch (this run), learned alpha | 1 / 1 / 2 | .775 |
+| plain from scratch (`varc_ho2`), hand-set alpha, same rule | 4 / 7 / 8 (3 seeds: 3-5 / 5-8 / 8) | .827 |
+| plain checkpoint meta-fine-tuned (round 7), learned alpha | 6 / 7 / 9 (3 seeds) | .836 |
+
+Loops 10 / 30 / 120: 1/3/3 (.746), 1/2/2 (.751), 1/1/2 (.775), demo fit 1.58 -> 0.95 / 0.83 / 0.70; ttt_mini
+2/3/3 (0.772) against the plain 4/4/4 (.811). So **Meta-SGD from scratch does not beat plain training from
+scratch** on this build, even with the normalised step: the gain of rounds 7-11 belongs to meta-fine-tuning a trained
+model (and mostly to the test-time rule). Likely reasons, untested: ~1.75 tasks per meta-step (the baseline sees ~30
+puzzles per step), the fresh-row regime from random init (the puzzle table is never trained, so theta must carry every
+task), and 1000 meta-fine-tuning steps on top of 4000 plain being simply more training than 4000 meta-steps.
+
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
 All training runs start from the plain checkpoint `varc_ho2` on round 3's recipe (`FT3`/`EPISODE3` in
@@ -361,8 +383,8 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 11 (`msgd11_varc.sh`, launched 14:35, process started 15:33; user's next steps 1-3) | msgd7_norm, varc_ho2 | normalised loops for 300 and 1000 steps (evaluations only) | ms8n_s300/1000, ms4vnorm_s300/1000 | ~16:25 |
 | 11 | msgd11_ms5 | meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL 30%, first order 300), from the plain checkpoint | ms9m5_s10/30/120, _adam | ~17:20 |
 | 11 | msgd11_scratch | normalised recipe from scratch, 4000 x batch 128, lr 1e-3 (plain control = varc_ho2) | ms9sc_* | ~18:10 (step time unmeasured) |
-| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~19:45 |
-| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | ~21:15 (10 evals, 2.5-20 min each) |
+| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~20:00 (started 18:08; the 5-step run took 54 min) |
+| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | ~21:30 (10 evals, 2.5-20 min each) |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -531,3 +553,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   longer loops (`meta_sgd_schedule=stretch`, new evaluate_ttt option, tested) against holding the last one.
 - **2026-10-23 17:28. Round 11, 5-step meta-training done:** hold-schedule loops 1/1/1 (.753), 2/2/3 (.797), 7/7/8
   (.837); ttt_mini 3/3/3 (0.804); learned decaying per-step alphas. Section "Round 11b". From-scratch run started.
+- **2026-10-23 18:08. Round 11, from-scratch run done:** loops 1/3/3 (.746), 1/2/2 (.751), 1/1/2 (.775); ttt_mini
+  2/3/3 (0.772). Below plain-from-scratch under the same rule. Section "Round 11c". 10-step meta-training started.
