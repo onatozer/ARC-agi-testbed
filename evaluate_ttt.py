@@ -98,15 +98,20 @@ def _support_batch(config: PretrainConfig, train_metadata: Any) -> Dict[str, tor
     return {k: v[keep] for k, v in rows.items()}
 
 
-def meta_sgd_adapt(model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, substrings: List[str]) -> List[float]:
+def meta_sgd_adapt(model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, substrings: List[str], schedule: str = "hold") -> List[float]:
     """Test-time Meta-SGD: `steps` inner steps with the model's learned alpha (model.meta_sgd) on the task's support rows,
-    written into the weights and the rows' puzzle embeddings. Returns the per-row support loss before each step."""
+    written into the weights and the rows' puzzle embeddings. With per-step alphas and more steps than were trained,
+    "hold" keeps the last trained alpha for the rest, "stretch" spreads the trained ones over the loop (the k-th for the
+    k-th fraction of the steps: a learned schedule shape at any length). Returns the per-row support loss before each step."""
     if getattr(model, "meta_sgd", None) is None:
         raise ValueError("meta_sgd_steps needs meta_sgd.enabled: the checkpoint's, or +train_overrides.meta_sgd.enabled=true with inner_lr (and adapt_substrings).")
+    if schedule not in ("hold", "stretch"):
+        raise ValueError(f"meta_sgd_schedule must be 'hold' or 'stretch', got {schedule!r}")
     targets, emb_name, losses = _meta_sgd_targets(model, substrings), _puzzle_emb_name(model), []
     for k in range(steps):
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
-        loss, theta1 = _adapt(model, named, overrides, batch, step=k, second_order=False)  # no outer loss: the values suffice
+        alpha_step = k * model.meta_sgd.steps // steps if schedule == "stretch" else k
+        loss, theta1 = _adapt(model, named, overrides, batch, step=alpha_step, second_order=False)  # no outer loss: the values suffice
         losses.append(float(loss))
         with torch.no_grad():
             for name, p in targets:
@@ -158,7 +163,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         if cfg.meta_sgd_steps > 0:
             train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
             support = tree_to_device(_support_batch(config, train_metadata), next(train_state.model.parameters()).device)
-            losses = meta_sgd_adapt(train_state.model, support, cfg.meta_sgd_steps, config.meta_sgd.adapt_substrings)
+            losses = meta_sgd_adapt(train_state.model, support, cfg.meta_sgd_steps, config.meta_sgd.adapt_substrings, cfg.meta_sgd_schedule)
             alpha_mean, alpha_max = train_state.model.meta_sgd.summary()
             print_info(f"TTT run {run}: {cfg.meta_sgd_steps} Meta-SGD steps (alpha geometric mean {alpha_mean:.3g}, max {alpha_max:.3g}) on {support['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
         else:

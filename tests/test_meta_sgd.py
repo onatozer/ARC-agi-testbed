@@ -313,3 +313,26 @@ def test_normalized_inner_step_moves_every_tensor_by_alpha_rms():
             rms = float((theta1[name] - p).pow(2).mean().sqrt())
             assert rms == pytest.approx(float(model.meta_sgd.alpha(name)), rel=1e-3), name
     assert _config().meta_sgd.normalize_grad is False
+
+
+def test_stretch_schedule_spreads_the_per_step_alphas_over_a_longer_loop():
+    """Two trained alphas, four test steps: hold uses alpha 0 then alpha 1 for steps 2-4; stretch uses alpha 0 for steps 1-2
+    and alpha 1 for steps 3-4. With alpha 1 set to ~0, the weights stop moving at step 2 under hold and at step 3 under stretch."""
+    def run(schedule, steps):
+        torch.manual_seed(0)  # the same initial weights every call
+        config, train_state, batch = _state("meta_sgd.alpha_per_step=true", "meta_sgd.inner_steps=2")
+        model = train_state.model.eval()  # no dropout: the trajectories must be comparable
+        emb_name = _puzzle_emb_name(model)
+        name = next(n for n, _ in _meta_sgd_targets(model, []) if n != emb_name)
+        with torch.no_grad():
+            for key, rho in model.meta_sgd.rho.items():
+                rho[1] = -30.0  # alpha_1 ~ 0
+        support = {k: v[batch["validation"] == 0] for k, v in batch.items() if k != "validation"}
+        meta_sgd_adapt(model, support, steps, [], schedule)
+        return dict(model.named_parameters())[name].detach().clone()
+    same = lambda a, b: torch.allclose(a, b, atol=1e-6, rtol=0)
+    assert same(run("hold", 1), run("hold", 4))  # steps 2-4 use alpha_1 ~ 0
+    assert not same(run("stretch", 1), run("stretch", 2))  # step 2 still uses alpha_0
+    assert same(run("stretch", 2), run("stretch", 4))  # steps 3-4 use alpha_1 ~ 0
+    with pytest.raises(ValueError):
+        run("linear", 2)
