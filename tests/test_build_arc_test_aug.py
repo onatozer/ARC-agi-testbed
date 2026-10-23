@@ -25,3 +25,22 @@ def test_test_aug_controls_only_the_test_split(test_aug):
     assert np.array_equal(original.examples[0][0], np.array(PUZZLE["test"][0]["input"]))
     # every test copy's puzzle id also appears in training, so its puzzle embedding is learned from its demos
     assert {c.id for c in test_copies} <= {c.id for c in train_copies}
+
+
+def test_test_copies_caps_only_the_test_split():
+    np.random.seed(0)
+    results = {}
+    convert_single_arc_puzzle(results, "p", PUZZLE, 8, EVAL_MAPPING, test_aug=True, test_copies=3)
+    (train_copies,), (test_copies,) = results["train"]["all"], results["test"]["all"]
+    assert len(train_copies) == 9 and len(test_copies) == 4  # the original plus 3 augmented copies
+    assert test_copies[0].id == "p" and {c.id for c in test_copies} <= {c.id for c in train_copies}
+
+
+def test_example_types_missing_from_the_mapping_are_dropped():
+    # A held-out task maps only its test pairs: its demos go nowhere, and there is no train split at all
+    np.random.seed(0)
+    results = {}
+    convert_single_arc_puzzle(results, "p", PUZZLE, 2, {"test": ("test", "all")}, test_aug=True)
+    assert "train" not in results
+    (test_copies,) = results["test"]["all"]
+    assert len(test_copies) == 3 and all(len(c.examples) == 1 for c in test_copies)

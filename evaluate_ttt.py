@@ -32,7 +32,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from config.schema import PretrainConfig
 from dataset.build_arc_dataset import DataProcessConfig, convert_dataset, convert_single_arc_puzzle
-from evaluate import _apply_overrides, _attach_wandb_run, _load_checkpoint, _seed, _summarize
+from dataset.build_miniarc_dataset import MiniARCDataProcessConfig
+from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_checkpoint, _seed, _summarize
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
 from pretrain import create_dataloader, create_evaluators, init_train_state, train_batch
@@ -44,8 +45,13 @@ from utils.printing import print_info
 torch.set_float32_matmul_precision("high")
 
 
-def load_tasks(prefix: str, set_name: str) -> Dict[str, dict]:
-    """ARC-AGI challenges with their solutions merged in as test outputs (only the evaluators read them)."""
+def load_tasks(builder: Dict[str, Any], data_path: str) -> Dict[str, dict]:
+    """The eval tasks with their test outputs: ARC-AGI challenges with the solutions merged in when the checkpoint was
+    trained on an ARC-AGI build, otherwise the build's test_puzzles.json (MiniARC: the evaluators' tasks, outputs included)."""
+    prefix, set_name = builder.get("input_file_prefix"), builder.get("test_set_name")
+    if not prefix or not set_name:
+        with open(os.path.join(data_path, "test_puzzles.json")) as f:
+            return json.load(f)
     with open(f"{prefix}_{set_name}_challenges.json") as f:
         tasks = json.load(f)
     with open(f"{prefix}_{set_name}_solutions.json") as f:
@@ -57,12 +63,13 @@ def load_tasks(prefix: str, set_name: str) -> Dict[str, dict]:
 
 
 def build_task_dataset(builder: Dict[str, Any], name: str, task: dict, output_dir: str, num_aux_tasks: int, seed: int) -> None:
-    """One task as a dataset in the checkpoint's format (grid_size, scale_aug, border_tokens, ... come from its build config).
-    Every aux task gets its own group, so a sampler epoch covers each aux task's demos once."""
-    fields = {k: v for k, v in builder.items() if k in DataProcessConfig.model_fields}
-    config = DataProcessConfig(**{**fields, "output_dir": output_dir, "num_aug": num_aux_tasks - 1, "test_aug": True, "seed": seed})
+    """One task as a dataset in the checkpoint's format (grid_size, scale_aug, border_tokens, ... come from its build config,
+    ARC-AGI's or MiniARC's). Every aux task gets its own group, so a sampler epoch covers each aux task's demos once."""
+    config_cls = DataProcessConfig if "input_file_prefix" in builder else MiniARCDataProcessConfig
+    fields = {k: v for k, v in builder.items() if k in config_cls.model_fields}
+    config = config_cls(**{**fields, "output_dir": output_dir, "num_aug": num_aux_tasks - 1, "test_aug": True, "seed": seed})
 
-    def load_puzzles(config: DataProcessConfig):
+    def load_puzzles(config):
         results: Dict[str, Dict[str, List[list]]] = {}
         convert_single_arc_puzzle(results, name, task, config.num_aug, {"train": ("train", "all"), "test": ("test", "all")}, test_aug=True)
         results["train"]["all"] = [[puzzle] for group in results["train"]["all"] for puzzle in group]
@@ -165,15 +172,17 @@ def launch(hydra_config: DictConfig) -> None:
     ckpt, ckpt_path = _load_checkpoint(cfg.checkpoint)
     train_cfg = PretrainConfig(**ckpt["config"])
     builder = dict(train_cfg.dataset.__pydantic_extra__ or {})
-    if not builder.get("input_file_prefix") or not builder.get("test_set_name"):
-        raise ValueError("evaluate_ttt.py needs a checkpoint trained on an ARC-AGI build (dataset.input_file_prefix and test_set_name).")
     state = start_state(ckpt, train_cfg)
     step = int(ckpt.get("step", 0))
     out_dir = Path(cfg.output_dir or Path(ckpt_path).parent.parent / "eval_preds" / f"step_{step}_{cfg.suffix}")
     (out_dir / "tasks").mkdir(parents=True, exist_ok=True)
 
-    tasks = load_tasks(builder["input_file_prefix"], builder["test_set_name"])
-    names = sorted(cfg.task_ids or tasks)[: cfg.max_tasks]
+    tasks = load_tasks(builder, _dataset_path(train_cfg.dataset.data_path))
+    task_ids = cfg.task_ids
+    if cfg.task_ids_file:
+        with open(cfg.task_ids_file) as f:
+            task_ids = json.load(f)  # e.g. a build's heldout_tasks.json
+    names = sorted(task_ids or tasks)[: cfg.max_tasks]
     for name in names[rank::world]:
         result_path = out_dir / "tasks" / f"{name}.json"
         if result_path.exists():
