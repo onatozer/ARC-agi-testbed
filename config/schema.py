@@ -52,11 +52,22 @@ class MetaSGDConfig(BaseModel):
     inner_lr_rows: Optional[float] = None  # initial alpha for the puzzle-embedding rows (None: inner_lr); rows want ~100x the weights' step
     copies_per_group: int = 1  # augmented copies of a task per batch; > 1 makes the task (all its copies in the batch) the episode, as TTT adapts
     fresh_rows: bool = False  # the episode's embedding rows start from the table mean, as a held-out task's do at test time; the table is not trained
+    # "How to train your MAML" (arXiv 1810.09502) components. Inner steps > 1 trains the loop that is run at test time;
+    # multi-step loss (MSL) weights the query loss after every inner step, annealing from uniform to the last step only over
+    # the first msl_anneal_fraction of training (None: the last step's loss only); LSLR = alpha per tensor (and per step)
+    # instead of per element; derivative-order annealing = first-order inner gradients for the first first_order_steps.
+    inner_steps: int = 1
+    msl_anneal_fraction: Optional[float] = None
+    alpha_per_tensor: bool = False  # one alpha per adapted tensor (the embedding table keeps one per column)
+    alpha_per_step: bool = False  # a separate alpha for each of the inner_steps (test steps beyond them reuse the last)
+    first_order_steps: int = 0
 
     @pydantic.model_validator(mode="after")
     def _check(self):
         if self.inner_lr <= 0 or self.alpha_range < 0 or self.copies_per_group < 1 or (self.inner_lr_rows is not None and self.inner_lr_rows <= 0):
             raise ValueError("meta_sgd: inner_lr > 0 (inner_lr_rows too), alpha_range >= 0 and copies_per_group >= 1 are required.")
+        if self.inner_steps < 1 or self.first_order_steps < 0 or (self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1):
+            raise ValueError("meta_sgd: inner_steps >= 1, first_order_steps >= 0 and msl_anneal_fraction in (0, 1] are required.")
         return self
 
 

@@ -226,21 +226,27 @@ class MetaSGD(nn.Module):
     initialised at inner_lr. rho lives on the loss head (checkpointed, EMA'd and all-reduced like any parameter) and is
     trained by its own Adam through the second-order outer loss (meta_sgd_batch)."""
 
-    def __init__(self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float, alpha0_rows: Optional[float] = None) -> None:
+    def __init__(
+        self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float, alpha0_rows: Optional[float] = None,
+        per_tensor: bool = False, steps: int = 1,
+    ) -> None:
         super().__init__()
-        # The puzzle-embedding table gets one step size per column, shared by its rows: a test task's rows are new
+        # The puzzle-embedding table gets one step size per column, shared by its rows: a test task's rows are new.
+        # per_tensor (LSLR, arXiv 1810.09502): one scalar per tensor; steps > 1: a leading dim with one alpha per inner step.
         is_table = lambda n: n.endswith("puzzle_emb.weights")
-        shape = lambda n, p: (1, p.shape[1]) if is_table(n) else p.shape
+        shape = lambda n, p: (1, p.shape[1]) if is_table(n) else (() if per_tensor else p.shape)
         init = lambda n: math.log(alpha0_rows if is_table(n) and alpha0_rows is not None else alpha0)
-        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), init(n), dtype=torch.float32, device=p.device)) for n, p in named})
+        self.steps = steps
+        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full((steps, *shape(n, p)) if steps > 1 else shape(n, p), init(n), dtype=torch.float32, device=p.device)) for n, p in named})
         self.bounds = {self.key(n): (init(n) - alpha_range, init(n) + alpha_range) for n, _ in named}
 
     @staticmethod
     def key(name: str) -> str:
         return name.replace(".", "|")
 
-    def alpha(self, name: str) -> torch.Tensor:
-        return self.rho[self.key(name)].exp()
+    def alpha(self, name: str, step: int = 0) -> torch.Tensor:
+        rho = self.rho[self.key(name)]
+        return (rho[min(step, self.steps - 1)] if self.steps > 1 else rho).exp()
 
     @torch.no_grad()
     def clamp_(self) -> None:
@@ -306,7 +312,10 @@ def create_model(
         if config.meta_sgd.enabled:
             if "trm_root" in config.arch.name:
                 raise ValueError("meta_sgd needs a double-backward-safe model; TRMRoot's custom autograd is not.")
-            model.meta_sgd = MetaSGD(_meta_sgd_targets(model, config.meta_sgd.adapt_substrings), config.meta_sgd.inner_lr, config.meta_sgd.alpha_range, config.meta_sgd.inner_lr_rows)
+            model.meta_sgd = MetaSGD(
+                _meta_sgd_targets(model, config.meta_sgd.adapt_substrings), config.meta_sgd.inner_lr, config.meta_sgd.alpha_range, config.meta_sgd.inner_lr_rows,
+                per_tensor=config.meta_sgd.alpha_per_tensor, steps=config.meta_sgd.inner_steps if config.meta_sgd.alpha_per_step else 1,
+            )
         
         # if "DISABLE_COMPILE" not in os.environ:
         #     model = torch.compile(model)  # type: ignore
@@ -733,14 +742,25 @@ def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch
 
 def _adapt(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
+    step: int = 0, second_order: bool = True,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-    """The inner step: (per-row support loss, theta1 = theta - alpha * its gradient for every tensor in `named`), with the
-    gradient's graph kept so the outer loss can differentiate through it. `overrides` are substituted during the forward."""
+    """One inner step: (per-row support loss, theta1 = theta - alpha * its gradient for every tensor in `named`), with the
+    gradient's graph kept (second_order) so the outer loss can differentiate through it. `overrides` are substituted during
+    the forward; `step` picks the step's alpha when there is one per step. For later steps `named` holds the previous
+    step's adapted tensors (non-leaves in the graph), so the chain of steps stays differentiable."""
     loss_s = _supervised_loss(model, overrides, support) / support["inputs"].shape[0]
-    grads = torch.autograd.grad(loss_s, [p for _, p in named], create_graph=True, allow_unused=True)
+    grads = torch.autograd.grad(loss_s, [p for _, p in named], create_graph=second_order, allow_unused=True)
     theta1 = dict(overrides)
-    theta1.update({n: p - model.meta_sgd.alpha(n) * g for (n, p), g in zip(named, grads) if g is not None})
+    theta1.update({n: p - model.meta_sgd.alpha(n, step) * g for (n, p), g in zip(named, grads) if g is not None})
     return loss_s, theta1
+
+
+def _msl_weights(steps: int, progress: float) -> List[float]:
+    """Multi-step loss weights (arXiv 1810.09502): uniform over the inner steps at progress 0, linearly to the last step only
+    at progress 1 (and beyond). One step, or progress >= 1: [0, ..., 1]."""
+    p = min(max(progress, 0.0), 1.0)
+    early = (1.0 - p) / steps
+    return [early] * (steps - 1) + [1.0 - early * (steps - 1)]
 
 
 def _episode_overrides(
@@ -762,11 +782,13 @@ def _episode_overrides(
 def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, fresh_rows: bool = False,
+    msl_weights: Optional[List[float]] = None, second_order: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-    """Meta-SGD on one task: theta1 = theta - alpha * grad of the per-row support loss (graph kept), then the query loss at
-    theta1, times loss_scale, is backpropagated into theta (second order, through theta1), rho and the task's embedding
-    rows. fresh_rows: the rows start from the table mean, as a held-out task's do at test time. Returns (support loss per
-    row, query loss per row, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings."""
+    """Meta-SGD on one task: theta_k = theta_{k-1} - alpha_k * grad of the per-row support loss (graph kept) for each inner
+    step, then the query losses at the theta_k, weighted by msl_weights ([1.0]: one step) and times loss_scale, are
+    backpropagated into theta (second order, through the chain of steps), rho and the task's embedding rows. fresh_rows: the
+    rows start from the table mean, as a held-out task's do at test time. Returns (support loss per row at theta, query loss
+    per row at the last step, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings."""
     named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support)
     if emb_name is not None:
         if fresh_rows:
@@ -776,12 +798,19 @@ def _task_outer_backward(
             named = [(n, rows if n == emb_name else p) for n, p in named]
         query = {**query, "puzzle_identifiers": torch.searchsorted(ids, query["puzzle_identifiers"]).to(query["puzzle_identifiers"].dtype)}
 
+    weights = msl_weights or [1.0]
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
-        loss_s, theta1 = _adapt(model, named, overrides, support)
-        loss_q = _supervised_loss(model, theta1, query)
-        (loss_q * loss_scale).backward()
+        theta, total, loss_s0 = overrides, 0.0, None
+        for k, w in enumerate(weights):
+            loss_s, theta = _adapt(model, named, theta, support, step=k, second_order=second_order)
+            loss_s0 = loss_s if loss_s0 is None else loss_s0
+            named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
+            if w > 0 or k == len(weights) - 1:
+                loss_q = _supervised_loss(model, theta, query)
+                total = total + w * loss_q
+        (total * loss_scale).backward()
     row_grad = None if emb_name is None else overrides[emb_name].grad
-    return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], ids, row_grad
+    return loss_s0.detach(), loss_q.detach() / query["inputs"].shape[0], ids, row_grad
 
 
 def meta_sgd_batch(
@@ -815,10 +844,15 @@ def meta_sgd_batch(
 
     measure_flops = _should_log_flops(config, train_state.step)
     flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
+    progress = 1.0 if cfg.msl_anneal_fraction is None else train_state.step / (cfg.msl_anneal_fraction * train_state.total_steps)
+    msl_weights = _msl_weights(cfg.inner_steps, progress)
+    second_order = train_state.step > cfg.first_order_steps
     support_losses, query_losses = [], []
     with flop_counter:
         for _key, support, query in episodes:
-            loss_s, loss_q, ids, row_grad = _task_outer_backward(model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows)
+            loss_s, loss_q, ids, row_grad = _task_outer_backward(
+                model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
+            )
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if row_grad is not None:

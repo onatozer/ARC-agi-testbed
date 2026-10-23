@@ -104,9 +104,9 @@ def meta_sgd_adapt(model: torch.nn.Module, support: Dict[str, torch.Tensor], ste
     if getattr(model, "meta_sgd", None) is None:
         raise ValueError("meta_sgd_steps needs meta_sgd.enabled: the checkpoint's, or +train_overrides.meta_sgd.enabled=true with inner_lr (and adapt_substrings).")
     targets, emb_name, losses = _meta_sgd_targets(model, substrings), _puzzle_emb_name(model), []
-    for _ in range(steps):
+    for k in range(steps):
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
-        loss, theta1 = _adapt(model, named, overrides, batch)
+        loss, theta1 = _adapt(model, named, overrides, batch, step=k, second_order=False)  # no outer loss: the values suffice
         losses.append(float(loss))
         with torch.no_grad():
             for name, p in targets:

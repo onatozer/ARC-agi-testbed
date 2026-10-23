@@ -11,8 +11,8 @@ source "$(dirname "$0")/msgd_common.sh"
 PLAIN=$(ckpt_of varc_ho2)
 # The baseline's batch size (256 holds ~3.5 tasks of 16 copies; a pass has 16x the rows so the MiniARC cap no longer binds),
 # a tenth of its lr, 1000 steps (~30 passes over the 119 tasks)
-FT="+load_checkpoint=$PLAIN +load_weights_only=true global_batch_size=256 lr=1e-4 lr_warmup_steps=50 max_steps=1000 eval_interval_steps=500"
-EPISODE="meta_sgd.copies_per_group=16 meta_sgd.fresh_rows=true meta_sgd.inner_lr=0.01 meta_sgd.inner_lr_rows=1 meta_sgd.alpha_lr=1e-2"
+FT="+load_checkpoint=$PLAIN $FT3"
+EPISODE="$EPISODE3"
 
 pretrain varc_ho2_cont2 $FT
 pretrain msgd3_varc_ft $FT meta_sgd.enabled=true $EPISODE

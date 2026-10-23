@@ -15,6 +15,10 @@ COMMON="global_batch_size=16 optimizer=adam_atan2 lr=1e-3 lr_warmup_steps=100 lr
 max_steps=2000 eval_interval_steps=1000 max_eval_steps=null seed=0 puzzle_emb_lr=3e-2 checkpoint_interval_steps=null \
 heavy_metrics_log_interval=100000 steps_hist_log_interval_steps=100000 flops_log_interval_steps=100000 +project_name=ARC-agi-testbed +entity=ozeronatwanb"
 MSGD="meta_sgd.enabled=true meta_sgd.alpha_lr=1e-3"
+# Round 3's recipe (REPORTS_SGD.md post-mortem fixes 1-4), from the plain checkpoint: its batch size, a tenth of its lr, 1000
+# steps; the task with 16 augmented copies as the episode, fresh rows, alpha initialised per group (rows 1, weights 0.01)
+FT3="+load_weights_only=true global_batch_size=256 lr=1e-4 lr_warmup_steps=50 max_steps=1000 eval_interval_steps=500"
+EPISODE3="meta_sgd.enabled=true meta_sgd.copies_per_group=16 meta_sgd.fresh_rows=true meta_sgd.inner_lr=0.01 meta_sgd.inner_lr_rows=1 meta_sgd.alpha_lr=1e-2"
 
 ckpt_of() { ls -t "$RUNS/$1"/outputs/*/*/*/checkpoints/*.pth 2>/dev/null | head -1; }
 

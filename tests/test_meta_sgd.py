@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
 from evaluate_ttt import meta_sgd_adapt
-from pretrain import _adapt, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from pretrain import _adapt, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -249,3 +249,54 @@ def test_adapt_substrings_restrict_the_inner_step():
     weights = {n: p.detach().clone() for n, p in model.named_parameters() if not n.startswith("meta_sgd.")}
     meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
     assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())  # the outer step still trains the weights
+
+
+def test_msl_weights_anneal_from_uniform_to_the_last_step():
+    assert _msl_weights(1, 0.0) == [1.0] and _msl_weights(3, 1.0) == [0.0, 0.0, 1.0] and _msl_weights(3, 7.0) == [0.0, 0.0, 1.0]
+    w = _msl_weights(4, 0.0)
+    assert all(abs(x - 0.25) < 1e-12 for x in w)
+    w = _msl_weights(4, 0.5)
+    assert abs(sum(w) - 1) < 1e-12 and w[0] == w[1] == w[2] == pytest.approx(0.125) and w[3] == pytest.approx(0.625)
+
+
+def test_lslr_alpha_is_per_tensor_and_per_step():
+    """How to train your MAML: one alpha per adapted tensor (the table keeps one per column) and one per inner step; test
+    steps beyond the trained ones reuse the last step's."""
+    config, train_state, batch = _state("meta_sgd.alpha_per_tensor=true", "meta_sgd.alpha_per_step=true", "meta_sgd.inner_steps=3")
+    model = train_state.model
+    emb_name = _puzzle_emb_name(model)
+    for name, p in _meta_sgd_targets(model, []):
+        rho = model.meta_sgd.rho[model.meta_sgd.key(name)]
+        assert rho.shape == ((3, 1, p.shape[1]) if name == emb_name else (3,))
+    name = next(n for n, _ in _meta_sgd_targets(model, []) if n != emb_name)
+    with torch.no_grad():
+        model.meta_sgd.rho[model.meta_sgd.key(name)][1] += 1.0
+    a = [float(model.meta_sgd.alpha(name, k)) for k in range(4)]
+    assert a[0] == a[2] == a[3] == pytest.approx(config.meta_sgd.inner_lr) and a[1] == pytest.approx(config.meta_sgd.inner_lr * 2.718281828)
+    # The per-element default is unchanged
+    _, default_state, _ = _state()
+    assert default_state.model.meta_sgd.rho[model.meta_sgd.key(name)].shape == dict(model.named_parameters())[name].shape
+
+
+def test_multi_step_outer_backward_trains_every_steps_alpha_and_first_order_differs():
+    config, train_state, batch = _state("meta_sgd.alpha_per_step=true", "meta_sgd.inner_steps=2")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    targets = _meta_sgd_targets(model, [])
+    loss_s, loss_q, _, _ = _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.5, 0.5])
+    for name, _ in targets:
+        g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
+        assert g is not None and torch.isfinite(g).all() and g[0].abs().sum() > 0 and g[1].abs().sum() > 0, name
+    second = {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None and not n.startswith("meta_sgd.")}
+    model.zero_grad(set_to_none=True)
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.5, 0.5], second_order=False)
+    first = {n: p.grad for n, p in model.named_parameters() if p.grad is not None and not n.startswith("meta_sgd.")}
+    assert any(not torch.allclose(first[n], second[n], rtol=1e-3, atol=1e-6) for n in second)
+
+
+def test_maml_plus_plus_options_are_cli_options():
+    cfg = _config("meta_sgd.inner_steps=2", "meta_sgd.msl_anneal_fraction=0.3", "meta_sgd.alpha_per_tensor=true", "meta_sgd.alpha_per_step=true", "meta_sgd.first_order_steps=10")
+    assert (cfg.meta_sgd.inner_steps, cfg.meta_sgd.msl_anneal_fraction, cfg.meta_sgd.alpha_per_tensor, cfg.meta_sgd.alpha_per_step, cfg.meta_sgd.first_order_steps) == (2, 0.3, True, True, 10)
+    for bad in ("meta_sgd.inner_steps=0", "meta_sgd.msl_anneal_fraction=0", "meta_sgd.first_order_steps=-1"):
+        with pytest.raises(Exception):
+            _config(bad)

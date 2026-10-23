@@ -80,11 +80,11 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.667 |
 | msgd2_varc_all_full | Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini | 1 | 2 | 2 | 2 | 0.787 |
 | msgd2_varc_all_full | Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.727 |
-| varc_ho2_cont2 | plain VARC continued 1000 steps (batch 256, lr 1e-4), then ttt_mini | pending | pending | pending | pending | pending |
-| msgd3_varc_ft | round 3: meta-fine-tuned, 16-copy episodes, fresh rows, alpha0 rows 1 / weights 0.01; learned loop 1 step | pending | pending | pending | pending | pending |
-| msgd3_varc_ft | round 3, learned loop 5 steps | pending | pending | pending | pending | pending |
-| msgd3_varc_ft | round 3, learned loop 10 steps | pending | pending | pending | pending | pending |
-| msgd3_varc_ft | round 3, then ttt_mini | pending | pending | pending | pending | pending |
+| varc_ho2_cont2 | plain VARC continued 1000 steps (batch 256, lr 1e-4), then ttt_mini | 3 | 3 | 5 | 6 | 0.822 |
+| msgd3_varc_ft | round 3: meta-fine-tuned, 16-copy episodes, fresh rows, alpha0 rows 1 / weights 0.01; learned loop 1 step | 0 | 0 | 0 | 0 | 0.673 |
+| msgd3_varc_ft | round 3, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.737 |
+| msgd3_varc_ft | round 3, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.751 |
+| msgd3_varc_ft | round 3, then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
@@ -137,6 +137,30 @@ The held-out accuracy comes entirely from test-time training: the plain checkpoi
 - **More training helps beyond the noise**: 40 epochs 5/5/5 (.831), 32 aux tasks 4/6/7 (.823). Both are the first results
   above .812 on this build. (Round 4b, scaling these further, was cancelled by the user: more test-time data obviously
   helps; the question is the Meta-SGD recipe.)
+
+## Round 3 and the comparison that matters (2026-10-23)
+
+The user's framing: the goal is a checkpoint that adapts to held-out tasks better than the plain VARC *under the same
+test-time procedure*; ttt_mini out-doing a 10-step loop is expected (120 Adam steps with a schedule against 10 plain SGD
+steps). Equal-procedure comparisons so far, meta-fine-tuned (round 3) against plain:
+
+- 10 inner steps: .751 against the plain checkpoint's best fixed alpha (.752 with alpha 1 on the rows): a tie. Round 3's
+  loop fits the held-out demos far better than earlier rounds (support loss 1.51 -> 0.95 in 10 steps; before, 1.35 ->
+  1.16) and is the first learned loop above .73, but still 0/30.
+- ttt_mini: 3/3/3 (.809) against 4/4/4 (.811) and the same-recipe control 3/3/5 (.822), all within the eval-seed spread.
+  So the "worse TTT start" of rounds 1-2 was the data budget (user's reading), and meta-training from the plain
+  checkpoint is now neutral for TTT.
+
+Measured on the budget-matched run's curves (W&B): the support loss at theta stays 1.4-1.9 for all 4000 steps while the
+query loss after the step is 0.85-1.1 (plain training: 0.54 on the same rows), i.e. theta is a pre-adaptation point, not
+a model, as MAML intends. Alpha on the weights never moved in any run (per-element meta-gradient sign at chance); the
+rows' alpha, one per column, did (to 1.8 in round 3).
+
+Round 5 (`scripts/miniarc5/msgd5_varc.sh`, on round 3's recipe from the plain checkpoint) tries "How to train your MAML"
+(Antoniou et al., arXiv 1810.09502) and the meta-parameter lrs round 3 never varied: alpha per tensor (LSLR); alpha_lr
+1e-3 / 1e-1; outer lr 3e-4; cosine outer lr; and the full MAML++ step (5 inner steps, multi-step loss annealed over the
+first 30%, alpha per tensor and per step, first order for the first 300 steps). New options `meta_sgd.inner_steps`,
+`msl_anneal_fraction`, `alpha_per_tensor`, `alpha_per_step`, `first_order_steps`, all off by default.
 
 ## Post-mortem (2026-10-23, after the 2000-step VARC runs)
 
@@ -203,3 +227,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 10:45. GPU idle 05:00-10:45 by mistake.** The round-3 re-run wrapper waited on `pgrep -f msgd4_varc.sh`,
   which matched the wrapper's own command line, and round 4b waited on that wrapper. Both stopped; the pgrep waits are
   removed from the queue scripts and the three jobs (tests, round 3, round 4b) now run chained in one shell.
+- **2026-10-23 11:00. Round 3 done** (8 min meta-training at 2 it/s, 3.5 tasks x 16 copies per step). Learned loop
+  1/5/10: 0/0/0, tok .673/.737/.751; then ttt_mini 3/3/3 (.809); control `varc_ho2_cont2` then ttt_mini 3/3/5 (.822).
+  Alpha: weights 0.010 (unchanged), rows up to 1.8. Section above; round 5 queued (`msgd5_varc_queue.log`).

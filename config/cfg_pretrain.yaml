@@ -59,3 +59,8 @@ meta_sgd:
   inner_lr_rows: null # initial alpha for the puzzle-embedding rows (null: inner_lr)
   copies_per_group: 1 # augmented copies of a task per batch; > 1 makes the task (all its copies) the episode, as TTT adapts
   fresh_rows: false # episode embedding rows start from the table mean, as a held-out task's do at test time
+  inner_steps: 1 # inner steps trained (How to train your MAML, arXiv 1810.09502: train the loop run at test time)
+  msl_anneal_fraction: null # multi-step loss: weight the query loss after every inner step, annealed to the last step over this fraction of training
+  alpha_per_tensor: false # LSLR: one alpha per adapted tensor instead of per element
+  alpha_per_step: false # LSLR: a separate alpha per inner step
+  first_order_steps: 0 # derivative-order annealing: first-order inner gradients for this many steps
