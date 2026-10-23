@@ -104,6 +104,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd5_pp | round 5: MAML++; then ttt_mini | 3 | 3 | 3 | 5 | 0.810 |
 | msgd7_range10 | round 7: alpha per tensor, clamp e^10 (alpha up to 220); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .752 |
 | msgd7_range10 | round 7: clamp e^10; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
+| msgd7_init1 | round 7: alpha per tensor, weights' alpha init 1; learned loop 1 / 5 / 10 steps (diverges: demo loss 1.8 -> 2238 at 10) | 0 | 0 | 0 | 0 | .584 / .526 / .472 |
+| msgd7_init1 | round 7: alpha init 1; then ttt_mini | 3 | 3 | 3 | 5 | 0.807 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -365,3 +367,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   (0.809), demo fit 1.51 -> 0.95. Alpha used the range only a little: layer-0 MLP input 2.75 (was at the 1.48 clamp),
   layer-2 MLP 0.89, pos_embed 0.86, the rest as in round 5. Same result as every run since round 3. Alpha-init-1 run
   training.
+- **2026-10-23 13:45. Round 7, alpha init 1 done:** the inner step of a full raw gradient on every weight is unstable: the
+  meta-training loss stayed ~2.0 throughout (others 0.9-1.1), alpha stayed near 1 (0.45-2.0; the meta-gradient did not
+  pull it down), and at test the loop diverges (demo loss 1.80 -> 2238 in 10 steps; tok .584/.526/.472, below the
+  no-adaptation .641). ttt_mini from it: 3/3/3 (0.807). Normalised-step run training.
