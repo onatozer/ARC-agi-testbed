@@ -162,6 +162,27 @@ Round 5 (`scripts/miniarc5/msgd5_varc.sh`, on round 3's recipe from the plain ch
 first 30%, alpha per tensor and per step, first order for the first 300 steps). New options `meta_sgd.inner_steps`,
 `msl_anneal_fraction`, `alpha_per_tensor`, `alpha_per_step`, `first_order_steps`, all off by default.
 
+## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
+
+All training runs start from the plain checkpoint `varc_ho2` on round 3's recipe (`FT3`/`EPISODE3` in
+`scripts/miniarc5/msgd_common.sh`: batch 256, lr 1e-4, 1000 steps; task = 16 augmented copies, fresh rows, alpha init rows
+1 / weights 0.01, alpha_lr 1e-2) and get the four evaluations of `grid` (learned loop 1/5/10 steps, then ttt_mini). A
+single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eval times were 0.5 / 0.7 / 0.6 / 2.7 min.
+
+| queue | run | change against round 3 | eval prefix | ETA |
+|---|---|---|---|---|
+| 5 (`msgd5_varc.sh`, started 11:22) | msgd5_pt | alpha per tensor (LSLR) | ms7pt | 11:40 |
+| 5 | msgd5_alr1e-3 | alpha_lr 1e-3 | ms7a3 | 11:55 |
+| 5 | msgd5_alr1e-1 | alpha_lr 1e-1 | ms7a1 | 12:10 |
+| 5 | msgd5_lr3e-4 | outer lr 3e-4 | ms7lr | 12:25 |
+| 5 | msgd5_cos | cosine outer lr, lr_min_ratio 0.1 | ms7cos | 12:40 |
+| 5 | msgd5_pp | MAML++: 5 inner steps, multi-step loss annealed over the first 30%, alpha per tensor and per step, first order for the first 300 steps | ms7pp | ~14:15 (step time unmeasured; 1-1.5 h guessed from 5x the single-step work) |
+| 6 (`msgd6_eval.sh`, chained) | msgd3_varc_ft | learned loop 30 and 120 steps (ttt_mini's step count), evaluations only | ms5va_s30, ms5va_s120 | ~14:30 |
+| 6 | varc_ho2 | the same loop with hand-set alpha 0.01 weights / 1 rows, 30 and 120 steps | ms4vfix_s30, ms4vfix_s120 | ~14:45 |
+
+Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
+(`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
+
 ## Post-mortem (2026-10-23, after the 2000-step VARC runs)
 
 Measured on the all-parameters checkpoint over 45 training-task episodes (CPU, train mode): support loss per row at θ
