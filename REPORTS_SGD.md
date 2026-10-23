@@ -88,6 +88,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd3_varc_ft | round 3, learned loop 30 steps | 0 | 1 | 1 | 1 | 0.772 |
 | varc_ho2 | plain VARC, fixed alpha 0.01 weights / 1 rows, 30 steps (round 6 control) | 1 | 2 | 2 | 2 | 0.777 |
 | msgd3_varc_ft | round 3, learned loop 120 steps (ttt_mini's step count) | 0 | 2 | 3 | 4 | 0.791 |
+| varc_ho2 | plain VARC, fixed alpha 0.01 weights / 1 rows, 120 steps (round 6 control) | 2 | 3 | 4 | 4 | 0.801 |
 | varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
 | msgd5_pt | round 5: alpha per tensor; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .753 |
 | msgd5_pt | round 5: alpha per tensor; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
@@ -187,6 +188,24 @@ structure (layer-2 MLP input at the clamp for steps 1-3; layer-0 MLP and patch_e
 (per-tensor alpha, alpha_lr 1e-3 / 1e-1, outer lr 3e-4, cosine, MAML++) span .748-.754 at 10 steps and .807-.810 after
 ttt_mini: the meta-step's optimiser settings and the MAML++ machinery are irrelevant while the inner step cannot move the
 weights (section above). Round 7 is the test of that.
+
+## Round 6 (2026-10-23 13:16): the equal-procedure comparison, up to ttt_mini's step count
+
+Same rule on both checkpoints (full-batch SGD on the 48 aux demo rows, all weights + the fresh rows; the meta-trained one
+with its learned alpha, the plain one with the hand-set init values alpha 0.01 weights / 1 rows):
+
+| steps | meta-trained (round 3), learned alpha | plain checkpoint, hand-set alpha |
+|---|---|---|
+| 10 | 0/0/0, .751, demos 1.51 -> 0.95 | 0/0/1, .752 (rows only, alpha 1) / 0/0/1, .727 (layers only, alpha 0.01) |
+| 30 | 0/1/1, .772, demos 1.51 -> 0.87 | 1/2/2, .777, demos 1.74 -> 0.78 |
+| 120 | 0/2/3, .791, demos 1.51 -> 0.78 | 2/3/4, .801, demos 1.74 -> 0.72 |
+| ttt_mini (120 Adam steps) | 3/3/3, .809 | 4/4/4, .811 (same-recipe control 3/3/5, .822) |
+
+Both loops keep improving with steps and at 120 are within .01-.02 of ttt_mini, so the SGD rule itself is not the gap.
+But at every step count the plain checkpoint adapts at least as well as the meta-trained one under the same rule, and at
+120 steps better (2/3/4 vs 0/2/3; it also fits the demos further, 0.72 vs 0.78, from a worse start). Meta-fine-tuning
+has not made the network adapt better; the learned alpha has not beaten the hand-set init it started from. (Note the
+plain checkpoint's rows start at the table mean of a table trained on 119 tasks either way.)
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -337,3 +356,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 13:13. Round 6, round-3 checkpoint at 120 learned steps** (2.3 min): 0/2/3 (p@100 4), tok .791, demo fit
   1.51 -> 0.78. Still climbing with steps (.751 / .772 / .791 at 10 / 30 / 120) and now within .02 of ttt_mini's .809,
   with pass@5 3 against ttt_mini's 3, but pass@1 0 against 3. Plain checkpoint's 120-step loop running.
+- **2026-10-23 13:16. Round 6 done.** Plain checkpoint, hand-set alpha, 120 steps: 2/3/4, tok .801, demos 1.74 -> 0.72:
+  better than the meta-trained checkpoint's 0/2/3 (.791) under the same rule. Section "Round 6" above. Round 7 started
+  (`msgd7_range10`).
