@@ -120,6 +120,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | 0.862 |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
 | msgd7_norm | round 11: normalised learned loop, 1000 steps | 10 | 13 | 15 | 16 | 0.887 |
+| varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -302,6 +303,23 @@ Everything tried before the normalised step (rounds 2-5, 7a/b: alpha granularity
 multi-step loss, per-step alpha, the clamp, a larger init) was equal to round 3 within noise, because none of it let the
 weights move. Not done: the deferred from-scratch run with this recipe at the baseline budget (user: keep in mind);
 meta-training with more inner steps under the normalised rule; longer test loops than 120.
+
+## Round 11a (2026-10-23 16:26): longer loops
+
+RMS-normalised rule, full batch on the 48 aux rows, same checkpoints as round 9:
+
+| steps | meta-trained (round 7), learned alpha | plain checkpoint, hand-set alpha | eval time / 30 tasks |
+|---|---|---|---|
+| 120 (3 seeds) | 6.0 / 7.3 / 8.7, .836, demos -> 0.54 | 4.0 / 6.7 / 8.0, .827, demos -> 0.57 | 2.5 min |
+| 300 | 8 / 9 / 9, .862, demos -> 0.43 | 7 / 9 / 10, .853, demos -> 0.46 | 5.6 min |
+| 1000 | 10 / 13 / 15, .887, demos -> 0.36 | 10 / 13 / 15, .879, demos -> 0.37 | 20 min |
+
+Neither curve has flattened by 1000 steps: pass@1 goes 6 -> 8 -> 10 and pass@5 9 -> 9 -> 15. At 1000 steps the two
+checkpoints solve the same tasks counts (10/13/15); the meta-trained one keeps a .008 token-accuracy lead (.887 vs .879)
+and a slightly deeper demo fit. So the meta-training increment is a constant small offset in token accuracy that shows up
+as 1-2 tasks at 120-300 steps and as nothing in task counts at 1000, where both reach half the held-out tasks at pass@5.
+The large effect is the test-time procedure: normalised full-batch SGD for 1000 steps (20 min / 30 tasks) takes the plain
+checkpoint from 4/4/4 (.811, ttt_mini) to 10/13/15 (.879).
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -488,3 +506,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 16:04. Round 11, learned loop 1000 steps** (20 min for 30 tasks): 10/13/15 (p@100 16), tok .887, demos
   1.53 -> 0.36. Half the held-out tasks solved at pass@5; still climbing (120 / 300 / 1000: 6/7/9 -> 8/9/9 -> 10/13/15).
   Plain checkpoint's 1000-step control running.
+- **2026-10-23 16:26. Round 11, plain checkpoint, normalised rule, 1000 steps:** 10/13/15 (p@100 16), tok .879, demos
+  1.74 -> 0.37: the same task counts as the meta-trained checkpoint, .008 lower token accuracy. Section "Round 11a".
+  5-step normalised meta-training (`msgd11_ms5`) started.
