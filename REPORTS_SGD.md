@@ -123,6 +123,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
+| msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -558,3 +559,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 19:40. Laptop restart at ~18:48 killed the 10-step meta-training** (`msgd11_ms10`, ~step 450, no
   intermediate checkpoint; log kept as `train_killed_by_restart.log`). Relaunched in one chain: round 12's 5-step-checkpoint
   evaluations first (stretch vs hold), then the 10-step run from step 0, then round 12's 10-step evaluations.
+- **2026-10-23 19:45. Round 12, 5-step checkpoint, stretched schedule, 120 steps:** 7/8/9, tok .845, demos 1.58 -> 0.49,
+  against the same checkpoint with the last alpha held, 7/7/8 (.837, demos -> 0.54). Best 120-step token accuracy so far
+  (one-step normalised checkpoint .836 over 3 seeds, plain .827). 300 and 1000 steps running.
