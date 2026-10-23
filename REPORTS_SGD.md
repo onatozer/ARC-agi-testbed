@@ -164,3 +164,10 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   meta-steps at batch 128 (3.2 s/step, 2.3 GB resident). ttt_mini from it: 1/2/2, tok .787; learned loop 10 steps: 0/0/0,
   tok .727. α unchanged from 0.01 (geometric mean 0.0104, max 0.17). Conclusion 5 extended. Round 3
   (`scripts/miniarc5/msgd3_varc.sh`) started on the GPU; `msgd2_varc.sh` now sources `msgd_common.sh`.
+- **2026-10-23 04:37. Round 3 crashed at meta-step 257** (CUDA index assert in the query forward). Cause: with 16 copies
+  per group the batch tail can cut a copy's demo rows and keep its validation row; the query ids are remapped into the
+  support ids by `searchsorted`, so the orphan pointed past the rows (the assert) or, when a larger id existed, at another
+  copy's row (silent; batches 19 and 246 of the same stream). Fixed in `_episodes_from_batch` (such query rows are dropped,
+  test added); the failed log is `msgd3_varc_ft/train_failed_step257.log`. Control `varc_ho2_cont2` finished (1000 steps,
+  1 min). Round 4a (`msgd4_varc.sh`: the plain checkpoint's test-time recipe, no-adaptation and seed controls, canvas
+  views, runs, epochs, aux tasks) took the GPU; round 3 is re-queued behind it with the Meta-SGD tests first.
