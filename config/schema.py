@@ -42,18 +42,18 @@ class DatasetConfig(BaseModel):
 class MetaSGDConfig(BaseModel):
     """Second-order Meta-SGD (arXiv 1707.09835) in place of train_batch: per puzzle in the batch, one gradient step on its
     demos with a learned per-parameter step size alpha, then theta and alpha are updated from the loss of the adapted weights
-    on the puzzle's validation rows (its former test pair; needs a dataset built with heldout_tasks > 0)."""
+    on the puzzle's validation rows (its former test pair; needs a dataset built with heldout_tasks > 0). Every loss runs each
+    row's ACT trajectory (up to arch.halt_max_steps supervision steps) from a fresh carry, as the ordinary recipe does."""
     enabled: bool = False
     inner_lr: float = 0.1  # initial alpha
     alpha_lr: float = 1e-3  # Adam lr for alpha (log-space), on the main lr schedule
     alpha_range: float = 5.0  # alpha is clamped to inner_lr * exp(+-alpha_range)
     adapt_substrings: List[str] = []  # parameter-name substrings the inner step adapts; [] = every trainable parameter (+ the puzzle-embedding row)
-    supervision_steps: int = 1  # ACT supervision steps from a fresh carry in each inner/outer loss
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.inner_lr <= 0 or self.alpha_range < 0 or self.supervision_steps < 1:
-            raise ValueError("meta_sgd: inner_lr > 0, alpha_range >= 0 and supervision_steps >= 1 are required.")
+        if self.inner_lr <= 0 or self.alpha_range < 0:
+            raise ValueError("meta_sgd: inner_lr > 0 and alpha_range >= 0 are required.")
         return self
 
 

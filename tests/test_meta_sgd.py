@@ -15,7 +15,7 @@ METADATA = PuzzleDatasetMetadata(
     total_groups=3, mean_puzzle_examples=3.0, sets=["all"],
 )
 TINY = ["arch.hidden_size=32", "arch.num_heads=2", "arch.expansion=2", "arch.L_layers=1", "arch.puzzle_emb_ndim=32", "dataset.grid_size=4",
-        "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true"]
+        "arch.halt_max_steps=4", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true"]
 _g = torch.Generator().manual_seed(0)
 BATCH = {
     "inputs": torch.randint(1, 6, (9, 16), generator=_g),
@@ -68,11 +68,11 @@ def test_inner_step_scales_with_alpha():
     config, train_state, batch = _state()
     model = train_state.model
     named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
-    _, theta1 = _adapt(model, named, overrides, support, 1)
+    _, theta1 = _adapt(model, named, overrides, support)
     name, p = named[0]
     with torch.no_grad():
         model.meta_sgd.rho[model.meta_sgd.key(name)] -= torch.log(torch.tensor(2.0))
-    _, theta1_half = _adapt(model, named, overrides, support, 1)
+    _, theta1_half = _adapt(model, named, overrides, support)
     torch.testing.assert_close(theta1_half[name] - p, (theta1[name] - p) / 2, rtol=1e-4, atol=1e-6)
     assert all(torch.equal(theta1[n], theta1_half[n]) for n in theta1 if n != name)  # other tensors use their own alpha
     assert theta1[emb_name].shape == (1, 32) and not torch.equal(theta1[emb_name], emb_rows)  # the task's row is adapted too
@@ -82,7 +82,7 @@ def test_outer_backward_reaches_theta_rho_and_the_embedding_row_with_second_orde
     config, train_state, batch = _state()
     model = train_state.model
     named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
-    loss_s, loss_q, row_grad = _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, 1, support, query, config.meta_sgd, torch.tensor(1.0, device=emb_rows.device))
+    loss_s, loss_q, row_grad = _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, 1, support, query, torch.tensor(1.0, device=emb_rows.device))
     assert torch.isfinite(loss_s) and torch.isfinite(loss_q) and row_grad.shape == (1, 32) and row_grad.abs().sum() > 0
     for key, rho in model.meta_sgd.rho.items():
         assert rho.grad is not None and torch.isfinite(rho.grad).all() and rho.grad.abs().sum() > 0, key
@@ -92,9 +92,9 @@ def test_outer_backward_reaches_theta_rho_and_the_embedding_row_with_second_orde
 
     # First-order: the query gradient at theta1 with theta1 cut from theta. It must differ from the second-order one
     model.zero_grad()
-    _, theta1 = _adapt(model, named, overrides, support, 1)
+    _, theta1 = _adapt(model, named, overrides, support)
     theta1 = {n: t.detach().requires_grad_() for n, t in theta1.items()}
-    _supervised_loss(model, theta1, query, 1).backward()
+    _supervised_loss(model, theta1, query).backward()
     first_order = {n: theta1[n].grad for n in second_order}
     assert any(not torch.allclose(first_order[n], second_order[n], rtol=1e-3, atol=1e-6) for n in second_order)
 
@@ -119,6 +119,29 @@ def test_meta_sgd_batch_updates_only_through_the_optimizers():
     assert meta.summary()[0] != pytest.approx(0.1, rel=1e-6)  # alpha moved
 
 
+def test_supervised_loss_runs_each_row_until_act_halts_it():
+    """Rows are dropped as the model halts them; every row contributes one loss per step of its trajectory, capped at halt_max_steps."""
+    config, train_state, batch = _state("arch.halt_max_steps=3")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    calls = []
+    orig = torch.func.functional_call
+
+    def spy(module, overrides_, args=(), kwargs=None):
+        out = orig(module, overrides_, args=args, kwargs=kwargs)
+        calls.append((kwargs["batch"]["inputs"].shape[0], out[1].detach().clone()))
+        return out
+
+    torch.func.functional_call = spy
+    try:
+        total = _supervised_loss(model, overrides, support)
+    finally:
+        torch.func.functional_call = orig
+    rows = [n for n, _ in calls]
+    assert 1 <= len(calls) <= 3 and rows[0] == 2 and all(a >= b for a, b in zip(rows, rows[1:])) and rows[-1] >= 1
+    torch.testing.assert_close(total, sum(l for _, l in calls))
+
+
 def test_disabled_config_is_the_ordinary_setup():
     config = _config("meta_sgd.enabled=false")
     train_state = init_train_state(config, METADATA, rank=0, world_size=1)
@@ -126,8 +149,8 @@ def test_disabled_config_is_the_ordinary_setup():
 
 
 def test_config_is_a_cli_option():
-    config = _config("meta_sgd.inner_lr=0.05", "meta_sgd.adapt_substrings=[puzzle_emb]", "meta_sgd.supervision_steps=2")
-    assert config.meta_sgd.inner_lr == 0.05 and config.meta_sgd.adapt_substrings == ["puzzle_emb"] and config.meta_sgd.supervision_steps == 2
+    config = _config("meta_sgd.inner_lr=0.05", "meta_sgd.adapt_substrings=[puzzle_emb]", "meta_sgd.alpha_range=2")
+    assert config.meta_sgd.inner_lr == 0.05 and config.meta_sgd.adapt_substrings == ["puzzle_emb"] and config.meta_sgd.alpha_range == 2
     with pytest.raises(ValueError):
         _config("meta_sgd.adapt_substrings=[no_such_module]") and init_train_state(_config("meta_sgd.adapt_substrings=[no_such_module]"), METADATA, rank=0, world_size=1)
 

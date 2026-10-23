@@ -710,23 +710,27 @@ def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict
     return episodes
 
 
-def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], steps: int) -> torch.Tensor:
+def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> torch.Tensor:
     """The loss head's loss on `batch` with the module's tensors named in `overrides` substituted (torch.func.functional_call),
-    summed over `steps` ACT supervision steps from a fresh carry (so no in-place write touches a tensor saved for backward)."""
+    summed over each row's ACT trajectory from a fresh carry: a row contributes every supervision step until the model halts
+    it (or halt_max_steps), as in train_batch, where halted rows are replaced by new ones; here they are dropped. The carry
+    is detached between steps (deep supervision), so no in-place write touches a tensor saved for backward."""
     carry, total = None, 0.0
-    for _ in range(steps):
+    while batch["inputs"].shape[0] > 0:
         carry, loss, _metrics, _, _ = torch.func.functional_call(model, overrides, args=(), kwargs=dict(return_keys=[], carry=carry, batch=batch))
-        carry = apply_to_tensors(carry, lambda t: t.detach().clone())
         total = total + loss
+        keep = ~carry.halted
+        carry = apply_to_tensors(carry, lambda t: t[keep].detach().clone())
+        batch = {k: v[keep] for k, v in batch.items()}
     return total
 
 
 def _adapt(
-    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor], steps: int,
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """The inner step: (per-row support loss, theta1 = theta - alpha * its gradient for every tensor in `named`), with the
     gradient's graph kept so the outer loss can differentiate through it. `overrides` are substituted during the forward."""
-    loss_s = _supervised_loss(model, overrides, support, steps) / support["inputs"].shape[0]
+    loss_s = _supervised_loss(model, overrides, support) / support["inputs"].shape[0]
     grads = torch.autograd.grad(loss_s, [p for _, p in named], create_graph=True, allow_unused=True)
     theta1 = dict(overrides)
     theta1.update({n: p - model.meta_sgd.alpha(n) * g for (n, p), g in zip(named, grads) if g is not None})
@@ -735,7 +739,7 @@ def _adapt(
 
 def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str], pid: int,
-    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], cfg: Any, loss_scale: torch.Tensor,
+    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Meta-SGD on one puzzle: theta1 = theta - alpha * grad of the per-row support loss (graph kept), then the query loss
     at theta1, times loss_scale, is backpropagated into theta (second order, through theta1), rho and the puzzle-embedding
@@ -752,8 +756,8 @@ def _task_outer_backward(
     named = [(n, emb_rows if n == emb_name else p) for n, p in targets]
 
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
-        loss_s, theta1 = _adapt(model, named, overrides, support, cfg.supervision_steps)
-        loss_q = _supervised_loss(model, theta1, query, cfg.supervision_steps)
+        loss_s, theta1 = _adapt(model, named, overrides, support)
+        loss_q = _supervised_loss(model, theta1, query)
         (loss_q * loss_scale).backward()
     return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], None if emb_rows is None else emb_rows.grad
 
@@ -768,7 +772,8 @@ def meta_sgd_batch(
 ):
     """train_batch's counterpart for config.meta_sgd.enabled (second-order Meta-SGD, arXiv 1707.09835): every puzzle in the
     batch is a task (_episodes_from_batch), each gets _task_outer_backward, the query losses are averaged over the batch's
-    query rows, and the shared optimizer step follows. No persistent ACT carry: every loss starts from a fresh one."""
+    query rows, and the shared optimizer step follows. No persistent ACT carry: every loss runs each row's ACT trajectory
+    from a fresh one (_supervised_loss)."""
     train_state.step += 1
     if train_state.step >= train_state.total_steps:
         return
@@ -791,7 +796,7 @@ def meta_sgd_batch(
     support_losses, query_losses = [], []
     with flop_counter:
         for pid, support, query in episodes:
-            loss_s, loss_q, row_grad = _task_outer_backward(model, targets, emb_name, pid, support, query, cfg, 1.0 / n_query)
+            loss_s, loss_q, row_grad = _task_outer_backward(model, targets, emb_name, pid, support, query, 1.0 / n_query)
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if row_grad is not None:

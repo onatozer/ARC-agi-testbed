@@ -56,4 +56,3 @@ meta_sgd:
   alpha_lr: 1e-3 # Adam lr for alpha (log-space), on the main lr schedule
   alpha_range: 5.0 # alpha stays within inner_lr * exp(+-alpha_range)
   adapt_substrings: [] # parameter-name substrings the inner step adapts; [] = every trainable parameter (+ the puzzle-embedding row)
-  supervision_steps: 1 # ACT supervision steps from a fresh carry in each inner/outer loss
