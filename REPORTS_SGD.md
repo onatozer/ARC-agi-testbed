@@ -67,10 +67,10 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd2_varc_emb | Meta-SGD rows, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.721 |
 | msgd2_varc_emb | Meta-SGD rows, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.721 |
 | msgd2_varc_emb | Meta-SGD rows, then ttt_mini | 1 | 1 | 1 | 1 | 0.754 |
-| msgd2_varc_lh | Meta-SGD layers (alpha0 0.01), learned loop 1 step | pending | pending | pending | pending | pending |
-| msgd2_varc_lh | Meta-SGD layers, learned loop 5 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_lh | Meta-SGD layers, learned loop 10 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_lh | Meta-SGD layers, then ttt_mini | pending | pending | pending | pending | pending |
+| msgd2_varc_lh | Meta-SGD layers (alpha0 0.01), learned loop 1 step | 0 | 0 | 0 | 0 | 0.682 |
+| msgd2_varc_lh | Meta-SGD layers, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.705 |
+| msgd2_varc_lh | Meta-SGD layers, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.712 |
+| msgd2_varc_lh | Meta-SGD layers, then ttt_mini | 1 | 1 | 1 | 1 | 0.758 |
 | msgd2_varc_all | Meta-SGD everything (alpha0 0.01), learned loop 1 step | pending | pending | pending | pending | pending |
 | msgd2_varc_all | Meta-SGD everything, learned loop 5 steps | pending | pending | pending | pending | pending |
 | msgd2_varc_all | Meta-SGD everything, learned loop 10 steps | pending | pending | pending | pending | pending |
@@ -91,3 +91,8 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
   checkpoint: 1/1/1, tok .754 (previous loop 1/2/2, .750), against the plain checkpoint's 4/4/4, .811. The fixed-α controls
   on the plain checkpoint reproduce the previous loop to 0.001 (rows 10 steps .752, layers 5/10 .715/.727). Layers-only
   run started.
+- **2026-10-23 00:09. Layers-only Meta-SGD (`msgd2_varc_lh`) done.** Meta-training 13.5 min, query loss 2.0 -> 1.30 (lower
+  than rows-only's 1.60: the inner step on 530k layer weights fits the demos better than one row). Learned α stayed near
+  0.01 (geometric mean 0.0112, max 0.039, 0.5% of elements above 0.02). Learned loop 1/5/10 steps: 0/0/0, tok
+  .682/.705/.712 (previous first-order run .731/.722/.722); support loss after 10 steps median 1.20 per row. Ordinary
+  ttt_mini from this checkpoint: 1/1/1, tok 0.758 (previous 1/1/1, .748). All-parameters run started.
