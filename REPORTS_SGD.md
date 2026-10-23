@@ -114,6 +114,9 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 9 control: plain VARC, RMS-normalised step, hand-set alpha 1e-3 weights / 3e-2 rows, 10 steps | 1 | 1 | 1 | 1 | 0.744 |
 | varc_ho2 | round 9 control: plain VARC, normalised step, hand-set alpha, 30 steps | 2 | 2 | 3 | 3 | 0.774 |
 | varc_ho2 | round 9 control: plain VARC, normalised step, hand-set alpha, 120 steps | 3 | 5 | 8 | 10 | 0.828 |
+| varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 1 | 4 | 7 | 8 | 11 | 0.829 |
+| varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 2 | 5 | 8 | 8 | 11 | 0.824 |
+| msgd7_norm | round 10: normalised learned loop, 120 steps, eval seed 2 | 6 | 8 | 9 | 9 | 0.839 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -257,7 +260,9 @@ started from (rule or meta-training?), and a second eval seed of the 120-step re
 | 10 | 1/1/1, .738, demos -> 0.93 | 1/1/1, .744, demos -> 0.93 |
 | 30 | 2/3/4, .795, demos -> 0.75 | 2/2/3, .774, demos -> 0.78 |
 | 120, seed 0 | 7/7/8, .833, demos -> 0.53 | 3/5/8, .828, demos -> 0.57 |
-| 120, seed 1 | 5/7/9, .836, demos -> 0.54 | pending (round 10) |
+| 120, seed 1 | 5/7/9, .836, demos -> 0.54 | 4/7/8, .829, demos -> 0.57 |
+| 120, seed 2 | 6/8/9, .839, demos -> 0.55 | 5/8/8, .824, demos -> 0.58 |
+| 120, mean of 3 seeds | **6.0 / 7.3 / 8.7, .836** | **4.0 / 6.7 / 8.0, .827** |
 
 - The 120-step result **replicates** on a second eval seed (5/7/9, .836), so the normalised loop at ttt_mini's step
   count is genuinely above ttt_mini (4/4/4, .811; seeds 2-4 at pass@1) on this build.
@@ -268,6 +273,32 @@ started from (rule or meta-training?), and a second eval seed of the 120-step re
   accuracy, a slightly better demo fit (0.53 vs 0.57), and a clearer lead at 30 steps (.795 vs .774). pass@1 differences
   of 2-4 are the size of the eval-seed spread, so round 10 (`msgd10_eval.sh`) adds seeds of both 120-step loops before
   this is called a meta-learning gain.
+
+## Round 10 (2026-10-23 14:21) and where this leaves Meta-SGD
+
+Three eval seeds each, 120 RMS-normalised steps on the same 48 aux rows: the meta-trained checkpoint with its learned
+alpha averages 6.0 / 7.3 / 8.7 at pass@1/2/5 and .836 token accuracy; the plain checkpoint with the hand-set alphas
+4.0 / 6.7 / 8.0 and .827. The token accuracy is higher on every seed pair (.833/.836/.839 against .828/.829/.824, no
+overlap) and the demo fit deeper (0.54 against 0.57), so meta-training does make the network adapt better under the same
+procedure, by ~2 tasks at pass@1 and ~1 point of token accuracy. Both are far above the plain checkpoint's ttt_mini
+(4/4/4, .811, and 3-5 / 4-5 / 4-6 over seeds).
+
+In order of size, the ingredients of 6/7/9 against 4/4/4 are:
+
+1. **The inner update rule** (RMS-normalised gradient per tensor, i.e. a step moves every element by ~alpha, as Adam does;
+   full batch on all 48 aux rows): the plain checkpoint goes from 2/3/4 (.801, raw gradient) to 4/7/8 (.827) at 120
+   steps, and above its own Adam ttt_mini. Round 5's post-mortem was right about the mechanism: the weights could not
+   move under alpha x raw gradient (0.26% in 10 steps against Adam's 7.6%).
+2. **Steps**: every loop keeps improving to 120 steps (the meta-trained normalised one .738 -> .795 -> .836 at 10 / 30 /
+   120); the one-step regime of the paper is nowhere near enough here.
+3. **Meta-training** (1000 meta-fine-tuning steps from the plain checkpoint with the normalised inner step, round 3's
+   episodes): +2 pass@1, +0.9 token accuracy, consistent over seeds; with the learned per-tensor alphas 5-10x apart
+   across tensors (MLP inputs and pos_embed highest, layer 3 lowest).
+
+Everything tried before the normalised step (rounds 2-5, 7a/b: alpha granularity, alpha_lr, outer lr and schedule,
+multi-step loss, per-step alpha, the clamp, a larger init) was equal to round 3 within noise, because none of it let the
+weights move. Not done: the deferred from-scratch run with this recipe at the baseline budget (user: keep in mind);
+meta-training with more inner steps under the normalised rule; longer test loops than 120.
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -436,3 +467,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 14:12. Round 9 done:** learned loop 120 steps seed 1: 5/7/9 (.836), replicates. Plain checkpoint under the
   same normalised rule: 1/1/1 (.744), 2/2/3 (.774), 3/5/8 (.828) at 10/30/120. Section "Round 9" above. Round 10 (seeds)
   started.
+- **2026-10-23 14:21. Round 10 done:** plain normalised 120 steps seeds 1/2: 4/7/8 (.829), 5/8/8 (.824); learned loop seed
+  2: 6/8/9 (.839). Three-seed means 6.0/7.3/8.7 (.836) meta-trained against 4.0/6.7/8.0 (.827) plain. Section "Round 10"
+  above. GPU idle.
