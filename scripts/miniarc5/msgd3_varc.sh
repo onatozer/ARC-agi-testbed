@@ -3,11 +3,10 @@
 # own batch size and a tenth of its lr; the episode is the task with 16 augmented copies (support = all their demos, query =
 # all their test pairs, as TTT adapts); embedding rows start fresh from the table mean; alpha initialised per group (rows 1,
 # weights 0.01) with a 10x larger lr. Control: the plain checkpoint continued with the same recipe and the ordinary step.
-# Waits for the round-2 queue (msgd2_varc.sh) to leave the GPU. One job at a time.
+# One job at a time: chain the queues in one shell instead of pgrep waits (a wrapper whose command line names the script matches itself).
 set -euo pipefail
 source "$(dirname "$0")/msgd_common.sh"
 
-while pgrep -f "scripts/miniarc5/msgd2_varc.sh" > /dev/null; do sleep 60; done
 
 PLAIN=$(ckpt_of varc_ho2)
 # The baseline's batch size (256 holds ~3.5 tasks of 16 copies; a pass has 16x the rows so the MiniARC cap no longer binds),

@@ -200,3 +200,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 05:00. Round 4a done (23 min).** Rows and section above. No adaptation 0/0/0 (.641); seeds 1/2 3/4/6 (.812)
   and 2/5/6 (.805); views 4/4/6 (.808); runs 4/4/6 (.811); 40 epochs 5/5/5 (.831); 32 aux 4/6/7 (.823). Round 4b queued
   behind the round-3 re-run.
+- **2026-10-23 10:45. GPU idle 05:00-10:45 by mistake.** The round-3 re-run wrapper waited on `pgrep -f msgd4_varc.sh`,
+  which matched the wrapper's own command line, and round 4b waited on that wrapper. Both stopped; the pgrep waits are
+  removed from the queue scripts and the three jobs (tests, round 3, round 4b) now run chained in one shell.
