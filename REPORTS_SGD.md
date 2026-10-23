@@ -75,6 +75,11 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd2_varc_all | Meta-SGD everything, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.717 |
 | msgd2_varc_all | Meta-SGD everything, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.721 |
 | msgd2_varc_all | Meta-SGD everything, then ttt_mini | 1 | 1 | 1 | 1 | 0.758 |
+| varc_ho2_cont | plain VARC continued 2000 steps (batch 16), then ttt_mini | 1 | 1 | 1 | 1 | 0.750 |
+| msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, 2000 meta-steps, then ttt_mini | 1 | 1 | 1 | 1 | 0.747 |
+| msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.667 |
+| msgd2_varc_all_full | Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini | pending | pending | pending | pending | pending |
+| msgd2_varc_all_full | Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps | pending | pending | pending | pending | pending |
 
 Previous loop, for reference (first-order, leave-one-out query, same baseline and eval): Meta-SGD rows s1/s5/s10 0/0/0
 (tok .680/.730/.729), then ttt_mini 1/2/2; Meta-SGD layers s1/s5/s10 0/0/0, then ttt_mini 1/1/1.
@@ -94,11 +99,13 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
    meta-trained checkpoints are worse models of new tasks' demos before any adaptation.
 4. **Meta-trained weights are a worse start for ordinary test-time training**: 1/1/1 (tok .754-.758) from each of the three,
    against 4/4/4 (.811) from the plain checkpoint. This is also the previous loop's finding.
-5. **Confound, carried over from the previous loop.** The meta-trained checkpoints saw far less data than the baseline:
-   2000 meta-steps at batch 16 (one query row per task, ~3-5 tasks per step) against 4000 steps at batch 128. Point 3 is
-   consistent with under-training as much as with meta-learning failing. The clean test is to start Meta-SGD from the plain
-   checkpoint (`load_checkpoint=<varc_ho2>`, ~13 min) and compare against the plain checkpoint continued for the same
-   steps. Not run.
+5. **The "worse start" is the continuation recipe, not the meta step.** Follow-up (user): Meta-SGD for 2000 meta-steps
+   *from* the plain checkpoint, against the plain checkpoint continued for 2000 ordinary steps at the same batch 16 and lr
+   1e-3. Both land at 1/1/1 after ttt_mini (tok .747 vs .750), down from the plain checkpoint's 4/4/4 (.811), and the
+   meta-trained one's support loss on a new task before adaptation is 1.35, the same as the from-scratch meta runs'. So 2000
+   steps at batch 16 / lr 1e-3 degrade the checkpoint whichever step is used, and the meta step is neutral against ordinary
+   training at that recipe. The learned loop from it: 0/0/0, tok .667. The remaining question is Meta-SGD at the baseline's
+   own recipe (4000 steps x batch 128, ~30 tasks per meta-step), running.
 6. **TRM not run.** Its meta-step unrolls each row's ACT trajectory (up to 16 supervision steps) inside both losses, about
    85 s per 32-row batch on this GPU, i.e. days for the previous loop's recipe; with VARC null across the board there is no
    signal that would justify it. The user allowed skipping it.
@@ -125,3 +132,7 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
   0.033; the embedding row 0.0116, max 0.014, so the row never got the step of 1 the rows-only run was given). Learned loop
   1/5/10: 0/0/0, tok .688/.717/.721; support loss after 10 steps median 1.16 per row. Ordinary ttt_mini from it: 1/1/1,
   tok .758. Conclusions written above.
+- **2026-10-23 00:55. Continued-run pair done.** `msgd2_varc_all_ft` (Meta-SGD everything from the plain checkpoint,
+  2000 meta-steps at batch 16, 14.5 min; α stayed at 0.01, max 0.022): ttt_mini 1/1/1 tok .747, learned loop 10 steps
+  0/0/0 tok .667, support loss 1.35 -> 1.24. Control `varc_ho2_cont` (plain, continued 2000 steps at batch 16, 2 min):
+  ttt_mini 1/1/1 tok .750. Conclusion 5 rewritten. `msgd2_varc_all_full` (from scratch, 4000 x batch 128) started.
