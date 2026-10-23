@@ -213,7 +213,7 @@ def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count:
             print (f"[Puzzle {name}] augmentation not full, only {len(group)}")
 
     # Append
-    for dest in dests:
+    for dest in sorted(dests):  # stable set order in the split metadata
         # Convert the examples
         dest_split, dest_set = dest
         # without test_aug the test split gets only the original puzzle (group[0]); its augmented copies stay in training

@@ -28,9 +28,12 @@ def test_heldout_tasks_leave_training_and_form_the_test_split(tmp_path):
     train_ids = {copy.id.split("|")[0] for group in results["train"]["all"] for copy in group}
     test_ids = {copy.id.split("|")[0] for group in results["test"]["all"] for copy in group}
     assert heldout[0] not in train_ids and test_ids == set(heldout)
-    # In-train tasks contribute their test pair to training too (3 examples per copy); the held-out task only its test pair
-    assert all(len(copy.examples) == 3 for group in results["train"]["all"] for copy in group)
+    # In-train tasks contribute their test pair to training too, as the train split's "validation" set, under the same
+    # puzzle ids (augmented copies included) as their demos in "all"; the held-out task contributes only its test pair
+    assert all(len(copy.examples) == 2 for group in results["train"]["all"] for copy in group)
+    assert all(len(copy.examples) == 1 for group in results["train"]["validation"] for copy in group)
     assert all(len(copy.examples) == 1 for group in results["test"]["all"] for copy in group)
+    assert [[c.id for c in g] for g in results["train"]["validation"]] == [[c.id for c in g] for g in results["train"]["all"]]
     assert len(results["train"]["all"]) == 3 and len(results["test"]["all"]) == 1
 
 
