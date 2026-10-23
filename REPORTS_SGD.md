@@ -110,6 +110,10 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd7_norm | round 7: normalised step; then ttt_mini | 3 | 3 | 3 | 3 | 0.806 |
 | msgd7_norm | round 8: normalised learned loop, 30 steps | 2 | 3 | 4 | 6 | 0.795 |
 | msgd7_norm | round 8: normalised learned loop, 120 steps (ttt_mini's step count) | 7 | 7 | 8 | 9 | 0.833 |
+| msgd7_norm | round 9: normalised learned loop, 120 steps, eval seed 1 | 5 | 7 | 9 | 10 | 0.836 |
+| varc_ho2 | round 9 control: plain VARC, RMS-normalised step, hand-set alpha 1e-3 weights / 3e-2 rows, 10 steps | 1 | 1 | 1 | 1 | 0.744 |
+| varc_ho2 | round 9 control: plain VARC, normalised step, hand-set alpha, 30 steps | 2 | 2 | 3 | 3 | 0.774 |
+| varc_ho2 | round 9 control: plain VARC, normalised step, hand-set alpha, 120 steps | 3 | 5 | 8 | 10 | 0.828 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -245,6 +249,25 @@ with the token accuracy .833 above anything measured (the 40-epoch ttt_mini reac
 0.53, where the raw-gradient loops stop at 0.72-0.78 and ttt_mini's lm_loss after training is ~0.46. Pending controls
 (round 9, `msgd9_eval.sh`): the plain checkpoint under the same normalised rule with the hand-set alphas the meta-run
 started from (rule or meta-training?), and a second eval seed of the 120-step result.
+
+## Round 9 (2026-10-23 14:12): the gain is mostly the update rule
+
+| steps, RMS-normalised rule, same 48 aux rows | meta-trained (round 7), learned alpha | plain checkpoint, hand-set alpha (1e-3 / 3e-2) |
+|---|---|---|
+| 10 | 1/1/1, .738, demos -> 0.93 | 1/1/1, .744, demos -> 0.93 |
+| 30 | 2/3/4, .795, demos -> 0.75 | 2/2/3, .774, demos -> 0.78 |
+| 120, seed 0 | 7/7/8, .833, demos -> 0.53 | 3/5/8, .828, demos -> 0.57 |
+| 120, seed 1 | 5/7/9, .836, demos -> 0.54 | pending (round 10) |
+
+- The 120-step result **replicates** on a second eval seed (5/7/9, .836), so the normalised loop at ttt_mini's step
+  count is genuinely above ttt_mini (4/4/4, .811; seeds 2-4 at pass@1) on this build.
+- But the plain checkpoint under the **same rule with the hand-set alphas** reaches 3/5/8 (.828): the RMS-normalised SGD
+  step itself, full-batch on the 48 aux rows for 120 steps, beats ttt_mini's Adam recipe from the plain checkpoint. That
+  is a test-time-training finding, not a meta-learning one.
+- What meta-training adds on top is small: +2 to +4 at pass@1, +2 at pass@2, ~0 at pass@5, +.005 to +.008 token
+  accuracy, a slightly better demo fit (0.53 vs 0.57), and a clearer lead at 30 steps (.795 vs .774). pass@1 differences
+  of 2-4 are the size of the eval-seed spread, so round 10 (`msgd10_eval.sh`) adds seeds of both 120-step loops before
+  this is called a meta-learning gain.
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -410,3 +433,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   3/3/3 (0.806). Section "Round 7" above. Round 8 (30/120 steps of this loop) started.
 - **2026-10-23 14:05. Round 8 done:** normalised learned loop 30 steps 2/3/4 (.795), 120 steps 7/7/8 (.833), demos 1.53
   -> 0.53. Section "Round 8" above. Round 9 controls started.
+- **2026-10-23 14:12. Round 9 done:** learned loop 120 steps seed 1: 5/7/9 (.836), replicates. Plain checkpoint under the
+  same normalised rule: 1/1/1 (.744), 2/2/3 (.774), 3/5/8 (.828) at 10/30/120. Section "Round 9" above. Round 10 (seeds)
+  started.
