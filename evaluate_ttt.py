@@ -123,6 +123,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
     config = PretrainConfig.model_validate(config.model_dump())  # nested overrides (+train_overrides.meta_sgd.inner_lr=...) arrive as dicts
     if cfg.meta_sgd_steps == 0:
         config.meta_sgd.enabled = False  # the ordinary TTT loop, also from a Meta-SGD checkpoint (its alpha is simply not loaded)
+    config.meta_sgd.copies_per_group = 1  # the one-task build has one puzzle per group; the epochs count rows as usual
     config.dataset.data_path = str(data_dir)
     config.epochs = cfg.epochs
     config.max_steps = None

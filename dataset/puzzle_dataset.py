@@ -24,31 +24,40 @@ from models.losses import IGNORE_LABEL_ID
 from dataset.common import PuzzleDatasetMetadata
 
 
-def _sample_batch(rng: np.random.Generator, group_order: np.ndarray, puzzle_indices: np.ndarray, group_indices: np.ndarray, start_index: int, global_batch_size: int):
+def _sample_batch(rng: np.random.Generator, group_order: np.ndarray, puzzle_indices: np.ndarray, group_indices: np.ndarray, start_index: int, global_batch_size: int, copies_per_group: int = 1):
     # Pack examples into a full batch
     batch = []
     batch_puzzle_indices = []
+    batch_group_indices = []
     current_size = 0
 
     while (start_index < group_order.size) and (current_size < global_batch_size):
-        # Pick a group and a puzzle from that group
+        # Pick a group and a puzzle from that group (copies_per_group > 1: that many distinct puzzles of it, packed together)
         group_id = group_order[start_index]
-        puzzle_id = rng.integers(group_indices[group_id], group_indices[group_id + 1])
+        lo, hi = group_indices[group_id], group_indices[group_id + 1]
+        if copies_per_group == 1:
+            puzzle_ids = [rng.integers(lo, hi)]
+        else:
+            puzzle_ids = lo + rng.choice(hi - lo, min(copies_per_group, hi - lo), replace=False)
         start_index += 1
 
-        # Get range of the puzzle
-        puzzle_start = puzzle_indices[puzzle_id]
-        puzzle_size = int(puzzle_indices[puzzle_id + 1] - puzzle_start)
+        for puzzle_id in puzzle_ids:
+            if current_size >= global_batch_size:
+                break
+            # Get range of the puzzle
+            puzzle_start = puzzle_indices[puzzle_id]
+            puzzle_size = int(puzzle_indices[puzzle_id + 1] - puzzle_start)
 
-        append_size = min(puzzle_size, global_batch_size - current_size)
+            append_size = min(puzzle_size, global_batch_size - current_size)
 
-        # Put into batch
-        batch_puzzle_indices.append(np.full(append_size, puzzle_id, dtype=np.int32))
-        batch.append(puzzle_start + rng.choice(puzzle_size, append_size, replace=False))
+            # Put into batch
+            batch_puzzle_indices.append(np.full(append_size, puzzle_id, dtype=np.int32))
+            batch_group_indices.append(np.full(append_size, group_id, dtype=np.int32))
+            batch.append(puzzle_start + rng.choice(puzzle_size, append_size, replace=False))
 
-        current_size += append_size
+            current_size += append_size
 
-    return start_index, np.concatenate(batch), np.concatenate(batch_puzzle_indices)
+    return start_index, np.concatenate(batch), np.concatenate(batch_puzzle_indices), np.concatenate(batch_group_indices)
 
 
 class PuzzleDatasetConfig(pydantic.BaseModel):
@@ -58,6 +67,7 @@ class PuzzleDatasetConfig(pydantic.BaseModel):
     test_set_mode: bool
 
     epochs_per_iter: int  # Batch X epochs in an iteration to reduce overhead.
+    copies_per_group: int = 1  # training sampler: puzzles drawn per group per pass; > 1 packs them together and adds batch["group_ids"] (Meta-SGD episodes)
 
     rank: int
     num_replicas: int
@@ -357,13 +367,14 @@ class PuzzleDataset(IterableDataset):
                         break
 
                 while start_index < group_order.size:
-                    start_index, batch_indices, batch_puzzle_indices = _sample_batch(
+                    start_index, batch_indices, batch_puzzle_indices, batch_group_indices = _sample_batch(
                         rng,
                         group_order=group_order,
                         puzzle_indices=dataset["puzzle_indices"],
                         group_indices=dataset["group_indices"],
                         start_index=start_index,
                         global_batch_size=self.config.global_batch_size,
+                        copies_per_group=self.config.copies_per_group,
                     )
 
                     # Persist state before yielding
@@ -395,6 +406,8 @@ class PuzzleDataset(IterableDataset):
                         batch["object_ids"] = dataset["object_ids"][batch_indices]
                     if "validation" in dataset:
                         batch["validation"] = dataset["validation"][batch_indices]
+                    if self.config.copies_per_group > 1:
+                        batch["group_ids"] = batch_group_indices[self.config.rank * self.local_batch_size : (self.config.rank + 1) * self.local_batch_size]
                     batch = self._collate_batch(batch)
 
                     yield set_name, batch, global_effective_batch_size

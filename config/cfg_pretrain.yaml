@@ -56,3 +56,6 @@ meta_sgd:
   alpha_lr: 1e-3 # Adam lr for alpha (log-space), on the main lr schedule
   alpha_range: 5.0 # alpha stays within inner_lr * exp(+-alpha_range)
   adapt_substrings: [] # parameter-name substrings the inner step adapts; [] = every trainable parameter (+ the puzzle-embedding row)
+  inner_lr_rows: null # initial alpha for the puzzle-embedding rows (null: inner_lr)
+  copies_per_group: 1 # augmented copies of a task per batch; > 1 makes the task (all its copies) the episode, as TTT adapts
+  fresh_rows: false # episode embedding rows start from the table mean, as a held-out task's do at test time

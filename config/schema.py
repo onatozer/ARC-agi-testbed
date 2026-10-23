@@ -49,11 +49,14 @@ class MetaSGDConfig(BaseModel):
     alpha_lr: float = 1e-3  # Adam lr for alpha (log-space), on the main lr schedule
     alpha_range: float = 5.0  # alpha is clamped to inner_lr * exp(+-alpha_range)
     adapt_substrings: List[str] = []  # parameter-name substrings the inner step adapts; [] = every trainable parameter (+ the puzzle-embedding row)
+    inner_lr_rows: Optional[float] = None  # initial alpha for the puzzle-embedding rows (None: inner_lr); rows want ~100x the weights' step
+    copies_per_group: int = 1  # augmented copies of a task per batch; > 1 makes the task (all its copies in the batch) the episode, as TTT adapts
+    fresh_rows: bool = False  # the episode's embedding rows start from the table mean, as a held-out task's do at test time; the table is not trained
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.inner_lr <= 0 or self.alpha_range < 0:
-            raise ValueError("meta_sgd: inner_lr > 0 and alpha_range >= 0 are required.")
+        if self.inner_lr <= 0 or self.alpha_range < 0 or self.copies_per_group < 1 or (self.inner_lr_rows is not None and self.inner_lr_rows <= 0):
+            raise ValueError("meta_sgd: inner_lr > 0 (inner_lr_rows too), alpha_range >= 0 and copies_per_group >= 1 are required.")
         return self
 
 

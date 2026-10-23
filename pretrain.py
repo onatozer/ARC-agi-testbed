@@ -226,12 +226,14 @@ class MetaSGD(nn.Module):
     initialised at inner_lr. rho lives on the loss head (checkpointed, EMA'd and all-reduced like any parameter) and is
     trained by its own Adam through the second-order outer loss (meta_sgd_batch)."""
 
-    def __init__(self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float) -> None:
+    def __init__(self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float, alpha0_rows: Optional[float] = None) -> None:
         super().__init__()
         # The puzzle-embedding table gets one step size per column, shared by its rows: a test task's rows are new
-        shape = lambda n, p: (1, p.shape[1]) if n.endswith("puzzle_emb.weights") else p.shape
-        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), math.log(alpha0), dtype=torch.float32, device=p.device)) for n, p in named})
-        self.lo, self.hi = math.log(alpha0) - alpha_range, math.log(alpha0) + alpha_range
+        is_table = lambda n: n.endswith("puzzle_emb.weights")
+        shape = lambda n, p: (1, p.shape[1]) if is_table(n) else p.shape
+        init = lambda n: math.log(alpha0_rows if is_table(n) and alpha0_rows is not None else alpha0)
+        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), init(n), dtype=torch.float32, device=p.device)) for n, p in named})
+        self.bounds = {self.key(n): (init(n) - alpha_range, init(n) + alpha_range) for n, _ in named}
 
     @staticmethod
     def key(name: str) -> str:
@@ -242,8 +244,8 @@ class MetaSGD(nn.Module):
 
     @torch.no_grad()
     def clamp_(self) -> None:
-        for rho in self.rho.values():
-            rho.clamp_(self.lo, self.hi)
+        for key, rho in self.rho.items():
+            rho.clamp_(*self.bounds[key])
 
     def summary(self) -> Tuple[float, float]:
         """(geometric mean, max) of the step sizes over every adapted element."""
@@ -304,7 +306,7 @@ def create_model(
         if config.meta_sgd.enabled:
             if "trm_root" in config.arch.name:
                 raise ValueError("meta_sgd needs a double-backward-safe model; TRMRoot's custom autograd is not.")
-            model.meta_sgd = MetaSGD(_meta_sgd_targets(model, config.meta_sgd.adapt_substrings), config.meta_sgd.inner_lr, config.meta_sgd.alpha_range)
+            model.meta_sgd = MetaSGD(_meta_sgd_targets(model, config.meta_sgd.adapt_substrings), config.meta_sgd.inner_lr, config.meta_sgd.alpha_range, config.meta_sgd.inner_lr_rows)
         
         # if "DISABLE_COMPILE" not in os.environ:
         #     model = torch.compile(model)  # type: ignore
@@ -411,7 +413,7 @@ def init_train_state(
     """
 
     total_samples = int(
-        train_metadata.total_groups * train_metadata.mean_puzzle_examples
+        train_metadata.total_groups * train_metadata.mean_puzzle_examples * config.meta_sgd.copies_per_group  # a pass draws that many puzzles per group
     )
 
     steps_per_epoch = max(
@@ -692,21 +694,23 @@ def _step_optimizers_and_log(
 
 
 def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
-    """One (puzzle id, support rows, query rows) per puzzle in the batch: query = the rows flagged validation (the task's
-    former test pair, see build_miniarc_dataset heldout_tasks), support = its other rows. Padded rows (blank id 0) and
-    puzzles missing either kind (the one _sample_batch truncates at the batch tail) are skipped."""
+    """One (key, support rows, query rows) per task in the batch: query = the rows flagged validation (the task's former
+    test pair, see build_miniarc_dataset heldout_tasks), support = its other rows. A task is one puzzle, or, when the sampler
+    packed several augmented copies of it (meta_sgd.copies_per_group > 1, batch["group_ids"]), all of them together. Padded
+    rows (blank id 0) and tasks missing either kind (the one _sample_batch truncates at the batch tail) are skipped."""
     if "validation" not in batch:
         raise ValueError("meta_sgd needs batch['validation']: build the dataset with heldout_tasks > 0 (dataset/build_miniarc_dataset.py).")
     ids, is_query = batch["puzzle_identifiers"], batch["validation"].bool()
+    keys = batch["group_ids"] if "group_ids" in batch else ids
     episodes = []
-    for pid in torch.unique(ids).tolist():
-        rows = ids == pid
+    for key in torch.unique(keys[ids != 0]).tolist():
+        rows = (keys == key) & (ids != 0)
         support, query = rows & ~is_query, rows & is_query
-        if pid == 0 or not support.any() or not query.any():
+        if not support.any() or not query.any():
             continue
-        episodes.append((pid, {k: v[support] for k, v in batch.items()}, {k: v[query] for k, v in batch.items()}))
+        episodes.append((key, {k: v[support] for k, v in batch.items()}, {k: v[query] for k, v in batch.items()}))
     if not episodes:
-        raise RuntimeError(f"meta_sgd: no puzzle in the batch has both demo and validation rows ({torch.unique(ids).numel()} ids, {int(is_query.sum())} validation rows).")
+        raise RuntimeError(f"meta_sgd: no task in the batch has both demo and validation rows ({torch.unique(ids).numel()} ids, {int(is_query.sum())} validation rows).")
     return episodes
 
 
@@ -754,21 +758,28 @@ def _episode_overrides(
 
 
 def _task_outer_backward(
-    model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str], pid: int,
-    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """Meta-SGD on one puzzle: theta1 = theta - alpha * grad of the per-row support loss (graph kept), then the query loss
-    at theta1, times loss_scale, is backpropagated into theta (second order, through theta1), rho and the puzzle-embedding
-    row. Returns (support loss per row, query loss per row, the embedding row's gradient or None)."""
-    named, overrides, support, _ = _episode_overrides(model, targets, emb_name, support)
+    model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
+    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, fresh_rows: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Meta-SGD on one task: theta1 = theta - alpha * grad of the per-row support loss (graph kept), then the query loss at
+    theta1, times loss_scale, is backpropagated into theta (second order, through theta1), rho and the task's embedding
+    rows. fresh_rows: the rows start from the table mean, as a held-out task's do at test time. Returns (support loss per
+    row, query loss per row, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings."""
+    named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support)
     if emb_name is not None:
-        query = {**query, "puzzle_identifiers": torch.zeros_like(query["puzzle_identifiers"])}  # the one row, as in support
+        if fresh_rows:
+            table = model.get_buffer(emb_name)
+            rows = table.mean(0, keepdim=True).expand(ids.numel(), -1).clone().requires_grad_()
+            overrides[emb_name] = rows
+            named = [(n, rows if n == emb_name else p) for n, p in named]
+        query = {**query, "puzzle_identifiers": torch.searchsorted(ids, query["puzzle_identifiers"]).to(query["puzzle_identifiers"].dtype)}
 
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
         loss_s, theta1 = _adapt(model, named, overrides, support)
         loss_q = _supervised_loss(model, theta1, query)
         (loss_q * loss_scale).backward()
-    return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], None if emb_name is None else overrides[emb_name].grad
+    row_grad = None if emb_name is None else overrides[emb_name].grad
+    return loss_s.detach(), loss_q.detach() / query["inputs"].shape[0], ids, row_grad
 
 
 def meta_sgd_batch(
@@ -804,13 +815,14 @@ def meta_sgd_batch(
     flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
     support_losses, query_losses = [], []
     with flop_counter:
-        for pid, support, query in episodes:
-            loss_s, loss_q, row_grad = _task_outer_backward(model, targets, emb_name, pid, support, query, 1.0 / n_query)
+        for _key, support, query in episodes:
+            loss_s, loss_q, ids, row_grad = _task_outer_backward(model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows)
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if row_grad is not None:
-                emb_grad[batch["puzzle_identifiers"] == pid] = row_grad
-    if emb_name is not None:
+                for pid, g in zip(ids.tolist(), row_grad):
+                    emb_grad[batch["puzzle_identifiers"] == pid] = g
+    if emb_name is not None and not cfg.fresh_rows:  # fresh rows never read the table, so it is not trained
         # Hand the table's gradient to its SignSGD optimizer the way the ordinary forward does: one row per batch row, plus the ids
         emb = model.get_submodule(emb_name[: -len(".weights")])
         with torch.no_grad():
@@ -896,6 +908,7 @@ def launch(hydra_config: DictConfig):
         global_batch_size=config.global_batch_size,
         rank=RANK,
         world_size=WORLD_SIZE,
+        copies_per_group=config.meta_sgd.copies_per_group,
     )
     try:
         eval_loader, eval_metadata = create_dataloader(

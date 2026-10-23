@@ -1,7 +1,12 @@
 """Second-order Meta-SGD (arXiv 1707.09835) as pretrain.py's training step (config.meta_sgd.enabled): every puzzle in the
 batch is a task, its validation rows (former test pair) the query set, its other rows the support set."""
+import pathlib
+import sys
+
 import pytest
 import torch
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from hydra import compose, initialize
 from omegaconf import OmegaConf
 
@@ -83,8 +88,9 @@ def test_outer_backward_reaches_theta_rho_and_the_embedding_row_with_second_orde
     config, train_state, batch = _state()
     model = train_state.model
     named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
-    loss_s, loss_q, row_grad = _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, 1, support, query, torch.tensor(1.0, device=emb_rows.device))
-    assert torch.isfinite(loss_s) and torch.isfinite(loss_q) and row_grad.shape == (1, 32) and row_grad.abs().sum() > 0
+    rows, val = batch["puzzle_identifiers"] == 1, batch["validation"].bool()  # the raw rows: the step remaps the ids itself
+    loss_s, loss_q, ids, row_grad = _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, {k: v[rows & ~val] for k, v in batch.items()}, {k: v[rows & val] for k, v in batch.items()}, torch.tensor(1.0, device=emb_rows.device))
+    assert torch.isfinite(loss_s) and torch.isfinite(loss_q) and ids.tolist() == [1] and row_grad.shape == (1, 32) and row_grad.abs().sum() > 0
     for key, rho in model.meta_sgd.rho.items():
         assert rho.grad is not None and torch.isfinite(rho.grad).all() and rho.grad.abs().sum() > 0, key
     assert model.meta_sgd.rho[model.meta_sgd.key(emb_name)].grad.shape == (1, 32)
@@ -116,7 +122,7 @@ def test_meta_sgd_batch_updates_only_through_the_optimizers():
     changed = (table != train_state.model.model.puzzle_emb.weights).any(1).nonzero().flatten().tolist()
     assert changed == [1, 2, 3]  # only the batch's puzzles' rows
     meta = train_state.model.meta_sgd
-    assert all((meta.lo <= r).all() and (r <= meta.hi).all() for r in meta.rho.values())
+    assert all((meta.bounds[k][0] <= r).all() and (r <= meta.bounds[k][1]).all() for k, r in meta.rho.items())
     assert meta.summary()[0] != pytest.approx(0.1, rel=1e-6)  # alpha moved
 
 
@@ -165,6 +171,57 @@ def test_meta_sgd_adapt_writes_the_inner_steps_into_the_weights_and_the_support_
     assert (table != model.model.puzzle_emb.weights).any(1).nonzero().flatten().tolist() == [1, 2, 3]
     assert all(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
     assert all(torch.equal(r, model.meta_sgd.rho[k]) for k, r in [(k, r.detach().clone()) for k, r in model.meta_sgd.rho.items()])  # alpha is not trained at test time
+
+
+def test_group_episodes_pool_a_tasks_copies_and_fresh_rows_leave_the_table_alone():
+    """copies_per_group > 1: the sampler packs several copies of a task and tags rows with group_ids; the episode is the task."""
+    import json
+    from dataset.build_arc_dataset import convert_dataset
+    from dataset.build_miniarc_dataset import MiniARCDataProcessConfig, load_puzzles_miniarc
+    from dataset.puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig
+    from test_build_miniarc_heldout import _write_tasks
+
+    import tempfile
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    _write_tasks(tmp)
+    out = tmp / "out"
+    convert_dataset(MiniARCDataProcessConfig(input_dir=str(tmp), output_dir=str(out), num_aug=3, grid_size=2, heldout_tasks=1, seed=0), load_puzzles=load_puzzles_miniarc)
+    # 3 train tasks x 4 copies x 3 rows = 36 rows; two copies of each task per batch -> 18 rows per pass
+    cfg = PuzzleDatasetConfig(seed=0, dataset_path=str(out), global_batch_size=18, test_set_mode=False, epochs_per_iter=1, rank=0, num_replicas=1, copies_per_group=2)
+    _, batch, _ = next(iter(PuzzleDataset(cfg, split="train")))
+    assert "group_ids" in batch and batch["group_ids"].shape == (18,)
+    for g in torch.unique(batch["group_ids"]).tolist():
+        assert torch.unique(batch["puzzle_identifiers"][batch["group_ids"] == g]).numel() == 2
+    episodes = _episodes_from_batch(batch)
+    assert len(episodes) == 3 and all(s["inputs"].shape[0] == 4 and q["inputs"].shape[0] == 2 for _, s, q in episodes)  # 2 copies x (2 demos, 1 test pair)
+    assert all(torch.unique(s["puzzle_identifiers"]).numel() == 2 for _, s, _ in episodes)
+
+    # fresh_rows: the rows are a leaf at the table mean, the query ids follow the support's remap, and the table is untouched
+    config, train_state, _ = _state("meta_sgd.fresh_rows=true", "global_batch_size=6", "lr=1e-3", "puzzle_emb_lr=1e-2", "meta_sgd.alpha_lr=1e-2")
+    model = train_state.model
+    table = model.model.puzzle_emb.weights.detach().clone()
+    _, s, q = episodes[0]
+    s = {k: v.to(table.device) for k, v in s.items() if k != "group_ids"}; q = {k: v.to(table.device) for k, v in q.items() if k != "group_ids"}
+    # the tiny test model has 4 identifiers; map the build's ids into range
+    remap = {pid: i + 1 for i, pid in enumerate(torch.unique(s["puzzle_identifiers"]).tolist())}
+    for b in (s, q):
+        b["puzzle_identifiers"] = torch.tensor([remap[p] for p in b["puzzle_identifiers"].tolist()], dtype=torch.int32, device=table.device)
+        b["inputs"] = torch.randint(1, 6, (b["inputs"].shape[0], 16), device=table.device); b["labels"] = torch.randint(2, 6, (b["inputs"].shape[0], 16), device=table.device)
+    _, _, ids, row_grad = _task_outer_backward(model, _meta_sgd_targets(model, []), _puzzle_emb_name(model), s, q, torch.tensor(1.0, device=table.device), fresh_rows=True)
+    assert ids.tolist() == [1, 2] and row_grad.shape == (2, 32)
+    batch = {k: torch.cat([s[k], q[k]]) for k in s}; batch["validation"] = torch.tensor([0] * 4 + [1] * 2, dtype=torch.int32, device=table.device)
+    train_state.model.zero_grad()
+    meta_sgd_batch(config, train_state, batch, global_batch_size=6, rank=0, world_size=1)
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+
+
+def test_rows_get_their_own_initial_alpha():
+    config, train_state, _ = _state("meta_sgd.inner_lr=0.01", "meta_sgd.inner_lr_rows=1")
+    meta = train_state.model.meta_sgd
+    key = meta.key(_puzzle_emb_name(train_state.model))
+    assert float(meta.alpha(_puzzle_emb_name(train_state.model)).mean()) == pytest.approx(1.0) and meta.bounds[key][1] == pytest.approx(5.0)
+    other = [k for k in meta.rho if k != key][0]
+    assert float(meta.rho[other].detach().exp().mean()) == pytest.approx(0.01)
 
 
 def test_disabled_config_is_the_ordinary_setup():
