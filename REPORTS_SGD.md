@@ -208,6 +208,21 @@ demos is tiny. ttt_mini's Adam moves every weight by ~lr per step whatever the g
 sign: orders of magnitude more weight change. The clamp binding on the MLP matrices says the meta-gradient wanted to go
 further still.
 
+Measured (`scratchpad/weight_change.py`, CPU, held-out task `1_3_5_l6aejqqqc1b47pjr5g4`, the per-tensor checkpoint, the
+same 48 aux rows both ways), relative weight change ||theta' - theta|| / ||theta||:
+
+| | learned loop, 10 steps | ttt_mini, ~100-120 Adam steps |
+|---|---|---|
+| all weights | 0.26% | 7.6% |
+| layer-0 MLP input matrix (alpha 1.48, the clamp) | 0.67% | 11.9% |
+| layer-1 / layer-2 MLP input matrices (alpha 0.38 / 0.93) | 0.22% / 0.27% | 13.4% / 11.1% |
+| attention qkv matrices (alpha 0.004-0.05) | 0.04-0.17% | 5.4-7.7% |
+| pos_embed (alpha 0.87) | 7.0% | 23.8% |
+| puzzle-embedding rows | the adaptation | sign-SGD at 0.03 |
+
+The learned loop moves the weights 30x less overall and 50-100x less in the matrices; only pos_embed and a few biases
+move at all. Its demo fit on this task (0.86 -> 0.63) comes from the rows and those few tensors.
+
 So the missing piece is not alpha's learning rate or its granularity but its *range*, or the update rule: a learned step
 size on raw gradients cannot reach Adam-sized weight updates within alpha <= 1.48. Candidates (not started; user
 present): alpha_range 10 (alpha up to 220) with per-tensor alpha; a higher weights' init (0.1 or 1); or a normalised inner
