@@ -28,13 +28,26 @@ def test_heldout_tasks_leave_training_and_form_the_test_split(tmp_path):
     train_ids = {copy.id.split("|")[0] for group in results["train"]["all"] for copy in group}
     test_ids = {copy.id.split("|")[0] for group in results["test"]["all"] for copy in group}
     assert heldout[0] not in train_ids and test_ids == set(heldout)
-    # In-train tasks contribute their test pair to training too, as the train split's "validation" set, under the same
-    # puzzle ids (augmented copies included) as their demos in "all"; the held-out task contributes only its test pair
-    assert all(len(copy.examples) == 2 for group in results["train"]["all"] for copy in group)
-    assert all(len(copy.examples) == 1 for group in results["train"]["validation"] for copy in group)
-    assert all(len(copy.examples) == 1 for group in results["test"]["all"] for copy in group)
-    assert [[c.id for c in g] for g in results["train"]["validation"]] == [[c.id for c in g] for g in results["train"]["all"]]
+    # In-train tasks contribute their test pair to training too (3 examples per copy, the test pair flagged as validation);
+    # the held-out task only its test pair
+    assert all(len(copy.examples) == 3 and copy.validation == [False, False, True] for group in results["train"]["all"] for copy in group)
+    assert all(len(copy.examples) == 1 and copy.validation == [False] for group in results["test"]["all"] for copy in group)
     assert len(results["train"]["all"]) == 3 and len(results["test"]["all"]) == 1
+
+
+def test_heldout_build_writes_the_validation_flag_and_the_loader_serves_it(tmp_path):
+    from dataset.build_arc_dataset import convert_dataset
+    from dataset.puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig
+
+    _write_tasks(tmp_path)
+    out = tmp_path / "out"
+    convert_dataset(MiniARCDataProcessConfig(input_dir=str(tmp_path), output_dir=str(out), num_aug=2, grid_size=2, heldout_tasks=1, seed=0), load_puzzles=load_puzzles_miniarc)
+    flags = np.load(out / "train" / "all__validation.npy")
+    assert flags.shape == (3 * 3 * 3,) and flags.sum() == 3 * 3  # 3 tasks x 3 copies x 3 examples, one test pair per copy
+    assert not (out / "test" / "all__validation.npy").exists()
+    cfg = PuzzleDatasetConfig(seed=0, dataset_path=str(out), global_batch_size=9, test_set_mode=False, epochs_per_iter=1, rank=0, num_replicas=1)
+    _, batch, _ = next(iter(PuzzleDataset(cfg, split="train")))
+    assert batch["validation"].shape == (9,) and batch["validation"].sum() == 3
 
 
 def test_default_build_keeps_every_task_in_both_splits(tmp_path):

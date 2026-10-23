@@ -44,3 +44,14 @@ def test_example_types_missing_from_the_mapping_are_dropped():
     assert "train" not in results
     (test_copies,) = results["test"]["all"]
     assert len(test_copies) == 3 and all(len(c.examples) == 1 for c in test_copies)
+
+
+def test_validation_flags_only_test_pairs_routed_to_the_train_split():
+    np.random.seed(0)
+    results = {}
+    convert_single_arc_puzzle(results, "p", PUZZLE, 1, {"train": ("train", "all"), "test": ("train", "all")}, test_aug=True)
+    n_demos, n_tests = len(PUZZLE["train"]), len(PUZZLE["test"])
+    assert all(c.validation == [False] * n_demos + [True] * n_tests for c in results["train"]["all"][0])
+    results = {}
+    convert_single_arc_puzzle(results, "p", PUZZLE, 1, EVAL_MAPPING, test_aug=True)
+    assert not any(any(c.validation) for copies in results.values() for group in copies["all"] for c in group)

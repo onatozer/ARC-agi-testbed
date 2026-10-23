@@ -23,10 +23,9 @@ class MiniARCDataProcessConfig(BaseModel):
     border_tokens: bool = False # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405)
     object_ids: bool = False # also save a per-cell object index of each input (ViTARC OPE, arXiv 2410.06405)
     # Held-out protocol: this many tasks (drawn with heldout_seed over the sorted names) are left out of training entirely;
-    # only their test pairs form the test split, and the other tasks' test pairs join training as the train split's
-    # "validation" set (same puzzle identifiers as their demos in "all"; the loader yields the set name with every batch,
-    # so training can treat them differently). 0 = every task's demos in training, its test pairs in the test split (the
-    # TRM-on-ARC protocol)
+    # only their test pairs form the test split, and the other tasks' test pairs join their demos in training, flagged in
+    # the per-row all__validation.npy (batch["validation"]) so training can treat them differently if it wants. 0 = every
+    # task's demos in training, its test pairs in the test split (the TRM-on-ARC protocol)
     heldout_tasks: int = 0
     heldout_seed: int = 0
     test_num_aug: Optional[int] = None # cap on the augmented copies of each test pair the test split keeps (None: num_aug)
@@ -58,7 +57,7 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
             test_puzzles[name] = puzzle
             convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"test": ("test", "all")}, test_aug=config.test_aug, test_copies=config.test_num_aug)
         else:
-            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": ("train", "all"), "test": ("train", "validation")}, test_aug=config.test_aug)
+            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": ("train", "all"), "test": ("train", "all")}, test_aug=config.test_aug)
 
     if config.heldout_tasks > 0:
         os.makedirs(config.output_dir, exist_ok=True)

@@ -132,6 +132,9 @@ class PuzzleDataset(IterableDataset):
             fields = dict(field_mmap_modes)
             if os.path.exists(os.path.join(self.config.dataset_path, self.split, f"{set_name}__object_ids.npy")):
                 fields["object_ids"] = "r"
+            # Optional per-row flag: a test pair routed to the train split (build_miniarc_dataset heldout_tasks > 0)
+            if os.path.exists(os.path.join(self.config.dataset_path, self.split, f"{set_name}__validation.npy")):
+                fields["validation"] = "r"
 
             # Load subset
             self._data[set_name] = {
@@ -263,6 +266,8 @@ class PuzzleDataset(IterableDataset):
                 }
                 if "object_ids" in dataset:
                     batch["object_ids"] = dataset["object_ids"][local_start: local_end]
+                if "validation" in dataset:
+                    batch["validation"] = dataset["validation"][local_start: local_end]
                 batch = self._collate_batch(batch)
 
                 yield set_name, batch, end_index - start_index
@@ -388,6 +393,8 @@ class PuzzleDataset(IterableDataset):
                     }
                     if "object_ids" in dataset:
                         batch["object_ids"] = dataset["object_ids"][batch_indices]
+                    if "validation" in dataset:
+                        batch["validation"] = dataset["validation"][batch_indices]
                     batch = self._collate_batch(batch)
 
                     yield set_name, batch, global_effective_batch_size
