@@ -320,6 +320,10 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 7 (`msgd7_varc.sh`, chained; user) | msgd7_range10 | alpha per tensor, clamp e^10 (alpha up to 220) | ms8r | ~14:00 |
 | 7 | msgd7_init1 | alpha per tensor, weights' alpha init 1 | ms8i | ~14:15 |
 | 7 | msgd7_norm | RMS-normalised inner step (`meta_sgd.normalize_grad`), alpha per tensor, init 1e-3 weights / 3e-2 rows, clamp e^10 | ms8n | ~14:30 |
+| 11 (`msgd11_varc.sh`, started 14:35; user's next steps 1-3) | msgd7_norm, varc_ho2 | normalised loops for 300 and 1000 steps (evaluations only) | ms8n_s300/1000, ms4vnorm_s300/1000 | ~15:30 |
+| 11 | msgd11_ms5 | meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL 30%, first order 300), from the plain checkpoint | ms9m5_s10/30/120, _adam | ~16:25 |
+| 11 | msgd11_scratch | normalised recipe from scratch, 4000 x batch 128, lr 1e-3 (plain control = varc_ho2) | ms9sc_* | ~17:15 (step time unmeasured) |
+| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~18:45 |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -470,3 +474,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 14:21. Round 10 done:** plain normalised 120 steps seeds 1/2: 4/7/8 (.829), 5/8/8 (.824); learned loop seed
   2: 6/8/9 (.839). Three-seed means 6.0/7.3/8.7 (.836) meta-trained against 4.0/6.7/8.0 (.827) plain. Section "Round 10"
   above. GPU idle.
+- **2026-10-23 14:35. Round 11 queued** (user: next steps 1-3): long loops, 5/10-step normalised meta-training, from
+  scratch. ETAs in the queued-runs table.
