@@ -697,7 +697,8 @@ def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict
     """One (key, support rows, query rows) per task in the batch: query = the rows flagged validation (the task's former
     test pair, see build_miniarc_dataset heldout_tasks), support = its other rows. A task is one puzzle, or, when the sampler
     packed several augmented copies of it (meta_sgd.copies_per_group > 1, batch["group_ids"]), all of them together. Padded
-    rows (blank id 0) and tasks missing either kind (the one _sample_batch truncates at the batch tail) are skipped."""
+    rows (blank id 0), tasks missing either kind and query rows of a copy without demos (_sample_batch truncates the batch
+    tail) are skipped."""
     if "validation" not in batch:
         raise ValueError("meta_sgd needs batch['validation']: build the dataset with heldout_tasks > 0 (dataset/build_miniarc_dataset.py).")
     ids, is_query = batch["puzzle_identifiers"], batch["validation"].bool()
@@ -705,7 +706,8 @@ def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict
     episodes = []
     for key in torch.unique(keys[ids != 0]).tolist():
         rows = (keys == key) & (ids != 0)
-        support, query = rows & ~is_query, rows & is_query
+        support = rows & ~is_query
+        query = rows & is_query & torch.isin(ids, ids[support])  # a copy whose demos the batch tail cut off has no row to adapt
         if not support.any() or not query.any():
             continue
         episodes.append((key, {k: v[support] for k, v in batch.items()}, {k: v[query] for k, v in batch.items()}))

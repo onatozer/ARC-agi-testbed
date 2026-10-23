@@ -68,6 +68,11 @@ def test_episodes_split_each_puzzle_by_the_validation_flag_and_skip_incomplete_o
         _episodes_from_batch({k: v for k, v in batch.items() if k != "validation"})
     with pytest.raises(RuntimeError):
         _episodes_from_batch({**batch, "validation": torch.zeros(8, dtype=torch.int64)})
+    # Grouped copies: the validation row of a copy whose demos were cut off at the batch tail is dropped (its id has no row
+    # in the support set the query ids are remapped into)
+    grouped = {"inputs": torch.arange(4).view(4, 1), "puzzle_identifiers": torch.tensor([1, 1, 2, 2]), "group_ids": torch.tensor([7, 7, 7, 7]), "validation": torch.tensor([0, 1, 1, 1])}
+    [(key, s, q)] = _episodes_from_batch(grouped)
+    assert key == 7 and s["inputs"].flatten().tolist() == [0] and q["inputs"].flatten().tolist() == [1]
 
 
 def test_inner_step_scales_with_alpha():
