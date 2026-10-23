@@ -48,3 +48,12 @@ ema: True # use Exponential-Moving-Average
 ema_rate: 0.999 # EMA-rate
 freeze_weights: False # If True, freeze weights and only learn the embeddings
 freeze_alternation_epochs: null # If set to N, alternate every N epochs between learning only the embeddings (first) and only the weights
+
+# Second-order Meta-SGD (arXiv 1707.09835) instead of the ordinary training step; needs a dataset built with heldout_tasks > 0
+meta_sgd:
+  enabled: false
+  inner_lr: 0.1 # initial per-parameter step size alpha
+  alpha_lr: 1e-3 # Adam lr for alpha (log-space), on the main lr schedule
+  alpha_range: 5.0 # alpha stays within inner_lr * exp(+-alpha_range)
+  adapt_substrings: [] # parameter-name substrings the inner step adapts; [] = every trainable parameter (+ the puzzle-embedding row)
+  supervision_steps: 1 # ACT supervision steps from a fresh carry in each inner/outer loss
