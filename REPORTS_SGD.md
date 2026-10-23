@@ -71,13 +71,37 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd2_varc_lh | Meta-SGD layers, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.705 |
 | msgd2_varc_lh | Meta-SGD layers, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.712 |
 | msgd2_varc_lh | Meta-SGD layers, then ttt_mini | 1 | 1 | 1 | 1 | 0.758 |
-| msgd2_varc_all | Meta-SGD everything (alpha0 0.01), learned loop 1 step | pending | pending | pending | pending | pending |
-| msgd2_varc_all | Meta-SGD everything, learned loop 5 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_all | Meta-SGD everything, learned loop 10 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_all | Meta-SGD everything, then ttt_mini | pending | pending | pending | pending | pending |
+| msgd2_varc_all | Meta-SGD everything (alpha0 0.01), learned loop 1 step | 0 | 0 | 0 | 0 | 0.688 |
+| msgd2_varc_all | Meta-SGD everything, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.717 |
+| msgd2_varc_all | Meta-SGD everything, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.721 |
+| msgd2_varc_all | Meta-SGD everything, then ttt_mini | 1 | 1 | 1 | 1 | 0.758 |
 
 Previous loop, for reference (first-order, leave-one-out query, same baseline and eval): Meta-SGD rows s1/s5/s10 0/0/0
 (tok .680/.730/.729), then ttt_mini 1/2/2; Meta-SGD layers s1/s5/s10 0/0/0, then ttt_mini 1/1/1.
+
+## Conclusions (VARC, 2026-10-23)
+
+1. **The second-order implementation reproduces the first-order null result.** With the real test pair as query, every
+   puzzle in the batch as a task and gradients through the inner step, the learned inner loop solves 0 of 30 held-out tasks
+   at 1, 5 and 10 steps for all three adapt sets (rows, layers, everything), token accuracy .68-.72. The previous loop's
+   numbers were the same to within a few thousandths. The fixed-α controls on the plain checkpoint match the previous loop to
+   0.001, so the eval path is identical; what changed is the training step, and it did not matter.
+2. **α does not learn.** After 2000 meta-steps the step sizes sit at their initialisation: rows 1.04 (start 1), layers
+   0.011 and everything 0.011 (start 0.01), with no element more than 4x from the start. The meta-gradient on α is not
+   pushing anywhere consistently.
+3. **The inner step barely fits the demos.** On a held-out task the support loss goes from ~1.35 per row to ~1.16 after 10
+   learned steps; the plain checkpoint with a fixed α of 1 on the rows starts lower (~0.90) and drops further (~0.6). The
+   meta-trained checkpoints are worse models of new tasks' demos before any adaptation.
+4. **Meta-trained weights are a worse start for ordinary test-time training**: 1/1/1 (tok .754-.758) from each of the three,
+   against 4/4/4 (.811) from the plain checkpoint. This is also the previous loop's finding.
+5. **Confound, carried over from the previous loop.** The meta-trained checkpoints saw far less data than the baseline:
+   2000 meta-steps at batch 16 (one query row per task, ~3-5 tasks per step) against 4000 steps at batch 128. Point 3 is
+   consistent with under-training as much as with meta-learning failing. The clean test is to start Meta-SGD from the plain
+   checkpoint (`load_checkpoint=<varc_ho2>`, ~13 min) and compare against the plain checkpoint continued for the same
+   steps. Not run.
+6. **TRM not run.** Its meta-step unrolls each row's ACT trajectory (up to 16 supervision steps) inside both losses, about
+   85 s per 32-row batch on this GPU, i.e. days for the previous loop's recipe; with VARC null across the board there is no
+   signal that would justify it. The user allowed skipping it.
 
 ## Log
 
@@ -96,3 +120,8 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
   0.01 (geometric mean 0.0112, max 0.039, 0.5% of elements above 0.02). Learned loop 1/5/10 steps: 0/0/0, tok
   .682/.705/.712 (previous first-order run .731/.722/.722); support loss after 10 steps median 1.20 per row. Ordinary
   ttt_mini from this checkpoint: 1/1/1, tok 0.758 (previous 1/1/1, .748). All-parameters run started.
+- **2026-10-23 00:28. All-parameters Meta-SGD (`msgd2_varc_all`) done; queue finished (57 min in all).** Meta-training
+  14 min, query loss 2.0 -> 1.21 (the lowest of the three). α stayed at 0.01 everywhere (weights geometric mean 0.0109, max
+  0.033; the embedding row 0.0116, max 0.014, so the row never got the step of 1 the rows-only run was given). Learned loop
+  1/5/10: 0/0/0, tok .688/.717/.721; support loss after 10 steps median 1.16 per row. Ordinary ttt_mini from it: 1/1/1,
+  tok .758. Conclusions written above.
