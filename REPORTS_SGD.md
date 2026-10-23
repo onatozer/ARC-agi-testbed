@@ -94,6 +94,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd5_alr1e-1 | round 5: alpha_lr 1e-1; then ttt_mini | 3 | 3 | 3 | 4 | 0.807 |
 | msgd5_lr3e-4 | round 5: outer lr 3e-4; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .671 / .737 / .751 |
 | msgd5_lr3e-4 | round 5: outer lr 3e-4; then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
+| msgd5_cos | round 5: cosine outer lr (min 0.1); learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .671 / .736 / .750 |
+| msgd5_cos | round 5: cosine outer lr (min 0.1); then ttt_mini | 3 | 3 | 3 | 5 | 0.808 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -184,9 +186,12 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 5 | msgd5_alr1e-1 | alpha_lr 1e-1 | ms7a1 | 12:10 |
 | 5 | msgd5_lr3e-4 | outer lr 3e-4 | ms7lr | 12:25 |
 | 5 | msgd5_cos | cosine outer lr, lr_min_ratio 0.1 | ms7cos | 12:40 |
-| 5 | msgd5_pp | MAML++: 5 inner steps, multi-step loss annealed over the first 30%, alpha per tensor and per step, first order for the first 300 steps | ms7pp | ~14:15 (step time unmeasured; 1-1.5 h guessed from 5x the single-step work) |
+| 5 | msgd5_pp | MAML++: 5 inner steps, multi-step loss annealed over the first 30%, alpha per tensor and per step, first order for the first 300 steps | ms7pp | ~13:15 (started 12:28; 1.9 s/step in the first-order phase, slower after step 300) |
 | 6 (`msgd6_eval.sh`, chained) | msgd3_varc_ft | learned loop 30 and 120 steps (ttt_mini's step count), evaluations only | ms5va_s30, ms5va_s120 | ~14:30 |
-| 6 | varc_ho2 | the same loop with hand-set alpha 0.01 weights / 1 rows, 30 and 120 steps | ms4vfix_s30, ms4vfix_s120 | ~14:45 |
+| 6 | varc_ho2 | the same loop with hand-set alpha 0.01 weights / 1 rows, 30 and 120 steps | ms4vfix_s30, ms4vfix_s120 | ~13:45 |
+| 7 (`msgd7_varc.sh`, chained; user) | msgd7_range10 | alpha per tensor, clamp e^10 (alpha up to 220) | ms8r | ~14:00 |
+| 7 | msgd7_init1 | alpha per tensor, weights' alpha init 1 | ms8i | ~14:15 |
+| 7 | msgd7_norm | RMS-normalised inner step (`meta_sgd.normalize_grad`), alpha per tensor, init 1e-3 weights / 3e-2 rows, clamp e^10 | ms8n | ~14:30 |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -302,3 +307,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   learned a clear structure and hit the clamp on the early MLPs; see the section above. lr 3e-4 run training.
 - **2026-10-23 12:14. Round 5, outer lr 3e-4 done:** learned loop .671/.737/.751, ttt_mini 3/3/3 (.808), demo fit
   1.53 -> 0.96, alpha weights 0.011 (max at the clamp), rows 1.5. Same as round 3. Cosine-lr run training.
+- **2026-10-23 12:28. Round 5, cosine outer lr done:** .671/.736/.750, ttt_mini 3/3/3 (.808), demo fit 1.51 -> 0.95. All
+  five single-step variants of round 5 equal round 3. MAML++ run training (1.9 s/step first-order). Round 7 queued (user's
+  three fixes for the immobile weights), ETAs in the queued-runs table.

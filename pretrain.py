@@ -228,9 +228,10 @@ class MetaSGD(nn.Module):
 
     def __init__(
         self, named: List[Tuple[str, torch.Tensor]], alpha0: float, alpha_range: float, alpha0_rows: Optional[float] = None,
-        per_tensor: bool = False, steps: int = 1,
+        per_tensor: bool = False, steps: int = 1, normalize: bool = False,
     ) -> None:
         super().__init__()
+        self.normalize = normalize  # the inner step uses the gradient / its RMS per tensor
         # The puzzle-embedding table gets one step size per column, shared by its rows: a test task's rows are new.
         # per_tensor (LSLR, arXiv 1810.09502): one scalar per tensor; steps > 1: a leading dim with one alpha per inner step.
         is_table = lambda n: n.endswith("puzzle_emb.weights")
@@ -315,6 +316,7 @@ def create_model(
             model.meta_sgd = MetaSGD(
                 _meta_sgd_targets(model, config.meta_sgd.adapt_substrings), config.meta_sgd.inner_lr, config.meta_sgd.alpha_range, config.meta_sgd.inner_lr_rows,
                 per_tensor=config.meta_sgd.alpha_per_tensor, steps=config.meta_sgd.inner_steps if config.meta_sgd.alpha_per_step else 1,
+                normalize=config.meta_sgd.normalize_grad,
             )
         
         # if "DISABLE_COMPILE" not in os.environ:
@@ -750,6 +752,8 @@ def _adapt(
     step's adapted tensors (non-leaves in the graph), so the chain of steps stays differentiable."""
     loss_s = _supervised_loss(model, overrides, support) / support["inputs"].shape[0]
     grads = torch.autograd.grad(loss_s, [p for _, p in named], create_graph=second_order, allow_unused=True)
+    if model.meta_sgd.normalize:
+        grads = [None if g is None else g * torch.rsqrt(g.pow(2).mean() + 1e-16) for g in grads]
     theta1 = dict(overrides)
     theta1.update({n: p - model.meta_sgd.alpha(n, step) * g for (n, p), g in zip(named, grads) if g is not None})
     return loss_s, theta1

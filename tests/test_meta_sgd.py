@@ -300,3 +300,16 @@ def test_maml_plus_plus_options_are_cli_options():
     for bad in ("meta_sgd.inner_steps=0", "meta_sgd.msl_anneal_fraction=0", "meta_sgd.first_order_steps=-1"):
         with pytest.raises(Exception):
             _config(bad)
+
+
+def test_normalized_inner_step_moves_every_tensor_by_alpha_rms():
+    """normalize_grad: the gradient is divided by its RMS per tensor, so the update's RMS per element is alpha."""
+    config, train_state, batch = _state("meta_sgd.normalize_grad=true", "meta_sgd.alpha_per_tensor=true", "meta_sgd.inner_lr=0.01")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    _, theta1 = _adapt(model, named, overrides, support)
+    for name, p in named:
+        if name in theta1 and name != emb_name:  # the table's alpha is per column, so its update RMS is not one number
+            rms = float((theta1[name] - p).pow(2).mean().sqrt())
+            assert rms == pytest.approx(float(model.meta_sgd.alpha(name)), rel=1e-3), name
+    assert _config().meta_sgd.normalize_grad is False
