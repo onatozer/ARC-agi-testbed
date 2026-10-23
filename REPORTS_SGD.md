@@ -60,13 +60,13 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 |---|---|---|---|---|---|---|
 | varc_ho2 | plain VARC, ttt_mini (ordinary fine-tune) | 4 | 4 | 4 | 6 | 0.811 |
 | varc_ho2 | plain VARC, fixed alpha 1 on the rows, 5 steps | 0 | 0 | 0 | 1 | 0.744 |
-| varc_ho2 | plain VARC, fixed alpha 1 on the rows, 10 steps | pending | pending | pending | pending | pending |
-| varc_ho2 | plain VARC, fixed alpha 0.01 on the layers, 5 steps | pending | pending | pending | pending | pending |
-| varc_ho2 | plain VARC, fixed alpha 0.01 on the layers, 10 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_emb | Meta-SGD rows (alpha0 1), learned loop 1 step | pending | pending | pending | pending | pending |
-| msgd2_varc_emb | Meta-SGD rows, learned loop 5 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_emb | Meta-SGD rows, learned loop 10 steps | pending | pending | pending | pending | pending |
-| msgd2_varc_emb | Meta-SGD rows, then ttt_mini | pending | pending | pending | pending | pending |
+| varc_ho2 | plain VARC, fixed alpha 1 on the rows, 10 steps | 0 | 0 | 1 | 1 | 0.752 |
+| varc_ho2 | plain VARC, fixed alpha 0.01 on the layers, 5 steps | 0 | 0 | 0 | 0 | 0.715 |
+| varc_ho2 | plain VARC, fixed alpha 0.01 on the layers, 10 steps | 0 | 0 | 1 | 1 | 0.727 |
+| msgd2_varc_emb | Meta-SGD rows (alpha0 1), learned loop 1 step | 0 | 0 | 0 | 0 | 0.676 |
+| msgd2_varc_emb | Meta-SGD rows, learned loop 5 steps | 0 | 0 | 0 | 0 | 0.721 |
+| msgd2_varc_emb | Meta-SGD rows, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.721 |
+| msgd2_varc_emb | Meta-SGD rows, then ttt_mini | 1 | 1 | 1 | 1 | 0.754 |
 | msgd2_varc_lh | Meta-SGD layers (alpha0 0.01), learned loop 1 step | pending | pending | pending | pending | pending |
 | msgd2_varc_lh | Meta-SGD layers, learned loop 5 steps | pending | pending | pending | pending | pending |
 | msgd2_varc_lh | Meta-SGD layers, learned loop 10 steps | pending | pending | pending | pending | pending |
@@ -84,3 +84,10 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
 - **2026-10-22 23:30.** Baseline re-evaluated through the new eval path: 4/4/4, tok .811, identical to the previous loop's
   `ms3v_adam`, so the eval path reproduces. Fixed α = 1 on the rows, 5 steps: 0/0/0 (p@100 1), tok .744, also identical
   to the previous `ms3ve_s5`. Meta-training queue started (`autoresearch_runs/miniarc5/msgd2_varc_queue.log`).
+- **2026-10-22 23:51. Rows-only Meta-SGD (`msgd2_varc_emb`) done.** Meta-training 12 min (2.8 meta-steps/s), query loss
+  2.0 -> 1.6; the learned α on the rows stayed at its start (geometric mean 1.04, range 0.79-1.25). Learned loop 1/5/10
+  steps: 0/0/0 solved, tok .676/.721/.721, the same as the previous first-order run (.680/.730/.729). Support loss after 10
+  learned steps: median 1.16 per row (range 0.65-1.72), i.e. the demos are far from fitted. Ordinary ttt_mini from this
+  checkpoint: 1/1/1, tok .754 (previous loop 1/2/2, .750), against the plain checkpoint's 4/4/4, .811. The fixed-α controls
+  on the plain checkpoint reproduce the previous loop to 0.001 (rows 10 steps .752, layers 5/10 .715/.727). Layers-only
+  run started.
