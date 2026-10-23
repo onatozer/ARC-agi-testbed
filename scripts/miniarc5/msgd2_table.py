@@ -36,6 +36,13 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd3_varc_ft", "ms5va_s5", "round 3, learned loop 5 steps"),
     ("msgd3_varc_ft", "ms5va_s10", "round 3, learned loop 10 steps"),
     ("msgd3_varc_ft", "ms5va_adam", "round 3, then ttt_mini"),
+    ("varc_ho2", "ms6v_none", "plain VARC, no adaptation (0 epochs)"),
+    ("varc_ho2", "ms6v_seed1", "plain VARC, ttt_mini, eval seed 1"),
+    ("varc_ho2", "ms6v_seed2", "plain VARC, ttt_mini, eval seed 2"),
+    ("varc_ho2", "ms6v_views4", "plain VARC, ttt_mini, 4 canvas views pooled"),
+    ("varc_ho2", "ms6v_runs2", "plain VARC, ttt_mini, 2 runs pooled"),
+    ("varc_ho2", "ms6v_e40", "plain VARC, ttt_mini, 40 epochs (4 warmup)"),
+    ("varc_ho2", "ms6v_aux32", "plain VARC, ttt_mini, 32 aux tasks"),
 ]
 
 
