@@ -80,6 +80,18 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd2_varc_all_ft | Meta-SGD everything from the plain checkpoint, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.667 |
 | msgd2_varc_all_full | Meta-SGD everything from scratch, 4000 x batch 128 (baseline budget), then ttt_mini | 1 | 2 | 2 | 2 | 0.787 |
 | msgd2_varc_all_full | Meta-SGD everything from scratch at the baseline budget, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.727 |
+| varc_ho2_cont2 | plain VARC continued 1000 steps (batch 256, lr 1e-4), then ttt_mini | pending | pending | pending | pending | pending |
+| msgd3_varc_ft | round 3: meta-fine-tuned, 16-copy episodes, fresh rows, alpha0 rows 1 / weights 0.01; learned loop 1 step | pending | pending | pending | pending | pending |
+| msgd3_varc_ft | round 3, learned loop 5 steps | pending | pending | pending | pending | pending |
+| msgd3_varc_ft | round 3, learned loop 10 steps | pending | pending | pending | pending | pending |
+| msgd3_varc_ft | round 3, then ttt_mini | pending | pending | pending | pending | pending |
+| varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
+| varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
+| varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
+| varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
+| varc_ho2 | plain VARC, ttt_mini, 2 runs pooled | 4 | 4 | 6 | 7 | 0.811 |
+| varc_ho2 | plain VARC, ttt_mini, 40 epochs (4 warmup) | 5 | 5 | 5 | 6 | 0.831 |
+| varc_ho2 | plain VARC, ttt_mini, 32 aux tasks | 4 | 6 | 7 | 7 | 0.823 |
 
 Previous loop, for reference (first-order, leave-one-out query, same baseline and eval): Meta-SGD rows s1/s5/s10 0/0/0
 (tok .680/.730/.729), then ttt_mini 1/2/2; Meta-SGD layers s1/s5/s10 0/0/0, then ttt_mini 1/1/1.
@@ -111,6 +123,20 @@ Previous loop, for reference (first-order, leave-one-out query, same baseline an
 6. **TRM not run.** Its meta-step unrolls each row's ACT trajectory (up to 16 supervision steps) inside both losses, about
    85 s per 32-row batch on this GPU, i.e. days for the previous loop's recipe; with VARC null across the board there is no
    signal that would justify it. The user allowed skipping it.
+
+## Round 4a: the test-time recipe itself (2026-10-23)
+
+The held-out accuracy comes entirely from test-time training: the plain checkpoint solves 0/30 before it (token accuracy
+.641) and 4/30 after ttt_mini (.811). So the recipe is the lever; `ttt_mini` is `ttt_varc` scaled down ~100x for this GPU
+(16 aux tasks, 20 epochs, 1 run, 1 view). Measured on the plain checkpoint, each eval 2.5-5 min:
+
+- **Noise floor.** The eval seed (aux augmentations, training order) alone moves pass@1 over 2-4, pass@2 over 4-5, pass@5
+  over 4-6, token accuracy .805-.812. A one-task difference in this table is nothing; two is suggestive.
+- **Views and runs do nothing** (4/4/6 .808 and 4/4/6 .811): the VARC canvas view and a second run's votes are redundant
+  with the 16 aux tasks already pooled.
+- **More training helps beyond the noise**: 40 epochs 5/5/5 (.831), 32 aux tasks 4/6/7 (.823). Both are the first results
+  above .812 on this build. Round 4b (`scripts/miniarc5/msgd4b_varc.sh`) combines and extends them (40 x 32, 80 epochs,
+  48 aux, 80 x 48, and a second seed of 40 x 32).
 
 ## Post-mortem (2026-10-23, after the 2000-step VARC runs)
 
@@ -171,3 +197,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   test added); the failed log is `msgd3_varc_ft/train_failed_step257.log`. Control `varc_ho2_cont2` finished (1000 steps,
   1 min). Round 4a (`msgd4_varc.sh`: the plain checkpoint's test-time recipe, no-adaptation and seed controls, canvas
   views, runs, epochs, aux tasks) took the GPU; round 3 is re-queued behind it with the Meta-SGD tests first.
+- **2026-10-23 05:00. Round 4a done (23 min).** Rows and section above. No adaptation 0/0/0 (.641); seeds 1/2 3/4/6 (.812)
+  and 2/5/6 (.805); views 4/4/6 (.808); runs 4/4/6 (.811); 40 epochs 5/5/5 (.831); 32 aux 4/6/7 (.823). Round 4b queued
+  behind the round-3 re-run.

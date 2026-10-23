@@ -43,6 +43,11 @@ ROWS = [  # (run, eval suffix, label)
     ("varc_ho2", "ms6v_runs2", "plain VARC, ttt_mini, 2 runs pooled"),
     ("varc_ho2", "ms6v_e40", "plain VARC, ttt_mini, 40 epochs (4 warmup)"),
     ("varc_ho2", "ms6v_aux32", "plain VARC, ttt_mini, 32 aux tasks"),
+    ("varc_ho2", "ms6v_e40_aux32", "plain VARC, ttt_mini, 40 epochs + 32 aux"),
+    ("varc_ho2", "ms6v_e80", "plain VARC, ttt_mini, 80 epochs (8 warmup)"),
+    ("varc_ho2", "ms6v_aux48", "plain VARC, ttt_mini, 48 aux tasks"),
+    ("varc_ho2", "ms6v_e80_aux48", "plain VARC, ttt_mini, 80 epochs + 48 aux"),
+    ("varc_ho2", "ms6v_e40_aux32_s1", "plain VARC, ttt_mini, 40 epochs + 32 aux, eval seed 1"),
 ]
 
 
