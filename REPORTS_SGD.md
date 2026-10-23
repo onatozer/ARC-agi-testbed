@@ -86,6 +86,12 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd3_varc_ft | round 3, learned loop 10 steps | 0 | 0 | 0 | 0 | 0.751 |
 | msgd3_varc_ft | round 3, then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | varc_ho2 | plain VARC, no adaptation (0 epochs) | 0 | 0 | 0 | 0 | 0.641 |
+| msgd5_pt | round 5: alpha per tensor; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .673 / .738 / .753 |
+| msgd5_pt | round 5: alpha per tensor; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
+| msgd5_alr1e-3 | round 5: alpha_lr 1e-3; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .675 / .734 / .748 |
+| msgd5_alr1e-3 | round 5: alpha_lr 1e-3; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
+| msgd5_alr1e-1 | round 5: alpha_lr 1e-1; learned loop 1 / 5 / 10 steps | 0 | 0 | 0 | 0 | .675 / .738 / .754 |
+| msgd5_alr1e-1 | round 5: alpha_lr 1e-1; then ttt_mini | 3 | 3 | 3 | 4 | 0.807 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -183,6 +189,30 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
 
+## Round 5, first three variants (2026-10-23 12:10): alpha learns, the result does not move
+
+Per-tensor alpha (LSLR), alpha_lr 1e-3 and alpha_lr 1e-1 all reproduce round 3 to a few thousandths: learned loop 10 steps
+.753 / .748 / .754 (round 3 .751), ttt_mini 3/3/3 .807-.809, support loss after 10 steps 0.94-0.96 (round 3 0.95).
+
+Yet alpha did learn this time. Per tensor (init 0.01, clamp 0.01·e^±5 = [7e-5, 1.48]): the MLP input matrices of layers
+0-2 went to 1.48 (the clamp), 0.38 and 0.93, pos_embed 0.87, patch_embed 0.27, the qkv matrices of layers 0-1 0.05;
+nearly everything else shrank to 0.002-0.005, layer 3 entirely. Per element at alpha_lr 1e-1: 1st percentile 0.0004,
+99th 1.48 (the clamp), rows 0.16-7.5. So the meta-gradient has a clear, consistent preference (big steps on the early MLPs
+and the position/patch embeddings, none on the last layer), and acting on it changes nothing at test.
+
+The plain checkpoint explains why: alpha 1 on the rows alone, 10 steps, gives .752 and fits the demos *better* (1.74 ->
+0.86) than any learned loop (1.51 -> 0.95); alpha 0.01 on the layers alone gives .727 and 1.74 -> 1.14. Every learned
+loop is, in effect, the rows-only loop: the weight updates contribute nothing measurable even at alpha 1.48, because a
+plain SGD step moves a weight by alpha times its gradient, and the per-element gradient of the mean per-row loss on 48
+demos is tiny. ttt_mini's Adam moves every weight by ~lr per step whatever the gradient, 120 times, with a consistent
+sign: orders of magnitude more weight change. The clamp binding on the MLP matrices says the meta-gradient wanted to go
+further still.
+
+So the missing piece is not alpha's learning rate or its granularity but its *range*, or the update rule: a learned step
+size on raw gradients cannot reach Adam-sized weight updates within alpha <= 1.48. Candidates (not started; user
+present): alpha_range 10 (alpha up to 220) with per-tensor alpha; a higher weights' init (0.1 or 1); or a normalised inner
+step (sign / RMS of the gradient, as Adam does), which leaves Meta-SGD proper.
+
 ## Post-mortem (2026-10-23, after the 2000-step VARC runs)
 
 Measured on the all-parameters checkpoint over 45 training-task episodes (CPU, train mode): support loss per row at θ
@@ -251,3 +281,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 11:00. Round 3 done** (8 min meta-training at 2 it/s, 3.5 tasks x 16 copies per step). Learned loop
   1/5/10: 0/0/0, tok .673/.737/.751; then ttt_mini 3/3/3 (.809); control `varc_ho2_cont2` then ttt_mini 3/3/5 (.822).
   Alpha: weights 0.010 (unchanged), rows up to 1.8. Section above; round 5 queued (`msgd5_varc_queue.log`).
+- **2026-10-23 12:10. Round 5, first three variants done** (per tensor, alpha_lr 1e-3, 1e-1): all equal to round 3; alpha
+  learned a clear structure and hit the clamp on the early MLPs; see the section above. lr 3e-4 run training.
