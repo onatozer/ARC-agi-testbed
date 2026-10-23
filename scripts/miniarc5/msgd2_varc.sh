@@ -59,4 +59,16 @@ pretrain msgd2_varc_lh $MSGD meta_sgd.inner_lr=0.01 "meta_sgd.adapt_substrings=[
 grid msgd2_varc_lh ms4vl
 pretrain msgd2_varc_all $MSGD meta_sgd.inner_lr=0.01
 grid msgd2_varc_all ms4va
+# Follow-ups (user, 2026-10-23): the data-budget confound, on the all-parameters variant only.
+# (a) Meta-SGD from the plain checkpoint for 2000 meta-steps, against the plain checkpoint continued for the same steps
+PLAIN=$(ckpt_of varc_ho2)
+pretrain msgd2_varc_all_ft $MSGD meta_sgd.inner_lr=0.01 +load_checkpoint="$PLAIN" +load_weights_only=true
+pretrain varc_ho2_cont +load_checkpoint="$PLAIN" +load_weights_only=true
+ttt msgd2_varc_all_ft ms4vaf_adam
+ttt msgd2_varc_all_ft ms4vaf_s10 meta_sgd_steps=10
+ttt varc_ho2_cont ms4vc_adam
+# (b) Meta-SGD from scratch at the baseline's budget: 4000 steps x batch 128 (~30 tasks per meta-step)
+pretrain msgd2_varc_all_full $MSGD meta_sgd.inner_lr=0.01 global_batch_size=128 max_steps=4000 eval_interval_steps=2000
+ttt msgd2_varc_all_full ms4vafull_adam
+ttt msgd2_varc_all_full ms4vafull_s10 meta_sgd_steps=10
 echo "[done] $(date +%H:%M:%S)"
