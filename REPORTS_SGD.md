@@ -121,6 +121,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
 | msgd7_norm | round 11: normalised learned loop, 1000 steps | 10 | 13 | 15 | 16 | 0.887 |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
+| msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
+| msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -321,6 +323,21 @@ as 1-2 tasks at 120-300 steps and as nothing in task counts at 1000, where both 
 The large effect is the test-time procedure: normalised full-batch SGD for 1000 steps (20 min / 30 tasks) takes the plain
 checkpoint from 4/4/4 (.811, ttt_mini) to 10/13/15 (.879).
 
+## Round 11b (2026-10-23 17:28): meta-training the 5-step loop
+
+`msgd11_ms5`: round 3's recipe from the plain checkpoint with the normalised inner step, 5 inner steps, alpha per tensor
+and per step, multi-step loss annealed over the first 30%, first order for the first 300 meta-steps; 54 min (2.1 s/step
+first-order, 3-4.9 s/step second-order). Meta-training query loss 0.77-1.0 at the end (the one-step runs: 0.9-1.3).
+
+The per-step alphas learned a **decaying schedule**: rows 0.058 / 0.039 / 0.020 / 0.016 / 0.010 over the five steps,
+weights ~0.0006 -> 0.0002 (pos_embed 0.001 -> 0.004 -> 0.002, layer-2 MLP input 0.0025 -> 0.0005), i.e. a learned
+learning-rate decay with the same layer structure as before.
+
+Evaluated with the last alpha held past step 5 (the smallest): 1/1/1 (.753), 2/2/3 (.797), 7/7/8 (.837) at 10 / 30 /
+120 steps, demo fit 1.58 -> 0.86 / 0.73 / 0.54; ttt_mini 3/3/3 (0.804). Level with the one-step normalised
+checkpoint (.738 / .795 / .836), slightly ahead at 10 steps. Round 12 evaluates the same checkpoint with the alphas
+stretched over the loop (user's idea) and at 300 / 1000 steps.
+
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
 All training runs start from the plain checkpoint `varc_ho2` on round 3's recipe (`FT3`/`EPISODE3` in
@@ -512,3 +529,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   5-step normalised meta-training (`msgd11_ms5`) started.
 - **2026-10-23 16:50. Round 12 queued** (user's idea): the per-step alphas of the 5/10-step checkpoints stretched over
   longer loops (`meta_sgd_schedule=stretch`, new evaluate_ttt option, tested) against holding the last one.
+- **2026-10-23 17:28. Round 11, 5-step meta-training done:** hold-schedule loops 1/1/1 (.753), 2/2/3 (.797), 7/7/8
+  (.837); ttt_mini 3/3/3 (0.804); learned decaying per-step alphas. Section "Round 11b". From-scratch run started.
