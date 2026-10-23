@@ -135,8 +135,8 @@ The held-out accuracy comes entirely from test-time training: the plain checkpoi
 - **Views and runs do nothing** (4/4/6 .808 and 4/4/6 .811): the VARC canvas view and a second run's votes are redundant
   with the 16 aux tasks already pooled.
 - **More training helps beyond the noise**: 40 epochs 5/5/5 (.831), 32 aux tasks 4/6/7 (.823). Both are the first results
-  above .812 on this build. Round 4b (`scripts/miniarc5/msgd4b_varc.sh`) combines and extends them (40 x 32, 80 epochs,
-  48 aux, 80 x 48, and a second seed of 40 x 32).
+  above .812 on this build. (Round 4b, scaling these further, was cancelled by the user: more test-time data obviously
+  helps; the question is the Meta-SGD recipe.)
 
 ## Post-mortem (2026-10-23, after the 2000-step VARC runs)
 
