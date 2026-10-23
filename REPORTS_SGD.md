@@ -345,6 +345,7 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 11 | msgd11_ms5 | meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL 30%, first order 300), from the plain checkpoint | ms9m5_s10/30/120, _adam | ~17:20 |
 | 11 | msgd11_scratch | normalised recipe from scratch, 4000 x batch 128, lr 1e-3 (plain control = varc_ho2) | ms9sc_* | ~18:10 (step time unmeasured) |
 | 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~19:45 |
+| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | ~21:15 (10 evals, 2.5-20 min each) |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -509,3 +510,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 16:26. Round 11, plain checkpoint, normalised rule, 1000 steps:** 10/13/15 (p@100 16), tok .879, demos
   1.74 -> 0.37: the same task counts as the meta-trained checkpoint, .008 lower token accuracy. Section "Round 11a".
   5-step normalised meta-training (`msgd11_ms5`) started.
+- **2026-10-23 16:50. Round 12 queued** (user's idea): the per-step alphas of the 5/10-step checkpoints stretched over
+  longer loops (`meta_sgd_schedule=stretch`, new evaluate_ttt option, tested) against holding the last one.
