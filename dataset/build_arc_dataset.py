@@ -1,5 +1,5 @@
-from typing import List, Tuple, Dict
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
 import os
 import json
 import hashlib
@@ -41,6 +41,7 @@ EndXToken, EndYToken, EndXYToken, NewlineToken, Pad2DToken = 1, 12, 13, 14, 15
 class ARCPuzzle:
     id: str
     examples: List[Tuple[np.ndarray, np.ndarray]]
+    validation: List[bool] = field(default_factory=list)  # per example: a test pair routed to the train split (held-out MiniARC builds)
 
     
 def arc_grid_to_np(grid: List[List[int]]):
@@ -177,14 +178,19 @@ def inverse_aug(name: str):
     return name.split(PuzzleIdSeparator)[0], _map_grid
 
 
-def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]], test_aug: bool = True):
+def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count: int, dest_mapping: Dict[str, Tuple[str, str]], test_aug: bool = True, test_copies: Optional[int] = None):
+    """Example types missing from dest_mapping are dropped (a held-out task maps only its test pairs). test_copies caps
+    the augmented copies the test split keeps (the original plus that many); None keeps them all."""
     # Convert
     dests = set(dest_mapping.values())
     converted = {dest: ARCPuzzle(name, []) for dest in dests}
     for example_type, examples in puzzle.items():
         # Map to target split
-        dest = dest_mapping[example_type]
+        dest = dest_mapping.get(example_type)
+        if dest is None:
+            continue
         converted[dest].examples.extend([(arc_grid_to_np(example["input"]), arc_grid_to_np(example["output"])) for example in examples])
+        converted[dest].validation.extend([example_type == "test" and dest[0] == "train"] * len(examples))
 
     group = [converted]
     
@@ -196,7 +202,7 @@ def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count:
             aug_name, _map_grid = aug(name)
 
             # Check duplicate
-            augmented = {dest: ARCPuzzle(aug_name, [(_map_grid(input), _map_grid(label)) for (input, label) in puzzle.examples]) for dest, puzzle in converted.items()}
+            augmented = {dest: ARCPuzzle(aug_name, [(_map_grid(input), _map_grid(label)) for (input, label) in puzzle.examples], puzzle.validation) for dest, puzzle in converted.items()}
             h = puzzle_hash(augmented)
             if h not in hashes:
                 hashes.add(h)
@@ -209,11 +215,13 @@ def convert_single_arc_puzzle(results: dict, name: str, puzzle: dict, aug_count:
             print (f"[Puzzle {name}] augmentation not full, only {len(group)}")
 
     # Append
-    for dest in dests:
+    for dest in sorted(dests):  # stable set order in the split metadata
         # Convert the examples
         dest_split, dest_set = dest
         # without test_aug the test split gets only the original puzzle (group[0]); its augmented copies stay in training
-        copies = group if test_aug or dest_split != "test" else group[:1]
+        copies = group
+        if dest_split == "test":
+            copies = group[:1] if not test_aug else (group[: test_copies + 1] if test_copies is not None else group)
 
         results.setdefault(dest_split, {})
         results[dest_split].setdefault(dest_set, [])
@@ -310,7 +318,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
         
         for subset_name, subset in split.items(): # "all" is the only subset
             # Construct subset
-            results = {k: [] for k in ["inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices"] + (["object_ids"] if config.object_ids else [])}
+            results = {k: [] for k in ["inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices", "validation"] + (["object_ids"] if config.object_ids else [])}
             results["puzzle_indices"].append(0)
             results["group_indices"].append(0)
             
@@ -327,6 +335,7 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                             
                         results["inputs"].append(inp)
                         results["labels"].append(out)
+                        results["validation"].append(bool(puzzle.validation[_idx_ex]) if puzzle.validation else False)
                         if config.object_ids:
                             results["object_ids"].append(object_index_canvas(inp.reshape(config.grid_size, -1)).flatten())
                         example_id += 1
@@ -343,6 +352,8 @@ def convert_dataset(config: DataProcessConfig, load_puzzles=load_puzzles_arcagi)
                 results["group_indices"].append(puzzle_id)
                 total_groups += 1
             
+            if not any(results["validation"]):
+                del results["validation"]  # only written when some row is flagged, so ordinary builds are unchanged
             for k, v in results.items():
                 if k in {"inputs", "labels", "object_ids"}:
                     v = np.stack(v, 0)

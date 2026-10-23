@@ -14,6 +14,7 @@ checkpoint: null
 suffix: ttt
 output_dir: null
 task_ids: null
+task_ids_file: null # a JSON list of task names, e.g. a held-out build's heldout_tasks.json
 max_tasks: null
 
 num_aux_tasks: 1

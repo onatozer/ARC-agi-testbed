@@ -52,6 +52,7 @@ class TTTConfig(pydantic.BaseModel):
     suffix: str
     output_dir: Optional[str] = None  # None: <run_dir>/eval_preds/step_<N>_<suffix>
     task_ids: Optional[List[str]] = None
+    task_ids_file: Optional[str] = None  # a JSON list of task names (e.g. a build's heldout_tasks.json); overrides task_ids
     max_tasks: Optional[int] = None
 
     num_aux_tasks: int  # the task itself + (num_aux_tasks - 1) dihedral/color augmentations, each with its own puzzle embedding

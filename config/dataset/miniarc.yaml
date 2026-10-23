@@ -18,6 +18,9 @@ scale_aug: true # random integer upscaling of train examples (arXiv:2511.14761)
 test_aug: true  
 border_tokens: false # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); builds into <output_dir>-border
 object_ids: true # also save per-cell object indices of the inputs, for arch.pos_encodings=absolute_2d_ope (ViTARC OPE)
+heldout_tasks: 0 # > 0: that many tasks never seen in training (only their test pairs in the test split), see build_miniarc_dataset.py
+heldout_seed: 0
+test_num_aug: null # cap on the augmented copies of each test pair kept in the test split (null: num_aug)
 
 
 seed: null
