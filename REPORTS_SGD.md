@@ -106,6 +106,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd7_range10 | round 7: clamp e^10; then ttt_mini | 3 | 3 | 3 | 4 | 0.809 |
 | msgd7_init1 | round 7: alpha per tensor, weights' alpha init 1; learned loop 1 / 5 / 10 steps (diverges: demo loss 1.8 -> 2238 at 10) | 0 | 0 | 0 | 0 | .584 / .526 / .472 |
 | msgd7_init1 | round 7: alpha init 1; then ttt_mini | 3 | 3 | 3 | 5 | 0.807 |
+| msgd7_norm | round 7: RMS-normalised inner step, alpha per tensor (init 1e-3 weights / 3e-2 rows); learned loop 1 / 5 / 10 steps | 0 / 0 / 1 | 0 / 0 / 1 | 0 / 0 / 1 | 0 / 1 / 1 | .662 / .697 / .738 |
+| msgd7_norm | round 7: normalised step; then ttt_mini | 3 | 3 | 3 | 3 | 0.806 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 2 | 2 | 5 | 6 | 6 | 0.805 |
 | varc_ho2 | plain VARC, ttt_mini, 4 canvas views pooled | 4 | 4 | 6 | 7 | 0.808 |
@@ -210,6 +212,23 @@ But at every step count the plain checkpoint adapts at least as well as the meta
 120 steps better (2/3/4 vs 0/2/3; it also fits the demos further, 0.72 vs 0.78, from a worse start). Meta-fine-tuning
 has not made the network adapt better; the learned alpha has not beaten the hand-set init it started from. (Note the
 plain checkpoint's rows start at the table mean of a table trained on 119 tasks either way.)
+
+## Round 7 (2026-10-23 14:00): letting the weights move
+
+Three ways to let the inner step move the weights, each on round 3's recipe with alpha per tensor:
+
+- **Wider clamp (alpha up to 220).** Alpha used little of it (layer-0 MLP input 2.75, from the old clamp 1.48; the rest
+  unchanged) and the result is round 3's again: .673/.738/.752, ttt_mini 3/3/3 (.809). The clamp was not the constraint.
+- **Weights' alpha init 1.** Unstable: meta-training loss ~2.0 throughout, alpha stayed at 0.45-2.0, the test loop diverges
+  (demo loss 1.80 -> 2238 in 10 steps, tok .584/.526/.472 < the no-adaptation .641). ttt_mini from it is intact (3/3/3,
+  .807): the outer step did not damage the weights, the inner step is just unusable at that size on raw gradients.
+- **RMS-normalised inner step** (`meta_sgd.normalize_grad`: a step moves every element of a tensor by ~alpha, as Adam
+  does; alpha init 1e-3 weights / 3e-2 rows, wide clamp). Meta-training loss 0.9-1.3 like the others. Alpha settled small
+  (weights geometric mean 0.0004, the largest 0.005-0.01 on the MLP input matrices and pos_embed; rows 0.013-0.098, mean
+  0.043). Learned loop: 0/0/0 .662, 0/0/0 .697, **1/1/1 .738** at 1 / 5 / 10 steps, demo fit 1.53 -> 0.93: the first
+  learned loop to solve a held-out task at pass@1, at a lower token accuracy than the raw-gradient loops (.752), and still
+  climbing with steps. ttt_mini from it: 3/3/3 (0.806). Round 8 (`msgd8_eval.sh`) runs this loop for 30 and
+  120 steps against the plain checkpoint's 1/2/2 (.777) and 2/3/4 (.801).
 
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
@@ -371,3 +390,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   meta-training loss stayed ~2.0 throughout (others 0.9-1.1), alpha stayed near 1 (0.45-2.0; the meta-gradient did not
   pull it down), and at test the loop diverges (demo loss 1.80 -> 2238 in 10 steps; tok .584/.526/.472, below the
   no-adaptation .641). ttt_mini from it: 3/3/3 (0.807). Normalised-step run training.
+- **2026-10-23 14:01. Round 7 done (normalised step):** loop .662/.697/.738 with 1/1/1 at 10 steps, ttt_mini
+  3/3/3 (0.806). Section "Round 7" above. Round 8 (30/120 steps of this loop) started.
