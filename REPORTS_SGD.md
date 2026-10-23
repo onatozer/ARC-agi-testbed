@@ -383,8 +383,8 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 11 (`msgd11_varc.sh`, launched 14:35, process started 15:33; user's next steps 1-3) | msgd7_norm, varc_ho2 | normalised loops for 300 and 1000 steps (evaluations only) | ms8n_s300/1000, ms4vnorm_s300/1000 | ~16:25 |
 | 11 | msgd11_ms5 | meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL 30%, first order 300), from the plain checkpoint | ms9m5_s10/30/120, _adam | ~17:20 |
 | 11 | msgd11_scratch | normalised recipe from scratch, 4000 x batch 128, lr 1e-3 (plain control = varc_ho2) | ms9sc_* | ~18:10 (step time unmeasured) |
-| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~20:00 (started 18:08; the 5-step run took 54 min) |
-| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | ~21:30 (10 evals, 2.5-20 min each) |
+| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~22:30 (killed at ~step 450 by a laptop restart at 18:48; restarted 19:40 after round 12's 5-step evals) |
+| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | 5-step part ~20:25, 10-step part ~23:15 |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -555,3 +555,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   (.837); ttt_mini 3/3/3 (0.804); learned decaying per-step alphas. Section "Round 11b". From-scratch run started.
 - **2026-10-23 18:08. Round 11, from-scratch run done:** loops 1/3/3 (.746), 1/2/2 (.751), 1/1/2 (.775); ttt_mini
   2/3/3 (0.772). Below plain-from-scratch under the same rule. Section "Round 11c". 10-step meta-training started.
+- **2026-10-23 19:40. Laptop restart at ~18:48 killed the 10-step meta-training** (`msgd11_ms10`, ~step 450, no
+  intermediate checkpoint; log kept as `train_killed_by_restart.log`). Relaunched in one chain: round 12's 5-step-checkpoint
+  evaluations first (stretch vs hold), then the 10-step run from step 0, then round 12's 10-step evaluations.
