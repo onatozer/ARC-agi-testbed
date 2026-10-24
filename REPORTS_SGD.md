@@ -144,6 +144,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd15_ms5_fo | round 15: 5-step normalised recipe, first order; 120 steps, stretched | 7 | 7 | 8 | 10 | 0.841 |
 | msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | 0.872 |
 | msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | 12 | 12 | 14 | 17 | 0.890 |
+| msgd15_ms5_fo | round 15: 5-step first order; 120 steps, held | 5 | 7 | 8 | 9 | 0.837 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -458,6 +459,27 @@ on this build (training variance).
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
 
+## Round 15 (2026-10-24 02:23): second order off, VARC
+
+Meta-fine-tuning entirely first order, otherwise identical:
+
+| recipe, eval | first order | second order | plain, same rule |
+|---|---|---|---|
+| one step, 120 | 5 / 6 / 8, .832 | 6.0 / 7.3 / 8.7, .836 (3 seeds: 5-7 / 7-8 / 8-9) | 4.0 / 6.7 / 8.0, .827 |
+| one step, 300 | 6 / 10 / 11, .863 | 8 / 9 / 9, .862 | 7 / 9 / 10, .853 |
+| one step, 1000 | 10 / 11 / 13, .884 | 10 / 13 / 15, .887 | 10 / 13 / 15, .879 |
+| 5 steps, stretched 120 | 7 / 7 / 8, .841 | 7 / 8 / 9, .845 | |
+| 5 steps, stretched 300 | 8 / 9 / 12, .872 | 10 / 12 / 13, .872 | |
+| 5 steps, stretched 1000 | 12 / 12 / 14, .890 | 12 / 12 / 14, .888 | |
+| 5 steps, held 120 | 5 / 7 / 8, 0.837 | 7 / 7 / 8, .837 | |
+| meta-training time | 7 / 22 min | 12 / 54 min | |
+
+**The second-order term buys nothing measurable here.** Token accuracy is within .004 of second order at every length
+(and above plain everywhere); task counts differ by 0-3 in both directions, the size of the eval-seed spread; at 1000
+stretched steps the two 5-step checkpoints are identical in task counts. First order halves to quarters the meta-training
+time. Consistent with the round-7+ picture: the gain comes from learning the step sizes (whose gradient is first-order
+either way) and from the meta-fine-tuned theta's starting point, not from curvature through the inner loop.
+
 ## Rounds 15-16 (queued 2026-10-24 01:10; user)
 
 - **Round 15, second order off on VARC** (`msgd15_varc_fo.sh`, started 00:56): the one-step normalised recipe
@@ -745,3 +767,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   10/12/13 (.872).
 - **2026-10-24 02:20. Round 15, 5-step first order, stretched 1000 steps:** 12/12/14 (0.890), against second order
   12/12/14 (.888).
+- **2026-10-24 02:23. Round 15 done** (5-step first order, held 120: 5/7/8, 0.837). Section "Round 15". TRM queue
+  (round 16) started.
