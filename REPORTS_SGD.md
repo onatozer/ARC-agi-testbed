@@ -130,6 +130,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | 12 | 13 | 15 | 16 | 0.885 |
 | msgd11_ms10 | round 11: meta-trained with 10 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 4 | 1 / 3 / 5 | 2 / 4 / 6 | 2 / 7 / 8 | .782 / .803 / .833 |
 | msgd11_ms10 | round 11: 10-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.806 |
+| msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / 10 / 12 | 7 / 11 / 13 | 10 / 13 / 14 | 10 / 14 / 18 | .845 / .870 / .888 |
+| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / 10 | 10 / 11 | 13 / 14 | 14 / 16 | .862 / .884 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -387,6 +389,24 @@ RMS-normalised rule, full batch on the 48 aux rows, one eval seed each:
 - One seed per cell outside the 120-step plain/one-step rows; seeds for the 300-step cells would firm up the 5-step vs
   one-step gap. The 10-step run (restarted 20:36) tests whether more trained steps widen it.
 
+## Round 12b (2026-10-23 23:10): the 10-step checkpoint, stretched vs held
+
+| steps | 10-step, stretched | 10-step, held | 5-step, stretched | 5-step, held | one-step | plain, hand-set |
+|---|---|---|---|---|---|---|
+| 10 | | 1 / 1 / 2, .782 | | 1 / 1 / 1, .753 | 1 / 1 / 1, .738 | 1 / 1 / 1, .744 |
+| 120 | 7 / 7 / 10, .845 | 4 / 5 / 6, .833 | 7 / 8 / 9, .845 | 7 / 7 / 8, .837 | 6.0 / 7.3 / 8.7, .836 | 4.0 / 6.7 / 8.0, .827 |
+| 300 | 10 / 11 / 13, .870 | 9 / 10 / 13, .862 | 10 / 12 / 13, .872 | 10 / 12 / 13, .865 | 8 / 9 / 9, .862 | 7 / 9 / 10, .853 |
+| 1000 | 12 / 13 / 14, .888 | 10 / 11 / 14, .884 | 12 / 12 / 14, .888 | 12 / 13 / 15, .885 | 10 / 13 / 15, .887 | 10 / 13 / 15, .879 |
+
+- **Stretching matters more the more steps were trained.** On the 10-step checkpoint the held schedule spends almost every
+  step at the smallest alpha and falls behind (4/5/6 at 120); stretched it recovers fully (7/7/10 at 120, 12/13/14 at
+  1000, demos 0.49 / 0.40 / 0.35). Stretched beats held on it at every length, by 3 / 1 / 2 at pass@1.
+- **5 and 10 trained steps end up level once stretched** (.845 / .870-.872 / .888 at 120 / 300 / 1000; task counts
+  within one). Ten trained steps buy the best short loop (.782 at 10 steps) and nothing at 120+.
+- Stretched multi-step meta-trained checkpoints at 1000 steps: 12/30 pass@1 (neither solves the duplicated task, so also
+  12/29 on the uncontaminated ones), against 10/13/15 for the plain checkpoint under the same
+  rule. Single seed per cell.
+
 ## Contamination check (2026-10-23 22:00)
 
 `scratchpad/contamination.py` searches every training-split row for each held-out pair, up to the 8 dihedral transforms
@@ -638,3 +658,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   ttt_mini 3/3/3 (0.806). Best 10-step result of any checkpoint (.782 vs the 5-step's .753), behind the 5-step one
   at 120 (7/7/8, .837). Per-step alphas decay again (rows .053 -> .009, weights 8e-4 -> 2e-4). Round 12 on it (stretched
   vs held at 120/300/1000) running.
+- **2026-10-23 23:25. Round 12 done on the 10-step checkpoint** (section "Round 12b"). Round 13's retrain was killed 12 s
+  in by the previous session ending at 23:10 (log `varc_ho3/train_killed_session_end.log`); relaunched 23:23.
