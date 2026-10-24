@@ -598,3 +598,11 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   stretching adds the token-accuracy margin. Held 1000 steps running.
 - **2026-10-23 20:36. Round 12, 5-step checkpoint done:** held 1000 steps 12/13/15 (.885). Section "Round 12a". 10-step
   meta-training started (ETA ~22:45 with its evaluations), round 12 on it after.
+- **2026-10-23 21:55. Provenance of the plain checkpoint `varc_ho2`** (the start of every fine-tuning run and the plain
+  control throughout): trained on 2026-10-20 by the previous loop (`l-reinit-ttt`, commit e4c1284), 4000 x batch 128,
+  adam_atan2 lr 1e-3, wd 1.0, EMA, seed 0, on a `miniarc5-aug-31-ho30` build in the `treerm-candidates` worktree.
+  Compared with this session's build: same held-out list, same 30 test puzzles (so every held-out evaluation is
+  unaffected), same 119 training tasks and array shapes, but **different augmentation draws** (identifiers, inputs and
+  labels differ; probably PR #68's builder changes moved the random stream). So fine-tuning runs saw new augmentations of
+  the same tasks, the non-fresh-row controls loaded embedding rows that index other augmentations (equally for meta and
+  control), and the from-scratch comparison pits a meta run on this build against a plain baseline on the old one.
