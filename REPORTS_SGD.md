@@ -128,6 +128,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | 12 | 12 | 14 | 16 | 0.888 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | 10 | 12 | 13 | 14 | 0.865 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | 12 | 13 | 15 | 16 | 0.885 |
+| msgd11_ms10 | round 11: meta-trained with 10 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 4 | 1 / 3 / 5 | 2 / 4 / 6 | 2 / 7 / 8 | .782 / .803 / .833 |
+| msgd11_ms10 | round 11: 10-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.806 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -631,3 +633,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 22:00. Contamination check:** one held-out task duplicated by MiniARC in a training task; rarely solved,
   conclusions unchanged without it (section above). Round 13 queued (user): retrain the plain baseline on this branch's
   build with varc_ho2's exact recipe (resolved configs diffed), then ttt_mini and the 120-step normalised loop on it.
+- **2026-10-23 22:02. Round 11 done: 10-step normalised meta-training** (1 h 22 min, ~5-7 s/step second-order).
+  Held-schedule loops 1/1/2 (.782), 2/3/4 (.803), 4/5/6 (.833) at 10/30/120 steps, demos 1.68 -> 0.90 / 0.72 / 0.54;
+  ttt_mini 3/3/3 (0.806). Best 10-step result of any checkpoint (.782 vs the 5-step's .753), behind the 5-step one
+  at 120 (7/7/8, .837). Per-step alphas decay again (rows .053 -> .009, weights 8e-4 -> 2e-4). Round 12 on it (stretched
+  vs held at 120/300/1000) running.
