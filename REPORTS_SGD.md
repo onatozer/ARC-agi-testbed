@@ -148,8 +148,12 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | trm_ho2 | round 16: plain TRM, ttt_mini | 1 | 2 | 3 | 6 | 0.776 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 120 steps | 4 | 7 | 9 | 12 | 0.808 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | 10 | 12 | 13 | 16 | 0.812 |
+| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 1000 steps | 14 | 16 | 17 | 17 | 0.825 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 120 steps, stretched | 4 | 5 | 5 | 9 | 0.801 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 300 steps, stretched | 8 | 10 | 12 | 13 | 0.809 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 1000 steps, stretched | 11 | 12 | 13 | 13 | 0.836 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 120 steps, held | 3 | 4 | 5 | 7 | 0.795 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; then ttt_mini | 1 | 3 | 3 | 4 | 0.766 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -463,6 +467,31 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 16 (2026-10-24 07:47): TRM
+
+Plain TRM `trm_ho2` against the same checkpoint meta-fine-tuned on the VARC headline recipe (`msgd16_trm_ms5`: inner step =
+one ACT segment continuing the carry, query gradient through the final segment only, first order throughout after the
+second-order phase ran out of memory; 1 h 55 min):
+
+| test-time procedure | plain TRM | meta-fine-tuned TRM | plain VARC | best meta-trained VARC |
+|---|---|---|---|---|
+| ttt_mini | 1 / 2 / 3, .776 | 1 / 3 / 3, .766 | 4 / 4 / 4, .811 | 3 / 3 / 3, .804 |
+| normalised, 120 steps | 4 / 7 / 9, .808 (hand-set alpha) | 4 / 5 / 5, .801 (stretched); 3 / 4 / 5, .795 (held) | 4.0 / 6.7 / 8.0, .827 | 7 / 8 / 9, .845 |
+| normalised, 300 steps | 10 / 12 / 13, .812 | 8 / 10 / 12, .809 | 7 / 9 / 10, .853 | 10 / 12 / 13, .872 |
+| normalised, 1000 steps | **14 / 16 / 17, .825** | 11 / 12 / 13, .836 | 10 / 13 / 15, .879 | 12 / 12 / 14, .888 |
+
+- **The normalised segment-step rule is the big result on TRM**: with no meta-training it takes the plain TRM from 1/2/3
+  (ttt_mini) to 4/7/9 at the same compute and to **14/16/17 at 1000 steps, the best held-out result in the project**
+  (VARC's best: 12/12/14). The duplicated MiniARC task is not among them (0/0/0), so 14/29 on the clean tasks too. Each
+  segment step costs about what a ttt_mini step does (120 steps: 5.7 min vs 5.9 for 30 tasks; 1000 steps: 43 min).
+- **Meta-fine-tuning does not help TRM.** It is behind the plain checkpoint under the same rule at 120 / 300 / 1000 steps
+  (by 0-4, 2, 3 tasks at pass@1), though its token accuracy is higher at 1000 (.836 vs .825). It learned smaller step sizes
+  than the hand-set ones (weights ~3e-4 vs 1e-3, rows .015-.028 vs .03) for a 5-segment loop, i.e. less than one
+  8-segment trajectory, so the long loops adapt more slowly. Not tried: more inner steps (a full trajectory or more), a
+  larger alpha init, second order with smaller episodes.
+- TRM and VARC differ in kind: TRM gets more grids exactly right with lower token accuracy (14 tasks at .825 vs 12 at
+  .888). Single seeds throughout; the 1000-step cells are one evaluation each.
 
 ## Round 15 (2026-10-24 02:23): second order off, VARC
 
@@ -791,3 +820,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-24 06:10. Round 16, TRM meta-fine-tuned** (first order, 1 h 55 min; per-step alphas decay, rows .028 -> .015,
   largest weight alphas on the L-level MLPs), stretched: 120 steps 4/5/5 (0.801), 300 steps
   8/10/12 (0.809); plain TRM under the same rule with the hand-set alphas: 4/7/9 (.808) and 10/12/13 (.812).
+- **2026-10-24 07:47. Round 16 done.** Plain TRM, normalised segment loop, 1000 steps: 14/16/17 (.825), the project's best;
+  meta-fine-tuned TRM 11/12/13 (.836). Section "Round 16". GPU idle.
