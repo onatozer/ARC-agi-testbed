@@ -452,6 +452,23 @@ on this build (training variance).
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
 
+## Rounds 15-16 (queued 2026-10-24 01:10; user)
+
+- **Round 15, second order off on VARC** (`msgd15_varc_fo.sh`, started 00:56): the one-step normalised recipe
+  (`msgd15_n1_fo`, against `msgd7_norm`) and the 5-step one (`msgd15_ms5_fo`, against `msgd11_ms5`), meta-fine-tuned
+  entirely first order. First order still trains alpha (its gradient, -dL_query/dtheta' x g, has no second derivative);
+  it drops the curvature term in theta's. Evaluated at 120 / 300 / 1000 steps (5-step: stretched, plus held at 120).
+  ETA ~02:30.
+- **Round 16, Meta-SGD on TRM** (`msgd16_trm.sh`, chained): new options `meta_sgd.segment_inner_steps` (an inner step is
+  one ACT segment continuing the previous step's carry, as train_batch and ttt_mini do; before, every inner step ran
+  every row's full trajectory from a fresh carry) and `meta_sgd.last_segment_grad` (the query trajectory backpropagates
+  only through each row's final segment). Both are no-ops on one-segment models (tested). Meta-fine-tune of the plain TRM
+  `trm_ho2` (previous loop: 8 segments, H 3 / L 4, hidden 128, 4000 x 128; this branch rebuilds it with
+  `arch.activation_function=conv_swiglu arch.puzzle_emb_len=1`, configs diffed) on the VARC headline recipe, round 3's
+  budget (1000 x 256). Smoke: ~10 s / meta-step first order, ~22 s second order with the GPU shared, against 2-5 s for
+  VARC, so ~4-5 h. Controls: trm_ho2 under ttt_mini and under the same segment-step normalised rule with the hand-set
+  alphas (120 / 300 / 1000). ETA ~09:00. Single seeds.
+
 ## Contamination check (2026-10-23 22:00)
 
 `scratchpad/contamination.py` searches every training-split row for each held-out pair, up to the 8 dihedral transforms
