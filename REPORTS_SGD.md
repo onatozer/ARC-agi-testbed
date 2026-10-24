@@ -139,6 +139,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / 10 / 12 | 7 / 11 / 13 | 10 / 13 / 14 | 10 / 14 / 18 | .845 / .870 / .888 |
 | msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / 10 | 10 / 11 | 13 / 14 | 14 / 16 | .862 / .884 |
 | msgd15_n1_fo | round 15: one-step normalised recipe, entirely first order; 120 steps | 5 | 6 | 8 | 9 | 0.832 |
+| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | 0.863 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -730,3 +731,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-24 01:07. Round 15, one-step recipe first order, 120 steps:** 5/6/8 (.832), against second order 6.0/7.3/8.7
   (.836, 3 seeds; seed range 5-7 / 7-8 / 8-9, .833-.839) and plain 4.0/6.7/8.0 (.827). Within or at the edge of the
   second-order seed range. Meta-training took 7 min (second order: ~12).
+- **2026-10-24 01:13. Round 15, one-step first order, 300 steps:** 6/10/11 (.863), against second order 8/9/9 (.862) and
+  plain 7/9/10 (.853): token accuracy equal to second order, task counts mixed (-2 pass@1, +1 / +2 at pass@2 / 5).
