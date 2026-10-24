@@ -143,6 +143,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | 10 | 11 | 13 | 15 | 0.884 |
 | msgd15_ms5_fo | round 15: 5-step normalised recipe, first order; 120 steps, stretched | 7 | 7 | 8 | 10 | 0.841 |
 | msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | 0.872 |
+| msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | 12 | 12 | 14 | 17 | 0.890 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -742,3 +743,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   7/7/8 (0.841), against second order 7/8/9 (.845).
 - **2026-10-24 02:01. Round 15, 5-step first order, stretched 300 steps:** 8/9/12 (0.872), against second order
   10/12/13 (.872).
+- **2026-10-24 02:20. Round 15, 5-step first order, stretched 1000 steps:** 12/12/14 (0.890), against second order
+  12/12/14 (.888).
