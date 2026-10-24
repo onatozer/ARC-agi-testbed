@@ -147,6 +147,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd15_ms5_fo | round 15: 5-step first order; 120 steps, held | 5 | 7 | 8 | 9 | 0.837 |
 | trm_ho2 | round 16: plain TRM, ttt_mini | 1 | 2 | 3 | 6 | 0.776 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 120 steps | 4 | 7 | 9 | 12 | 0.808 |
+| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | 10 | 12 | 13 | 16 | 0.812 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -778,3 +779,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   4/7/9 (p@100 12), tok .808, against its ttt_mini 1/2/3 (.776), in 5.7 min (ttt_mini 5.9). The normalised rule transfers
   to TRM, and by more than on VARC (+3 / +5 / +6 tasks; VARC plain: 4/4/4 -> 4/7/8). Per-segment demo loss 1.24 -> 0.34
   (one segment's loss, not comparable to VARC's per-trajectory numbers).
+- **2026-10-24 02:48. Round 16, plain TRM, normalised segment loop, 300 steps:** 10/12/13 (0.812). TRM
+  meta-fine-tune (`msgd16_trm_ms5`) started.
