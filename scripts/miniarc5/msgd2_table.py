@@ -111,6 +111,8 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd11_ms10", "ms9m10_st120", "round 12: 10-step meta-trained; learned loop 120 steps, stretched per-step alphas"),
     ("msgd11_ms10", "ms9m10_st300", "round 12: 10-step meta-trained; learned loop 300 steps, stretched per-step alphas"),
     ("msgd11_ms10", "ms9m10_st1000", "round 12: 10-step meta-trained; learned loop 1000 steps, stretched per-step alphas"),
+    ("varc_ho3", "ms10v_adam", "round 13: plain VARC retrained on this branch/build, ttt_mini"),
+    ("varc_ho3", "ms10vnorm_s120", "round 13: plain VARC retrained, normalised step, hand-set alpha, 120 steps"),
     ("varc_ho2", "ms6v_none", "plain VARC, no adaptation (0 epochs)"),
     ("varc_ho2", "ms6v_seed1", "plain VARC, ttt_mini, eval seed 1"),
     ("varc_ho2", "ms6v_seed2", "plain VARC, ttt_mini, eval seed 2"),
