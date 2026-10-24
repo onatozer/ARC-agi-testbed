@@ -126,6 +126,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | 10 | 12 | 13 | 14 | 0.872 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | 12 | 12 | 14 | 16 | 0.888 |
+| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | 10 | 12 | 13 | 14 | 0.865 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -570,3 +571,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-23 20:09. Round 12, 5-step checkpoint, stretched, 1000 steps:** 12/12/14 (p@100 16), tok .888, demos -> 0.35.
   Against 10/13/15 for both the one-step (.887) and plain (.879) checkpoints at 1000 steps: +2 pass@1, -1 pass@2 and
   pass@5. The stretched schedule's lead is largest at 300 steps and mostly closes by 1000. Held-schedule 300/1000 running.
+- **2026-10-23 20:15. Round 12, 5-step checkpoint, held schedule, 300 steps:** 10/12/13 (p@100 14), tok .865, demos ->
+  0.45: the same task counts as stretched (10/12/13), .007 lower token accuracy and a shallower demo fit (0.45 vs 0.41).
+  So at 300 steps the gain over the one-step (8/9/9) and plain (7/9/10) checkpoints is mostly the 5-step meta-training;
+  stretching adds the token-accuracy margin. Held 1000 steps running.
