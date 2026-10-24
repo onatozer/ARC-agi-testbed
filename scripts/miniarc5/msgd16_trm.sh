@@ -4,7 +4,8 @@
 # backpropagates only through each row's final segment). Meta-fine-tuning of the plain TRM checkpoint trm_ho2 (previous
 # loop; 8 segments, H 3 / L 4, 4000 x 128) on the VARC headline recipe (msgd11_ms5: round 3's episodes, normalised step,
 # alpha per tensor and per step, 5 inner steps, MSL, first order for 300 meta-steps). Smoke: ~10 s / meta-step first
-# order, ~22 s second order with the GPU shared, so ~4-5 h. Controls: trm_ho2 under ttt_mini and under the same
+# order, ~22 s second order with the GPU shared, so ~4-5 h. The second-order phase ran out of GPU memory at meta-step 301
+# (4 GB), so the run is first order throughout (round 15: no difference on VARC); ~13 s/step, ~3.6 h. Controls: trm_ho2 under ttt_mini and under the same
 # segment-step normalised rule with the hand-set alphas.
 set -euo pipefail
 source "$(dirname "$0")/msgd_common.sh"
@@ -19,7 +20,7 @@ ttt trm_ho2 ms12t_adam
 for n in 120 300; do ttt trm_ho2 ms12tnorm_s$n meta_sgd_steps=$n $NORM_EVAL; done
 # Meta-fine-tune
 pretrain msgd16_trm_ms5 +load_checkpoint=$PLAIN $FT3 $EPISODE3 $NORM_RECIPE $SEG \
-  meta_sgd.alpha_per_step=true meta_sgd.msl_anneal_fraction=0.3 meta_sgd.first_order_steps=300 meta_sgd.inner_steps=5
+  meta_sgd.alpha_per_step=true meta_sgd.msl_anneal_fraction=0.3 meta_sgd.first_order_steps=100000 meta_sgd.inner_steps=5
 for n in 120 300 1000; do ttt msgd16_trm_ms5 ms12m5_st$n meta_sgd_steps=$n meta_sgd_schedule=stretch; done
 ttt msgd16_trm_ms5 ms12m5_s120 meta_sgd_steps=120
 ttt msgd16_trm_ms5 ms12m5_adam

@@ -781,3 +781,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   (one segment's loss, not comparable to VARC's per-trajectory numbers).
 - **2026-10-24 02:48. Round 16, plain TRM, normalised segment loop, 300 steps:** 10/12/13 (0.812). TRM
   meta-fine-tune (`msgd16_trm_ms5`) started.
+- **2026-10-24 03:55. Round 16's TRM meta-fine-tune ran out of GPU memory at meta-step 301**, the first second-order step
+  (`msgd16_trm_ms5/train_oom_step301.log`; the smoke had survived 3 second-order steps on smaller episodes). Relaunched
+  entirely first order, everything else unchanged: round 15 found first order equal to second order on VARC at every
+  length, and the first 300 steps were first order anyway. No intermediate checkpoint, so it restarts at step 0; ~13 s per
+  step, training ~3.6 h, evaluations after (~09:00).
