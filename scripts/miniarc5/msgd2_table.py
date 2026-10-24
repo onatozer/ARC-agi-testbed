@@ -151,6 +151,7 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd18_trm", "ms14m_sg120", "round 18: TRM 8 segment steps, ACT off, best round-17 alpha init; 120 steps, segment schedule"),
     ("msgd18_trm", "ms14m_sg300", "round 18: TRM 8 segment steps, ACT off, best round-17 alpha init; 300 steps, segment schedule"),
     ("msgd18_trm", "ms14m_sg1000", "round 18: TRM 8 segment steps, ACT off, best round-17 alpha init; 1000 steps, segment schedule"),
+    ("trm_ho3", "ms14tnormact_s1000", "round 19: plain TRM (this branch), normalised segment steps, ACT ON, hand-set alpha, 1000 steps"),
     ("varc_ho2", "ms6v_none", "plain VARC, no adaptation (0 epochs)"),
     ("varc_ho2", "ms6v_seed1", "plain VARC, ttt_mini, eval seed 1"),
     ("varc_ho2", "ms6v_seed2", "plain VARC, ttt_mini, eval seed 2"),

@@ -903,3 +903,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   14/16/17 (ACT on, other build) at 300 and 1000, and no longer improving from 300 to 1000. Build and ACT-off are
   confounded in that comparison. The meta-fine-tune picked init 1e-3 / 3e-2 (round 17) and runs at ~27 s / meta-step
   (8 segment steps), so ~7.5 h: training ~23:40, evaluations ~00:45.
+- **2026-10-24 16:45. Round 19 queued** (user, `msgd19_trm_act.sh`, after round 18): trm_ho3 under the normalised segment
+  rule with ACT halting on, 1000 steps, to separate the build from ACT-off in round 18's plain-TRM drop. ~45 min, ETA ~01:30.
