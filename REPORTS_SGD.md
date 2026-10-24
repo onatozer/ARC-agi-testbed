@@ -56,6 +56,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 
 ## Results (30 held-out tasks; pass@k = tasks solved; token acc over test cells)
 
+Bold: the best value in its column; underlined: the rest of the column's top 10% (`scripts/miniarc5/highlight_results.py`).
+
 | checkpoint | test-time procedure | pass@1 | pass@2 | pass@5 | pass@100 | token acc |
 |---|---|---|---|---|---|---|
 | varc_ho2 | plain VARC, ttt_mini (ordinary fine-tune) | 4 | 4 | 4 | 6 | 0.811 |
@@ -117,10 +119,10 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 1 | 4 | 7 | 8 | 11 | 0.829 |
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 2 | 5 | 8 | 8 | 11 | 0.824 |
 | msgd7_norm | round 10: normalised learned loop, 120 steps, eval seed 2 | 6 | 8 | 9 | 9 | 0.839 |
-| msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | 0.862 |
+| msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | <u>0.862</u> |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
-| msgd7_norm | round 11: normalised learned loop, 1000 steps | 10 | 13 | 15 | 16 | 0.887 |
-| varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
+| msgd7_norm | round 11: normalised learned loop, 1000 steps | <u>10</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.887</u> |
+| varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | <u>10</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.879</u> |
 | varc_ho3 | round 13: plain VARC retrained on this branch and build (varc_ho2's recipe), ttt_mini | 3 | 4 | 5 | 7 | 0.793 |
 | varc_ho3 | round 13: retrained plain VARC, normalised step, hand-set alpha, 120 steps | 2 | 5 | 5 | 5 | 0.811 |
 | varc_ho4 | round 14: plain VARC, this branch's code on varc_ho2's build, ttt_mini | 4 | 4 | 4 | 7 | 0.812 |
@@ -130,28 +132,28 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
-| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | 10 | 12 | 13 | 14 | 0.872 |
-| msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | 12 | 12 | 14 | 16 | 0.888 |
-| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | 10 | 12 | 13 | 14 | 0.865 |
-| msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | 12 | 13 | 15 | 16 | 0.885 |
+| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | <u>10</u> | <u>12</u> | <u>13</u> | <u>14</u> | <u>0.872</u> |
+| msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | <u>12</u> | <u>12</u> | <u>14</u> | <u>16</u> | <u>0.888</u> |
+| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | <u>10</u> | <u>12</u> | <u>13</u> | <u>14</u> | <u>0.865</u> |
+| msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | <u>12</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.885</u> |
 | msgd11_ms10 | round 11: meta-trained with 10 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 4 | 1 / 3 / 5 | 2 / 4 / 6 | 2 / 7 / 8 | .782 / .803 / .833 |
 | msgd11_ms10 | round 11: 10-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.806 |
-| msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / 10 / 12 | 7 / 11 / 13 | 10 / 13 / 14 | 10 / 14 / 18 | .845 / .870 / .888 |
-| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / 10 | 10 / 11 | 13 / 14 | 14 / 16 | .862 / .884 |
+| msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / <u>10</u> / <u>12</u> | 7 / <u>11</u> / <u>13</u> | 10 / <u>13</u> / <u>14</u> | 10 / <u>14</u> / **18** | .845 / <u>.870</u> / <u>.888</u> |
+| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / <u>11</u> | <u>13</u> / <u>14</u> | <u>14</u> / <u>16</u> | <u>.862</u> / <u>.884</u> |
 | msgd15_n1_fo | round 15: one-step normalised recipe, entirely first order; 120 steps | 5 | 6 | 8 | 9 | 0.832 |
-| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | 0.863 |
-| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | 10 | 11 | 13 | 15 | 0.884 |
+| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | <u>0.863</u> |
+| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | <u>11</u> | <u>13</u> | <u>15</u> | <u>0.884</u> |
 | msgd15_ms5_fo | round 15: 5-step normalised recipe, first order; 120 steps, stretched | 7 | 7 | 8 | 10 | 0.841 |
-| msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | 0.872 |
-| msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | 12 | 12 | 14 | 17 | 0.890 |
+| msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | <u>0.872</u> |
+| msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | <u>12</u> | <u>12</u> | <u>14</u> | <u>17</u> | **0.890** |
 | msgd15_ms5_fo | round 15: 5-step first order; 120 steps, held | 5 | 7 | 8 | 9 | 0.837 |
 | trm_ho2 | round 16: plain TRM, ttt_mini | 1 | 2 | 3 | 6 | 0.776 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 120 steps | 4 | 7 | 9 | 12 | 0.808 |
-| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | 10 | 12 | 13 | 16 | 0.812 |
-| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 1000 steps | 14 | 16 | 17 | 17 | 0.825 |
+| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | <u>10</u> | <u>12</u> | <u>13</u> | <u>16</u> | 0.812 |
+| trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 1000 steps | **14** | **16** | **17** | <u>17</u> | 0.825 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 120 steps, stretched | 4 | 5 | 5 | 9 | 0.801 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 300 steps, stretched | 8 | 10 | 12 | 13 | 0.809 |
-| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 1000 steps, stretched | 11 | 12 | 13 | 13 | 0.836 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 1000 steps, stretched | <u>11</u> | <u>12</u> | <u>13</u> | 13 | 0.836 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 120 steps, held | 3 | 4 | 5 | 7 | 0.795 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; then ttt_mini | 1 | 3 | 3 | 4 | 0.766 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
@@ -467,6 +469,24 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Rounds 17-18 (queued 2026-10-24 09:25; user)
+
+No foreign checkpoints from here on (user): every run starts from a checkpoint trained on this branch and this build.
+VARC uses `varc_ho3` (round 13); TRM is retrained as `trm_ho3` with trm_ho2's recipe (resolved configs diffed: equal).
+
+- **Round 17, very large alpha inits on VARC** (`msgd17_varc.sh`): the 5-step normalised first-order recipe from
+  varc_ho3 with alpha initialised at 1e-3 / 3e-2 (control), 0.1 and 1 (weights and rows alike), evaluated stretched at
+  120 / 300 / 1000; plain varc_ho3 under the same rule at 300 / 1000. ~2.5 h, ETA ~12:00.
+- **Round 18, TRM with segment-indexed alphas and ACT halting off** (`msgd18_trm.sh`, chained): trm_ho3 retrained; meta-
+  fine-tune with 8 segment inner steps (one whole trajectory), `+arch.disable_act_halt=true` (rows run all 8 segments in
+  lockstep, in meta-training and at test), alpha per tensor and per step, MSL, first order, normalised; alpha init
+  1e-3 / 3e-2, 0.1 and 1. Evaluated with the new `meta_sgd_schedule=segment` (step n uses the alpha of segment
+  (n mod 8) + 1, trained trajectories stretched) at 120 / 300 / 1000. Controls on trm_ho3: ttt_mini, and the segment-step
+  rule with ACT off and the hand-set alphas. ~4 h per meta run, ETA ~01:30 (2026-10-25).
+- `evaluate_ttt.py` nested train_overrides (e.g. `+train_overrides.arch.disable_act_halt=true`) now set single fields; they
+  used to replace the whole block they named. Past runs are unaffected (their only nested overrides were meta_sgd blocks
+  on plain checkpoints, where replacing defaults equals merging).
 
 ## Round 16 (2026-10-24 07:47): TRM
 
