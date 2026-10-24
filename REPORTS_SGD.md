@@ -494,6 +494,30 @@ second-order phase ran out of memory; 1 h 55 min):
 - TRM and VARC differ in kind: TRM gets more grids exactly right with lower token accuracy (14 tasks at .825 vs 12 at
   .888). Single seeds throughout; the 1000-step cells are one evaluation each.
 
+## TRM: ACT halting inside the inner loop (2026-10-24 08:40)
+
+Question (user): does ACT halting desynchronise the rows, so that a per-step alpha must cover several trajectory positions?
+Measured (`scratchpad/halt_stats.py`, `halt_stats16.py`): 10 batches of 16-copy training episodes, 1959 demo rows, training
+mode as in the meta step, segments from a fresh carry, weights fixed.
+
+| first halt | plain TRM | meta-fine-tuned TRM |
+|---|---|---|
+| within the 5 meta-training segments | 6.2% (mostly segment 2) | 0.0% |
+| at the 8-segment cap | 93.8% | 100.0% |
+
+The halt head almost never fires (never, after meta-fine-tuning), so rows stay in lockstep: in meta-training alpha k was
+"segment k of the first trajectory", and in a test loop inner step n has every row at segment (n mod 8) + 1, with all rows
+halting and restarting together. Mixing across rows is negligible. The mixing that does happen is over time, through how
+the alphas are indexed: with 5 trained alphas stretched over 1000 steps, alpha 1 covers 200 steps, i.e. 25 trajectories
+through all 8 segment positions, and alphas trained only on segments 1-5 of one trajectory are used for 125 of them.
+
+Proposed (not run): alphas indexed by segment position. Meta-train with 8 inner steps (one trajectory: 8 alphas, one per
+segment) or 16 (two trajectories: 16 alphas). At test, apply them by segment: step n uses the alpha of segment
+(n mod 8) + 1 and, with several trained trajectories, of trained trajectory t * K // T for test trajectory t of T (K
+trained), i.e. exact per-segment, stretched across trajectories. Cost ~3-6 h first order, plus the evaluation mapping.
+(Comparing against the plain checkpoint does not bear on this: it learns no alpha, so it says only that one constant step
+size suffices at test, not whether learning alpha is hampered by mixed positions.)
+
 ## Round 15 (2026-10-24 02:23): second order off, VARC
 
 Meta-fine-tuning entirely first order, otherwise identical:
@@ -823,3 +847,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   8/10/12 (0.809); plain TRM under the same rule with the hand-set alphas: 4/7/9 (.808) and 10/12/13 (.812).
 - **2026-10-24 07:47. Round 16 done.** Plain TRM, normalised segment loop, 1000 steps: 14/16/17 (.825), the project's best;
   meta-fine-tuned TRM 11/12/13 (.836). Section "Round 16". GPU idle.
+- **2026-10-24 08:40. TRM halting measured:** 94% (plain) and 100% (meta-fine-tuned) of rows run to the 8-segment cap,
+  so rows stay in lockstep; segment-indexed alphas proposed. Section "TRM: ACT halting inside the inner loop".
