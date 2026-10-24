@@ -470,20 +470,20 @@ on this build (training variance).
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
 
-## Rounds 17-18 (queued 2026-10-24 09:25; user)
+## Rounds 17-18 (queued 2026-10-24 11:25; user)
 
 No foreign checkpoints from here on (user): every run starts from a checkpoint trained on this branch and this build.
 VARC uses `varc_ho3` (round 13); TRM is retrained as `trm_ho3` with trm_ho2's recipe (resolved configs diffed: equal).
 
 - **Round 17, very large alpha inits on VARC** (`msgd17_varc.sh`): the 5-step normalised first-order recipe from
   varc_ho3 with alpha initialised at 1e-3 / 3e-2 (control), 0.1 and 1 (weights and rows alike), evaluated stretched at
-  120 / 300 / 1000; plain varc_ho3 under the same rule at 300 / 1000. ~2.5 h, ETA ~12:00.
+  120 / 300 / 1000; plain varc_ho3 under the same rule at 300 / 1000. ~2.5 h, ETA ~14:00.
 - **Round 18, TRM with segment-indexed alphas and ACT halting off** (`msgd18_trm.sh`, chained): trm_ho3 retrained; meta-
   fine-tune with 8 segment inner steps (one whole trajectory), `+arch.disable_act_halt=true` (rows run all 8 segments in
   lockstep, in meta-training and at test), alpha per tensor and per step, MSL, first order, normalised; alpha init
   1e-3 / 3e-2, 0.1 and 1. Evaluated with the new `meta_sgd_schedule=segment` (step n uses the alpha of segment
   (n mod 8) + 1, trained trajectories stretched) at 120 / 300 / 1000. Controls on trm_ho3: ttt_mini, and the segment-step
-  rule with ACT off and the hand-set alphas. ~4 h per meta run, ETA ~01:30 (2026-10-25).
+  rule with ACT off and the hand-set alphas. ~4 h per meta run, ETA ~03:30 (2026-10-25).
 - `evaluate_ttt.py` nested train_overrides (e.g. `+train_overrides.arch.disable_act_halt=true`) now set single fields; they
   used to replace the whole block they named. Past runs are unaffected (their only nested overrides were meta_sgd blocks
   on plain checkpoints, where replacing defaults equals merging).
