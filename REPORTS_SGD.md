@@ -121,6 +121,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
 | msgd7_norm | round 11: normalised learned loop, 1000 steps | 10 | 13 | 15 | 16 | 0.887 |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
+| varc_ho3 | round 13: plain VARC retrained on this branch and build (varc_ho2's recipe), ttt_mini | 3 | 4 | 5 | 7 | 0.793 |
+| varc_ho3 | round 13: retrained plain VARC, normalised step, hand-set alpha, 120 steps | 2 | 5 | 5 | 5 | 0.811 |
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
@@ -407,6 +409,23 @@ RMS-normalised rule, full batch on the 48 aux rows, one eval seed each:
   12/29 on the uncontaminated ones), against 10/13/15 for the plain checkpoint under the same
   rule. Single seed per cell.
 
+## Round 13 (2026-10-23 23:31): the plain baseline retrained on this branch
+
+`varc_ho3`: varc_ho2's recipe (resolved configs diffed) on this session's build, 3.4 min.
+
+| procedure | varc_ho2 (l-reinit-ttt, old build) | varc_ho3 (this branch, this build) |
+|---|---|---|
+| ttt_mini | 4 / 4 / 4, .811 (eval seeds: 2-4 / 4-5 / 4-6, .805-.812) | 3 / 4 / 5, .793 |
+| normalised step, hand-set alpha, 120 steps | 4.0 / 6.7 / 8.0, .827 (3 seeds: .824-.829) | 2 / 5 / 5, .811 (demos -> 0.61, vs 0.57) |
+
+The code reproduces the baseline's behaviour in kind (test-time training lifts it from no-adaptation, the normalised
+120-step loop beats ttt_mini in token accuracy) but the retrained checkpoint is weaker: token accuracy .015-.018 below
+varc_ho2 under both procedures, outside the eval-seed spread. Neither solves the duplicated task. A weaker model trained
+on data with no more held-out leakage is not a contamination signal (the content check above found none beyond the
+MiniARC duplicate); the gap is training-run variance (augmentation draws, non-deterministic kernels), which was never
+measured. Not yet separated: this branch's code on the *old* build (code replication alone) and a second training seed
+on this build (training variance).
+
 ## Contamination check (2026-10-23 22:00)
 
 `scratchpad/contamination.py` searches every training-split row for each held-out pair, up to the 8 dihedral transforms
@@ -660,3 +679,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   vs held at 120/300/1000) running.
 - **2026-10-23 23:25. Round 12 done on the 10-step checkpoint** (section "Round 12b"). Round 13's retrain was killed 12 s
   in by the previous session ending at 23:10 (log `varc_ho3/train_killed_session_end.log`); relaunched 23:23.
+- **2026-10-23 23:31. Round 13 done:** retrained baseline ttt_mini 3/4/5 (.793), normalised 120 steps 2/5/5 (.811);
+  .015-.018 below varc_ho2. Section "Round 13".
