@@ -385,6 +385,22 @@ RMS-normalised rule, full batch on the 48 aux rows, one eval seed each:
 - One seed per cell outside the 120-step plain/one-step rows; seeds for the 300-step cells would firm up the 5-step vs
   one-step gap. The 10-step run (restarted 20:36) tests whether more trained steps widen it.
 
+## Contamination check (2026-10-23 22:00)
+
+`scratchpad/contamination.py` searches every training-split row for each held-out pair, up to the 8 dihedral transforms
+and any colour relabelling (verified on a training row under a random dihedral + colour permutation). Both builds give the
+same answer: **one held-out task is duplicated in the training set by MiniARC itself.** The training task
+`find_the_total_shape_revealed_by_gray_pixels_l6bl8wmnt49h58bhbzm` contains the held-out task
+`reveal_the_original_gray_pixel_l6blhmgkypxwgqpqsv`'s test pair and one of its demos; the other 29 held-out tasks' test
+pairs and 97 of 99 demos appear nowhere in training. This is a dataset duplicate, not a builder or loader bug, and it
+affects the plain and meta-trained models equally.
+
+That task is almost never solved: 0/0/0 under every procedure on the plain checkpoint (including no adaptation, so the
+model did not memorise the answer), 1/1/1 only for the one-step meta checkpoint at 1000 steps, 0/1/1 for the stretched
+5-step loop at 300. Without it (29 tasks) the headline numbers are: plain 1000 steps 10/13/15; one-step meta 1000 steps
+9/12/14; 5-step meta stretched 300 10/11/12 and 1000 12/12/14; 5-step held 1000 12/13/15. No conclusion changes. A clean
+build would drop either task from the pool before the held-out draw.
+
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
 All training runs start from the plain checkpoint `varc_ho2` on round 3's recipe (`FT3`/`EPISODE3` in
@@ -611,3 +627,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   its train split covers 119 base tasks with zero overlap with the 30 held-out ones, and its test split is exactly them.
   That the run read this path rests on the data_path in its all_config.yaml (written at launch); the re-evaluation in this
   session reproduced the previous loop's 4/4/4 (.811) exactly.
+
+- **2026-10-23 22:00. Contamination check:** one held-out task duplicated by MiniARC in a training task; rarely solved,
+  conclusions unchanged without it (section above). Round 13 queued (user): retrain the plain baseline on this branch's
+  build with varc_ho2's exact recipe (resolved configs diffed), then ttt_mini and the 120-step normalised loop on it.
