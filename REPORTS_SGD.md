@@ -480,10 +480,11 @@ VARC uses `varc_ho3` (round 13); TRM is retrained as `trm_ho3` with trm_ho2's re
   120 / 300 / 1000; plain varc_ho3 under the same rule at 300 / 1000. ~2.5 h, ETA ~14:00.
 - **Round 18, TRM with segment-indexed alphas and ACT halting off** (`msgd18_trm.sh`, chained): trm_ho3 retrained; meta-
   fine-tune with 8 segment inner steps (one whole trajectory), `+arch.disable_act_halt=true` (rows run all 8 segments in
-  lockstep, in meta-training and at test), alpha per tensor and per step, MSL, first order, normalised; alpha init
-  1e-3 / 3e-2, 0.1 and 1. Evaluated with the new `meta_sgd_schedule=segment` (step n uses the alpha of segment
+  lockstep, in meta-training and at test), alpha per tensor and per step, MSL, first order, normalised; one meta run, at
+  the alpha init that did best on VARC in round 17 (user; `pick_alpha_init.py`: highest pass@1 at 1000 stretched steps,
+  ties by token accuracy). Evaluated with the new `meta_sgd_schedule=segment` (step n uses the alpha of segment
   (n mod 8) + 1, trained trajectories stretched) at 120 / 300 / 1000. Controls on trm_ho3: ttt_mini, and the segment-step
-  rule with ACT off and the hand-set alphas. ~4 h per meta run, ETA ~03:30 (2026-10-25).
+  rule with ACT off and the hand-set alphas. ~4 h meta run, ETA ~19:30.
 - `evaluate_ttt.py` nested train_overrides (e.g. `+train_overrides.arch.disable_act_halt=true`) now set single fields; they
   used to replace the whole block they named. Past runs are unaffected (their only nested overrides were meta_sgd blocks
   on plain checkpoints, where replacing defaults equals merging).
