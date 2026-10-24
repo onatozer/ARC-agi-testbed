@@ -483,7 +483,8 @@ second-order phase ran out of memory; 1 h 55 min):
 
 - **The normalised segment-step rule is the big result on TRM**: with no meta-training it takes the plain TRM from 1/2/3
   (ttt_mini) to 4/7/9 at the same compute and to **14/16/17 at 1000 steps, the best held-out result in the project**
-  (VARC's best: 12/12/14). The duplicated MiniARC task is not among them (0/0/0), so 14/29 on the clean tasks too. Each
+  (VARC's best: 12/12/14). The duplicated MiniARC task is among them (1/1/1 at 300 and 1000 steps), so on the 29 clean tasks it is 13/15/16
+  (meta-fine-tuned TRM 11/12/13 and best VARC 12/12/14 do not solve it, so theirs are unchanged). Each
   segment step costs about what a ttt_mini step does (120 steps: 5.7 min vs 5.9 for 30 tasks; 1000 steps: 43 min).
 - **Meta-fine-tuning does not help TRM.** It is behind the plain checkpoint under the same rule at 120 / 300 / 1000 steps
   (by 0-4, 2, 3 tasks at pass@1), though its token accuracy is higher at 1000 (.836 vs .825). It learned smaller step sizes
