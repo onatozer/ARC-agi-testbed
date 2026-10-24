@@ -123,6 +123,10 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | 10 | 13 | 15 | 16 | 0.879 |
 | varc_ho3 | round 13: plain VARC retrained on this branch and build (varc_ho2's recipe), ttt_mini | 3 | 4 | 5 | 7 | 0.793 |
 | varc_ho3 | round 13: retrained plain VARC, normalised step, hand-set alpha, 120 steps | 2 | 5 | 5 | 5 | 0.811 |
+| varc_ho4 | round 14: plain VARC, this branch's code on varc_ho2's build, ttt_mini | 4 | 4 | 4 | 7 | 0.812 |
+| varc_ho4 | round 14: this branch's code on varc_ho2's build, normalised 120 steps | 5 | 6 | 8 | 10 | 0.821 |
+| varc_ho5 | round 14: plain VARC, this build, training seed 1, ttt_mini | 4 | 4 | 5 | 6 | 0.795 |
+| varc_ho5 | round 14: this build, training seed 1, normalised 120 steps | 4 | 6 | 8 | 9 | 0.817 |
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
@@ -426,6 +430,28 @@ MiniARC duplicate); the gap is training-run variance (augmentation draws, non-de
 measured. Not yet separated: this branch's code on the *old* build (code replication alone) and a second training seed
 on this build (training variance).
 
+## Round 14 (2026-10-23 23:50): what round 13's gap was
+
+| plain checkpoint | build | training seed | ttt_mini | normalised 120 steps |
+|---|---|---|---|---|
+| varc_ho2 (l-reinit-ttt code) | old (treerm-candidates) | 0 | 4 / 4 / 4, .811 | 4.0 / 6.7 / 8.0, .827 (3 eval seeds) |
+| varc_ho4 (this branch) | old | 0 | 4 / 4 / 4, .812 | 5 / 6 / 8, .821 |
+| varc_ho3 (this branch) | this session's | 0 | 3 / 4 / 5, .793 | 2 / 5 / 5, .811 |
+| varc_ho5 (this branch) | this session's | 1 | 4 / 4 / 5, .795 | 4 / 6 / 8, .817 |
+
+- **The code replicates.** This branch's code on the original build reproduces the baseline: ttt_mini 4/4/4 at .812
+  against .811, and the normalised loop within the eval-seed spread (.821 vs .824-.829; demo fit 0.58 vs 0.57).
+- **The gap is the build's augmentation draw.** Both training seeds on this session's build sit at .793-.795 under
+  ttt_mini and .811-.817 under the normalised loop: ~.017 and ~.01 below the old build, and consistent across seeds.
+  The same 119 tasks with different random dihedral / colour copies give a slightly weaker baseline.
+- **Checkpoint-to-checkpoint spread of the plain baseline** under the normalised 120-step loop: pass@1 2-5, token
+  accuracy .811-.829 over four checkpoints. The meta-fine-tuned checkpoints (one-step 6.0 / 5-step stretched 7 / 10-step
+  stretched 7 at pass@1, .836-.845) are above every plain checkpoint in token accuracy and at or above the best one in
+  pass@1, but their pass@1 lead over the original baseline (+2 to +3) is about the size of this spread. The meta
+  checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
+- The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
+  (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
 ## Contamination check (2026-10-23 22:00)
 
 `scratchpad/contamination.py` searches every training-split row for each held-out pair, up to the 8 dihedral transforms
@@ -681,3 +707,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   in by the previous session ending at 23:10 (log `varc_ho3/train_killed_session_end.log`); relaunched 23:23.
 - **2026-10-23 23:31. Round 13 done:** retrained baseline ttt_mini 3/4/5 (.793), normalised 120 steps 2/5/5 (.811);
   .015-.018 below varc_ho2. Section "Round 13".
+- **2026-10-23 23:50. Round 14 done:** code replicates on the original build (4/4/4, .812); the retrain gap is the build's
+  augmentation draw (two seeds agree). Section "Round 14". GPU idle.
