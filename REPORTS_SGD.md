@@ -127,6 +127,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | 10 | 12 | 13 | 14 | 0.872 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | 12 | 12 | 14 | 16 | 0.888 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | 10 | 12 | 13 | 14 | 0.865 |
+| msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | 12 | 13 | 15 | 16 | 0.885 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -364,6 +365,26 @@ model (and mostly to the test-time rule). Likely reasons, untested: ~1.75 tasks 
 puzzles per step), the fresh-row regime from random init (the puzzle table is never trained, so theta must carry every
 task), and 1000 meta-fine-tuning steps on top of 4000 plain being simply more training than 4000 meta-steps.
 
+## Round 12a (2026-10-23 20:36): the 5-step checkpoint, stretched vs held alphas
+
+RMS-normalised rule, full batch on the 48 aux rows, one eval seed each:
+
+| steps | 5-step, stretched | 5-step, last alpha held | one-step checkpoint | plain, hand-set alpha |
+|---|---|---|---|---|
+| 120 | 7 / 8 / 9, .845, demos -> 0.49 | 7 / 7 / 8, .837, demos -> 0.54 | 6.0 / 7.3 / 8.7, .836 (3 seeds) | 4.0 / 6.7 / 8.0, .827 (3 seeds) |
+| 300 | 10 / 12 / 13, .872, demos -> 0.41 | 10 / 12 / 13, .865, demos -> 0.45 | 8 / 9 / 9, .862 | 7 / 9 / 10, .853 |
+| 1000 | 12 / 12 / 14, .888, demos -> 0.35 | 12 / 13 / 15, .885, demos -> 0.36 | 10 / 13 / 15, .887 | 10 / 13 / 15, .879 |
+
+- **Meta-training the 5-step loop is the gain.** Either schedule beats the one-step and plain checkpoints by 2-3 tasks
+  at pass@1 at 300 and 1000 steps (10 vs 7-8; 12 vs 10), and by 3-4 at pass@2/5 at 300. This is the first meta-learning
+  increment larger than the eval-seed spread (pass@1 2-4).
+- **Stretching the alphas (user's idea) helps a little and early.** Stretched beats held in token accuracy at every
+  length (+.008 / +.007 / +.003) and fits the demos further, with equal task counts at 300 and 1000 (one task either way
+  at pass@2/5). Its value shrinks as the loop lengthens, as expected: both schedules converge once the demos are fitted.
+- 12/30 at pass@1 (40%) is the best held-out result in the project; ttt_mini from the plain checkpoint was 4/30.
+- One seed per cell outside the 120-step plain/one-step rows; seeds for the 300-step cells would firm up the 5-step vs
+  one-step gap. The 10-step run (restarted 20:36) tests whether more trained steps widen it.
+
 ## Queued runs (as of 2026-10-23 11:30; one GPU job at a time)
 
 All training runs start from the plain checkpoint `varc_ho2` on round 3's recipe (`FT3`/`EPISODE3` in
@@ -387,8 +408,8 @@ single-step run is ~9 min of training + ~5 min of evaluations; round 3's per-eva
 | 11 (`msgd11_varc.sh`, launched 14:35, process started 15:33; user's next steps 1-3) | msgd7_norm, varc_ho2 | normalised loops for 300 and 1000 steps (evaluations only) | ms8n_s300/1000, ms4vnorm_s300/1000 | ~16:25 |
 | 11 | msgd11_ms5 | meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL 30%, first order 300), from the plain checkpoint | ms9m5_s10/30/120, _adam | ~17:20 |
 | 11 | msgd11_scratch | normalised recipe from scratch, 4000 x batch 128, lr 1e-3 (plain control = varc_ho2) | ms9sc_* | ~18:10 (step time unmeasured) |
-| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~22:30 (killed at ~step 450 by a laptop restart at 18:48; restarted 19:40 after round 12's 5-step evals) |
-| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | 5-step part ~20:25, 10-step part ~23:15 |
+| 11 | msgd11_ms10 | as msgd11_ms5 with 10 inner steps | ms9m10_* | ~22:45 (killed at ~step 450 by a laptop restart at 18:48; restarted 20:36 after round 12's 5-step evals) |
+| 12 (`msgd12_eval.sh`, chained; user) | msgd11_ms5, msgd11_ms10 | the per-step alphas as a learned schedule shape: `meta_sgd_schedule=stretch` (k-th trained alpha for the k-th fraction of the loop) vs hold, at 120 / 300 / 1000 steps | ms9m5_st*, ms9m5_s300/1000, ms9m10_st*, ms9m10_s300/1000 | 5-step part done 20:36, 10-step part ~23:45 |
 
 Queue logs: `autoresearch_runs/miniarc5/msgd5_varc_queue.log`, `msgd6_eval_queue.log`. The table script
 (`scripts/miniarc5/msgd2_table.py`) has rows for every one of these and prints `pending` until the result exists.
@@ -575,3 +596,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   0.45: the same task counts as stretched (10/12/13), .007 lower token accuracy and a shallower demo fit (0.45 vs 0.41).
   So at 300 steps the gain over the one-step (8/9/9) and plain (7/9/10) checkpoints is mostly the 5-step meta-training;
   stretching adds the token-accuracy margin. Held 1000 steps running.
+- **2026-10-23 20:36. Round 12, 5-step checkpoint done:** held 1000 steps 12/13/15 (.885). Section "Round 12a". 10-step
+  meta-training started (ETA ~22:45 with its evaluations), round 12 on it after.
