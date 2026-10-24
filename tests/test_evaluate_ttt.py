@@ -94,3 +94,27 @@ def test_aggregate_waits_for_every_task_then_averages_and_merges(tmp_path):
     assert aggregate(["a", "b", "c"], tmp_path) is None
     assert aggregate(["a", "b"], tmp_path) == {"ARC/pass@2": 0.5}
     assert set(json.loads((tmp_path / "submission.json").read_text())) == {"a", "b"}
+
+
+def test_alpha_step_schedules():
+    from evaluate_ttt import _alpha_step
+    assert [_alpha_step(k, 6, 2, "hold") for k in range(6)] == [0, 1, 2, 3, 4, 5]  # MetaSGD.alpha clamps past the last
+    assert [_alpha_step(k, 6, 2, "stretch") for k in range(6)] == [0, 0, 0, 1, 1, 1]
+    # One trained trajectory of 4 segments: every test trajectory reuses it, segment by segment
+    assert [_alpha_step(k, 10, 4, "segment", 4) for k in range(10)] == [0, 1, 2, 3, 0, 1, 2, 3, 0, 1]
+    # Two trained trajectories (8 alphas), 4 test trajectories: the first two use trained trajectory 0, the last two 1
+    assert [_alpha_step(k, 16, 8, "segment", 4) for k in range(16)] == [0, 1, 2, 3] * 2 + [4, 5, 6, 7] * 2
+
+
+def test_nested_train_overrides_set_single_fields():
+    """+train_overrides.arch.disable_act_halt=true must set that field, not replace the arch block."""
+    from evaluate import _apply_overrides
+    from evaluate_ttt import _flatten
+    assert _flatten({"arch": {"disable_act_halt": True}, "lr": 1e-3}) == {"arch.disable_act_halt": True, "lr": 1e-3}
+    import pathlib, sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from test_meta_sgd import _config
+    config = _config()
+    halt_max = config.arch.halt_max_steps
+    _apply_overrides(config, _flatten({"arch": {"disable_act_halt": True}}))
+    assert config.arch.disable_act_halt is True and config.arch.halt_max_steps == halt_max

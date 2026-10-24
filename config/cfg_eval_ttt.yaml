@@ -30,7 +30,7 @@ train_overrides:
 # > 0: Meta-SGD inner steps on the task's demos with the checkpoint's learned alpha instead of the epochs above; a plain
 # checkpoint takes a fixed alpha via +train_overrides.meta_sgd.enabled=true +train_overrides.meta_sgd.inner_lr=... [+adapt_substrings]
 meta_sgd_steps: 0
-meta_sgd_schedule: hold # per-step alphas over more steps than trained: hold the last, or stretch them over the loop
+meta_sgd_schedule: hold # per-step alphas over more steps than trained: hold the last, stretch them over the loop, or segment (by trajectory position)
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it
