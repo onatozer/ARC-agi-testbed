@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
 from evaluate_ttt import meta_sgd_adapt
-from pretrain import _adapt, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from pretrain import _adapt, _adapt_segment, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -316,8 +316,8 @@ def test_normalized_inner_step_moves_every_tensor_by_alpha_rms():
 
 
 def test_stretch_schedule_spreads_the_per_step_alphas_over_a_longer_loop():
-    """Two trained alphas, four test steps: hold uses alpha 0 then alpha 1 for steps 2-4; stretch uses alpha 0 for steps 1-2
-    and alpha 1 for steps 3-4. With alpha 1 set to ~0, the weights stop moving at step 2 under hold and at step 3 under stretch."""
+    """Two trained alphas, alpha 1 set to ~0: under hold the weights stop moving after step 1, under stretch they move for the
+    first half of the loop."""
     def run(schedule, steps):
         torch.manual_seed(0)  # the same initial weights every call
         config, train_state, batch = _state("meta_sgd.alpha_per_step=true", "meta_sgd.inner_steps=2")
@@ -331,8 +331,50 @@ def test_stretch_schedule_spreads_the_per_step_alphas_over_a_longer_loop():
         meta_sgd_adapt(model, support, steps, [], schedule)
         return dict(model.named_parameters())[name].detach().clone()
     same = lambda a, b: torch.allclose(a, b, atol=1e-6, rtol=0)
+    # 4 test steps over 2 trained alphas: hold uses alpha 0, 1, 1, 1; stretch alpha 0, 0, 1, 1 (step k -> k * 2 // 4)
     assert same(run("hold", 1), run("hold", 4))  # steps 2-4 use alpha_1 ~ 0
-    assert not same(run("stretch", 1), run("stretch", 2))  # step 2 still uses alpha_0
-    assert same(run("stretch", 2), run("stretch", 4))  # steps 3-4 use alpha_1 ~ 0
+    assert not same(run("stretch", 4), run("hold", 4))  # stretch takes a second alpha_0 step
+    assert same(run("stretch", 3), run("stretch", 4))  # 3 steps: alpha 0, 0, 1 -- the same two real steps
     with pytest.raises(ValueError):
         run("linear", 2)
+
+
+def test_one_segment_model_is_unaffected_by_the_segment_options():
+    """halt_max_steps=1 (VARC-like): a segment step is the full-trajectory step, and last_segment_grad changes nothing."""
+    config, train_state, batch = _state("arch.halt_max_steps=1")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    torch.manual_seed(0); loss_a, theta_a = _adapt(model, named, overrides, support)
+    torch.manual_seed(0); loss_b, theta_b, carry = _adapt_segment(model, named, overrides, support, None)
+    torch.manual_seed(0); loss_c, theta_c = _adapt(model, named, overrides, support, last_segment_grad=True)
+    torch.testing.assert_close(loss_a, loss_b); torch.testing.assert_close(loss_a, loss_c)
+    for n in theta_a:
+        torch.testing.assert_close(theta_a[n], theta_b[n]); torch.testing.assert_close(theta_a[n], theta_c[n])
+
+
+def test_segment_inner_steps_continue_the_carry():
+    """Each segment step advances the support rows' ACT state by one segment, as train_batch does."""
+    config, train_state, batch = _state()  # halt_max_steps=4
+    model = train_state.model.eval()  # no halting exploration
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    _, theta, carry = _adapt_segment(model, named, overrides, support, None, second_order=False)
+    assert carry.steps.tolist() == [1] * support["inputs"].shape[0] and not carry.steps.requires_grad
+    named = [(n, theta.get(n, p)) for n, p in named]
+    _, theta, carry2 = _adapt_segment(model, named, theta, support, carry, second_order=False)
+    assert all(s in (2, 1) for s in carry2.steps.tolist())  # 2, or 1 where the row halted at step 1 and restarted
+
+
+def test_last_segment_grad_counts_only_final_segments_and_still_trains_alpha():
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.last_segment_grad=true", "meta_sgd.inner_steps=2", "meta_sgd.alpha_per_step=true")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    with torch.no_grad():
+        full = float(_supervised_loss(model, overrides, query))
+        last = float(_supervised_loss(model, overrides, query, last_segment_grad=True))
+    assert last < full  # only each row's final segment loss is summed (the TINY model runs >1 segment per row)
+    targets = _meta_sgd_targets(model, [])
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.5, 0.5],
+                         segment_inner_steps=True, last_segment_grad=True)
+    for name, _ in targets:
+        g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
+        assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0, name

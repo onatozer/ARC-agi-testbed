@@ -727,15 +727,33 @@ def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict
     return episodes
 
 
-def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+def _segment(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], carry: Any) -> Tuple[Any, torch.Tensor]:
+    """One supervision segment of the loss head with `overrides` substituted: (new carry, loss summed over the rows). carry
+    None starts every row afresh; rows the carry marks halted restart, as in train_batch."""
+    carry, loss, _metrics, _, _ = torch.func.functional_call(model, overrides, args=(), kwargs=dict(return_keys=[], carry=carry, batch=batch))
+    return carry, loss
+
+
+def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], last_segment_grad: bool = False) -> torch.Tensor:
     """The loss head's loss on `batch` with the module's tensors named in `overrides` substituted (torch.func.functional_call),
     summed over each row's ACT trajectory from a fresh carry: a row contributes every supervision step until the model halts
     it (or halt_max_steps), as in train_batch, where halted rows are replaced by new ones; here they are dropped. The carry
-    is detached between steps (deep supervision), so no in-place write touches a tensor saved for backward."""
+    is detached between steps (deep supervision), so no in-place write touches a tensor saved for backward. last_segment_grad:
+    the segments run without gradient and each row's final one is re-run with it, so only that segment's loss counts."""
     carry, total = None, 0.0
     while batch["inputs"].shape[0] > 0:
-        carry, loss, _metrics, _, _ = torch.func.functional_call(model, overrides, args=(), kwargs=dict(return_keys=[], carry=carry, batch=batch))
-        total = total + loss
+        if not last_segment_grad:
+            carry, loss = _segment(model, overrides, batch, carry)
+            total = total + loss
+        else:
+            prev = carry
+            with torch.no_grad():
+                carry, _ = _segment(model, overrides, batch, carry)
+            done = carry.halted
+            if done.any():
+                start = None if prev is None else apply_to_tensors(prev, lambda t: t[done])
+                _, loss = _segment(model, overrides, {k: v[done] for k, v in batch.items()}, start)
+                total = total + loss
         keep = ~carry.halted
         carry = apply_to_tensors(carry, lambda t: t[keep].detach().clone())
         batch = {k: v[keep] for k, v in batch.items()}
@@ -744,19 +762,38 @@ def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch
 
 def _adapt(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
-    step: int = 0, second_order: bool = True,
+    step: int = 0, second_order: bool = True, last_segment_grad: bool = False,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """One inner step: (per-row support loss, theta1 = theta - alpha * its gradient for every tensor in `named`), with the
     gradient's graph kept (second_order) so the outer loss can differentiate through it. `overrides` are substituted during
     the forward; `step` picks the step's alpha when there is one per step. For later steps `named` holds the previous
     step's adapted tensors (non-leaves in the graph), so the chain of steps stays differentiable."""
-    loss_s = _supervised_loss(model, overrides, support) / support["inputs"].shape[0]
+    loss_s = _supervised_loss(model, overrides, support, last_segment_grad) / support["inputs"].shape[0]
+    return loss_s, _inner_update(model, named, overrides, loss_s, step, second_order)
+
+
+def _adapt_segment(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
+    carry: Any, step: int = 0, second_order: bool = True,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Any]:
+    """_adapt with one supervision segment as the step (meta_sgd.segment_inner_steps): the support rows continue `carry` (None:
+    a fresh start) for one segment and the weights take one step on that segment's loss. Returns (per-row loss, theta1, the
+    carry for the next step, detached)."""
+    carry, loss = _segment(model, overrides, support, carry)
+    loss_s = loss / support["inputs"].shape[0]
+    return loss_s, _inner_update(model, named, overrides, loss_s, step, second_order), apply_to_tensors(carry, lambda t: t.detach().clone())
+
+
+def _inner_update(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], loss_s: torch.Tensor, step: int, second_order: bool,
+) -> Dict[str, torch.Tensor]:
+    """theta1 = theta - alpha * the gradient of loss_s (per tensor RMS-normalised with meta_sgd.normalize_grad), graph kept when second_order."""
     grads = torch.autograd.grad(loss_s, [p for _, p in named], create_graph=second_order, allow_unused=True)
     if model.meta_sgd.normalize:
         grads = [None if g is None else g * torch.rsqrt(g.pow(2).mean() + 1e-16) for g in grads]
     theta1 = dict(overrides)
     theta1.update({n: p - model.meta_sgd.alpha(n, step) * g for (n, p), g in zip(named, grads) if g is not None})
-    return loss_s, theta1
+    return theta1
 
 
 def _msl_weights(steps: int, progress: float) -> List[float]:
@@ -786,7 +823,7 @@ def _episode_overrides(
 def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, fresh_rows: bool = False,
-    msl_weights: Optional[List[float]] = None, second_order: bool = True,
+    msl_weights: Optional[List[float]] = None, second_order: bool = True, segment_inner_steps: bool = False, last_segment_grad: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Meta-SGD on one task: theta_k = theta_{k-1} - alpha_k * grad of the per-row support loss (graph kept) for each inner
     step, then the query losses at the theta_k, weighted by msl_weights ([1.0]: one step) and times loss_scale, are
@@ -804,13 +841,16 @@ def _task_outer_backward(
 
     weights = msl_weights or [1.0]
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
-        theta, total, loss_s0 = overrides, 0.0, None
+        theta, total, loss_s0, carry = overrides, 0.0, None, None
         for k, w in enumerate(weights):
-            loss_s, theta = _adapt(model, named, theta, support, step=k, second_order=second_order)
+            if segment_inner_steps:
+                loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, step=k, second_order=second_order)
+            else:
+                loss_s, theta = _adapt(model, named, theta, support, step=k, second_order=second_order, last_segment_grad=last_segment_grad)
             loss_s0 = loss_s if loss_s0 is None else loss_s0
             named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
             if w > 0 or k == len(weights) - 1:
-                loss_q = _supervised_loss(model, theta, query)
+                loss_q = _supervised_loss(model, theta, query, last_segment_grad)
                 total = total + w * loss_q
         (total * loss_scale).backward()
     row_grad = None if emb_name is None else overrides[emb_name].grad
@@ -856,6 +896,7 @@ def meta_sgd_batch(
         for _key, support, query in episodes:
             loss_s, loss_q, ids, row_grad = _task_outer_backward(
                 model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
+                segment_inner_steps=cfg.segment_inner_steps, last_segment_grad=cfg.last_segment_grad,
             )
             support_losses.append(loss_s)
             query_losses.append(loss_q)

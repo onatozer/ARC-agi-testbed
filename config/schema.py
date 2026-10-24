@@ -61,6 +61,11 @@ class MetaSGDConfig(BaseModel):
     alpha_per_tensor: bool = False  # one alpha per adapted tensor (the embedding table keeps one per column)
     alpha_per_step: bool = False  # a separate alpha for each of the inner_steps (test steps beyond them reuse the last)
     first_order_steps: int = 0
+    # Multi-segment (ACT) models such as TRM: inner steps as supervision segments (each continues the carry the previous step
+    # left, as train_batch does), and full-trajectory losses with gradient only through each row's final segment (the
+    # earlier ones run without gradient, as TRM's own H-cycles). One-segment models (VARC) are unaffected by either.
+    segment_inner_steps: bool = False
+    last_segment_grad: bool = False
     normalize_grad: bool = False  # inner step on the gradient divided by its RMS per tensor: a step moves a tensor by ~alpha whatever the gradient's scale (as Adam does; not Meta-SGD proper)
 
     @pydantic.model_validator(mode="after")
