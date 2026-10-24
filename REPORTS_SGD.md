@@ -145,6 +145,7 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | 0.872 |
 | msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | 12 | 12 | 14 | 17 | 0.890 |
 | msgd15_ms5_fo | round 15: 5-step first order; 120 steps, held | 5 | 7 | 8 | 9 | 0.837 |
+| trm_ho2 | round 16: plain TRM, ttt_mini | 1 | 2 | 3 | 6 | 0.776 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -769,3 +770,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   12/12/14 (.888).
 - **2026-10-24 02:23. Round 15 done** (5-step first order, held 120: 5/7/8, 0.837). Section "Round 15". TRM queue
   (round 16) started.
+- **2026-10-24 02:29. Round 16, plain TRM under ttt_mini:** 1/2/3 (p@100 6), tok .776, 5.9 min for 30 tasks; identical to
+  the previous loop's evaluation of the same checkpoint (`lr_full`, 1/2/3 .776), so the eval path reproduces on TRM. TRM
+  is the weaker baseline on this build (VARC: 4/4/4, .811).
