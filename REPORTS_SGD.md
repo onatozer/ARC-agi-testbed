@@ -148,6 +148,8 @@ Code: `pretrain.py` (`meta_sgd_batch`, `_episodes_from_batch`, `_supervised_loss
 | trm_ho2 | round 16: plain TRM, ttt_mini | 1 | 2 | 3 | 6 | 0.776 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 120 steps | 4 | 7 | 9 | 12 | 0.808 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | 10 | 12 | 13 | 16 | 0.812 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 120 steps, stretched | 4 | 5 | 5 | 9 | 0.801 |
+| msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 300 steps, stretched | 8 | 10 | 12 | 13 | 0.809 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -786,3 +788,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   entirely first order, everything else unchanged: round 15 found first order equal to second order on VARC at every
   length, and the first 300 steps were first order anyway. No intermediate checkpoint, so it restarts at step 0; ~13 s per
   step, training ~3.6 h, evaluations after (~09:00).
+- **2026-10-24 06:10. Round 16, TRM meta-fine-tuned** (first order, 1 h 55 min; per-step alphas decay, rows .028 -> .015,
+  largest weight alphas on the L-level MLPs), stretched: 120 steps 4/5/5 (0.801), 300 steps
+  8/10/12 (0.809); plain TRM under the same rule with the hand-set alphas: 4/7/9 (.808) and 10/12/13 (.812).
