@@ -606,3 +606,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   labels differ; probably PR #68's builder changes moved the random stream). So fine-tuning runs saw new augmentations of
   the same tasks, the non-fresh-row controls loaded embedding rows that index other augmentations (equally for meta and
   control), and the from-scratch comparison pits a meta run on this build against a plain baseline on the old one.
+  Verification of that build (user asked how the held-out set is known to match): its files were all written 2026-10-19
+  19:37, before the checkpoint's run (2026-10-20 23:18-23:22), and not since; its held-out list is byte-identical to ours;
+  its train split covers 119 base tasks with zero overlap with the 30 held-out ones, and its test split is exactly them.
+  That the run read this path rests on the data_path in its all_config.yaml (written at launch); the re-evaluation in this
+  session reproduced the previous loop's 4/4/4 (.811) exactly.
