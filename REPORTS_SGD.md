@@ -967,3 +967,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-25 00:15. Round 21 queued** (user, `msgd21_trm_act.sh`): TRM with ACT on throughout: round 18's recipe from
   trm_ho3 without `arch.disable_act_halt`, evaluated with ACT on and the segment schedule at 1000 steps, against plain
   trm_ho3 with ACT on (12/14/14, .835). ~3.5 h training + ~50 min evaluation, ETA ~04:45.
+- **2026-10-25 00:45. Round 22 queued** (user, `msgd22_trm_wait.sh`, after round 21): new option `meta_sgd.halt_wait`
+  (with segment steps, a row the ACT head halts sits out until its trajectory ends, every 8 inner steps, then all rows
+  restart together; before, a halted row restarted at once, so later inner steps mixed rows at different trajectory
+  positions under one per-step alpha). Round 21's recipe plus halt_wait, and the plain trm_ho3 control under the same
+  rule, both at 1000 steps. ~3.5 h + 2 x 50 min, ETA ~10:00.
