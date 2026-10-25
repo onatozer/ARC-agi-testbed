@@ -132,17 +132,17 @@ Bold: the best value in its column; underlined: the rest of the column's top 10%
 | msgd11_ms5 | round 11: meta-trained with 5 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 7 | 1 / 2 / 7 | 1 / 3 / 8 | 1 / 5 / 10 | .753 / .797 / .837 |
 | msgd11_ms5 | round 11: 5-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.804 |
 | msgd11_ms5 | round 12: 5-step meta-trained; 120 steps, per-step alphas stretched over the loop | 7 | 8 | 9 | 9 | 0.845 |
-| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | <u>10</u> | <u>12</u> | <u>13</u> | <u>14</u> | <u>0.872</u> |
+| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, stretched | <u>10</u> | <u>12</u> | <u>13</u> | 14 | <u>0.872</u> |
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, stretched | <u>12</u> | <u>12</u> | <u>14</u> | <u>16</u> | <u>0.888</u> |
-| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | <u>10</u> | <u>12</u> | <u>13</u> | <u>14</u> | <u>0.865</u> |
+| msgd11_ms5 | round 12: 5-step meta-trained; 300 steps, last alpha held | <u>10</u> | <u>12</u> | <u>13</u> | 14 | <u>0.865</u> |
 | msgd11_ms5 | round 12: 5-step meta-trained; 1000 steps, last alpha held | <u>12</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.885</u> |
 | msgd11_ms10 | round 11: meta-trained with 10 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 4 | 1 / 3 / 5 | 2 / 4 / 6 | 2 / 7 / 8 | .782 / .803 / .833 |
 | msgd11_ms10 | round 11: 10-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.806 |
-| msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / <u>10</u> / <u>12</u> | 7 / <u>11</u> / <u>13</u> | 10 / <u>13</u> / <u>14</u> | 10 / <u>14</u> / **18** | .845 / <u>.870</u> / <u>.888</u> |
-| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / <u>11</u> | <u>13</u> / <u>14</u> | <u>14</u> / <u>16</u> | .862 / <u>.884</u> |
+| msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / <u>10</u> / <u>12</u> | 7 / 11 / <u>13</u> | 10 / <u>13</u> / <u>14</u> | 10 / 14 / **18** | .845 / <u>.870</u> / <u>.888</u> |
+| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / 11 | <u>13</u> / <u>14</u> | 14 / <u>16</u> | .862 / <u>.884</u> |
 | msgd15_n1_fo | round 15: one-step normalised recipe, entirely first order; 120 steps | 5 | 6 | 8 | 9 | 0.832 |
 | msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | <u>0.863</u> |
-| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | <u>11</u> | <u>13</u> | <u>15</u> | <u>0.884</u> |
+| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | 11 | <u>13</u> | <u>15</u> | <u>0.884</u> |
 | msgd15_ms5_fo | round 15: 5-step normalised recipe, first order; 120 steps, stretched | 7 | 7 | 8 | 10 | 0.841 |
 | msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | <u>0.872</u> |
 | msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | <u>12</u> | <u>12</u> | <u>14</u> | <u>17</u> | **0.890** |
@@ -152,11 +152,12 @@ Bold: the best value in its column; underlined: the rest of the column's top 10%
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 300 steps | <u>10</u> | <u>12</u> | <u>13</u> | <u>16</u> | 0.812 |
 | trm_ho2 | round 16: plain TRM, normalised segment steps, hand-set alpha, 1000 steps | **14** | **16** | **17** | <u>17</u> | 0.825 |
 | varc_ho3 | round 17: plain VARC (this branch), normalised step, hand-set alpha, 120 / 300 / 1000 steps | 2 / 8 / <u>11</u> | 5 / 9 / <u>13</u> | 5 / 10 / <u>13</u> | 5 / 11 / **18** | .811 / .847 / <u>.878</u> |
-| msgd17_v_a1e-3 | round 17: VARC (from varc_ho3) 5-step first order, alpha init 1e-3 / 3e-2; 120 / 300 / 1000 steps, stretched | 6 / 8 / <u>12</u> | 7 / 9 / <u>13</u> | 7 / 11 / <u>14</u> | 11 / <u>14</u> / <u>16</u> | .844 / .861 / <u>.885</u> |
+| msgd17_v_a1e-3 | round 17: VARC (from varc_ho3) 5-step first order, alpha init 1e-3 / 3e-2; 120 / 300 / 1000 steps, stretched | 6 / 8 / <u>12</u> | 7 / 9 / <u>13</u> | 7 / 11 / <u>14</u> | 11 / 14 / <u>16</u> | .844 / .861 / <u>.885</u> |
 | msgd17_v_a0.1 | round 17: same, alpha init 0.1; 120 / 300 / 1000 steps, stretched | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | .087 / .000 / .000 |
 | msgd17_v_a1 | round 17: same, alpha init 1; 120 / 300 / 1000 steps, stretched | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | .000 / .000 / .000 |
 | trm_ho3 | round 18: plain TRM retrained on this branch, ttt_mini | 1 | 2 | 3 | 3 | 0.779 |
 | trm_ho3 | round 18: plain TRM (this branch), normalised segment steps, ACT off, hand-set alpha; 120 / 300 / 1000 steps | 5 / 7 / 8 | 7 / 10 / 9 | 8 / 11 / 12 | 10 / 12 / <u>15</u> | .799 / .822 / .815 |
+| msgd18_trm | round 18: TRM (from trm_ho3) meta-fine-tuned, 8 segment steps, ACT off, alpha init 1e-3; 120 / 300 / 1000 steps, segment schedule | 6 / 8 / <u>11</u> | 6 / 9 / <u>13</u> | 7 / 9 / <u>15</u> | 10 / 13 / <u>17</u> | .798 / .817 / .829 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 120 steps, stretched | 4 | 5 | 5 | 9 | 0.801 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 300 steps, stretched | 8 | 10 | 12 | 13 | 0.809 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 1000 steps, stretched | <u>11</u> | <u>12</u> | <u>13</u> | 13 | 0.836 |
@@ -475,6 +476,25 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 18 (2026-10-24 20:43): TRM, one trajectory of segment steps, ACT off, segment-indexed alphas
+
+All from trm_ho3 (plain TRM retrained on this branch and build), ACT halting off throughout:
+
+| steps | meta-fine-tuned (8 segment steps, alpha init 1e-3), segment schedule | plain trm_ho3, hand-set alpha |
+|---|---|---|
+| ttt_mini | | 1 / 2 / 3, .779 |
+| 120 | 6 / 6 / 7, .798 | 5 / 7 / 8, .799 |
+| 300 | 8 / 9 / 9, .817 | 7 / 10 / 11, .822 |
+| 1000 | **11 / 13 / 15, .829** | 8 / 9 / 12, .815 |
+
+- Meta-fine-tuning (3 h 20 min first order, ~25 s / meta-step) now helps TRM at long loops: +3 / +4 / +3 tasks and
+  +.014 token accuracy at 1000 steps, where the plain checkpoint stalls after 300; level at 120 / 300 (within a task).
+  Round 16's 5-step version, trained on a fraction of one trajectory and evaluated on ACT-on rows, was behind its plain
+  checkpoint at every length.
+- Learned alphas by segment position (weights, geometric mean): 0.00033 0.00024 0.00031 0.0002 0.0004 0.00031 0.00031 0.00018; rows: 0.022 0.026 0.023 0.014 0.02 0.014 0.012 0.01.
+- Against round 16's TRM (other build, ACT on: plain 14/16/17 at 1000), this branch's plain TRM with ACT off is far
+  lower (8/9/12); round 19 evaluates trm_ho3 with ACT on to tell the build from ACT-off.
 
 ## Round 17 (2026-10-24 14:15): very large alpha inits, VARC
 
@@ -905,3 +925,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   (8 segment steps), so ~7.5 h: training ~23:40, evaluations ~00:45.
 - **2026-10-24 16:45. Round 19 queued** (user, `msgd19_trm_act.sh`, after round 18): trm_ho3 under the normalised segment
   rule with ACT halting on, 1000 steps, to separate the build from ACT-off in round 18's plain-TRM drop. ~45 min, ETA ~01:30.
+- **2026-10-24 20:43. Round 18 done:** meta-fine-tuned TRM 6/6/7, 8/9/9, 11/13/15 at 120 / 300 / 1000 (segment schedule)
+  against plain 5/7/8, 7/10/11, 8/9/12. Section "Round 18". Round 19 (ACT on) running.
