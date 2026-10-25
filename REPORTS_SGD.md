@@ -964,3 +964,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-24 21:55. Round 20 queued** (user, `msgd20_trm_act.sh`): msgd18_trm with ACT on at test time, segment
   schedule, 1000 steps, against plain trm_ho3 with ACT on (12/14/14, .835). ~50 min.
 - **2026-10-24 23:56. Round 20 done:** meta-fine-tuned TRM with ACT on at test: 9/11/12 (0.825). Section "Round 20".
+- **2026-10-25 00:15. Round 21 queued** (user, `msgd21_trm_act.sh`): TRM with ACT on throughout: round 18's recipe from
+  trm_ho3 without `arch.disable_act_halt`, evaluated with ACT on and the segment schedule at 1000 steps, against plain
+  trm_ho3 with ACT on (12/14/14, .835). ~3.5 h training + ~50 min evaluation, ETA ~04:45.
