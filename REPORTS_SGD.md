@@ -977,3 +977,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   Embed-Full-TTT, the paper's best = embedding for epochs 1-10, then the backbone with the embedding frozen for 11-20
   (`train_overrides.freeze_alternation_epochs=10`; the lr schedule spans all 20 epochs, the paper's per-step schedule
   is not given in its text). Full-TTT = ttt_mini, already run. ~20 min, ETA ~10:20.
+- **2026-10-25 01:30. Round 24 queued** (user, `msgd24_embed_first.sh`, after round 23): arXiv 2609.21181's two-step idea
+  inside the best recipes' test-time loop. New `evaluate_ttt.py` option `meta_sgd_embed_first` (fraction of the inner
+  steps that adapt only the puzzle-embedding rows; the rest adapt only the weights, rows frozen; tested). At 0.5 and 1000
+  steps on varc_ho3 (hand-set), msgd17_v_a1e-3 (stretched), trm_ho3 (ACT on, hand-set) and msgd18_trm (ACT off, segment),
+  each against its single-phase result. ~2.5 h, ETA ~13:00.

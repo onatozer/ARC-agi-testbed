@@ -412,3 +412,28 @@ def test_outer_backward_with_halt_wait_trains_every_steps_alpha():
     for name, _ in targets:
         g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
         assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0, name
+
+
+def test_embed_first_adapts_the_rows_then_only_the_weights():
+    """meta_sgd_adapt(embed_first=0.5): the first half of the steps move only the support rows' embeddings, the second half
+    only the weights, with the rows as the first half left them."""
+    config, train_state, batch = _state()
+    model = train_state.model.eval()
+    emb_name = _puzzle_emb_name(model)
+    table = model.get_buffer(emb_name)
+    support = {k: v[batch["validation"] == 0] for k, v in batch.items() if k != "validation"}
+    ids = torch.unique(support["puzzle_identifiers"])
+    weight = next(p for n, p in model.named_parameters() if not n.startswith("meta_sgd.") and p.requires_grad)
+    rows0, w0 = table[ids].clone(), weight.detach().clone()
+    meta_sgd_adapt(model, support, 2, [], embed_first=0.5)  # step 1 rows only, step 2 weights only
+    rows1, w1 = table[ids].clone(), weight.detach().clone()
+    assert not torch.equal(rows1, rows0)
+    assert not torch.equal(w1, w0)
+    config2, train_state2, _ = _state()
+    model2 = train_state2.model.eval()
+    weight2 = next(p for n, p in model2.named_parameters() if not n.startswith("meta_sgd.") and p.requires_grad)
+    w2 = weight2.detach().clone()
+    meta_sgd_adapt(model2, support, 2, [], embed_first=1.0)  # rows only throughout: weights untouched
+    torch.testing.assert_close(weight2.detach(), w2)
+    with pytest.raises(ValueError):
+        meta_sgd_adapt(model2, support, 2, [], embed_first=1.5)

@@ -110,21 +110,29 @@ def _alpha_step(k: int, steps: int, trained: int, schedule: str, segments: int =
 def meta_sgd_adapt(
     model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, substrings: List[str], schedule: str = "hold",
     segment_inner_steps: bool = False, last_segment_grad: bool = False, segments: int = 1, halt_wait: bool = False,
+    embed_first: float = 0.0,
 ) -> List[float]:
     """Test-time Meta-SGD: `steps` inner steps with the model's learned alpha (model.meta_sgd) on the task's support rows,
     written into the weights and the rows' puzzle embeddings. With per-step alphas and more steps than were trained,
     "hold" keeps the last trained alpha for the rest, "stretch" spreads the trained ones over the loop (the k-th for the
     k-th fraction of the steps: a learned schedule shape at any length), "segment" indexes them by the rows' segment within
     their `segments`-segment trajectory (rows in lockstep: ACT halting off) and stretches the trained trajectories over the
-    loop's. Returns the per-row support loss before each step."""
+    loop's. embed_first: that fraction of the steps adapt only the puzzle-embedding rows, the rest only the other tensors
+    (the rows frozen at what the first phase found). Returns the per-row support loss before each step."""
     if getattr(model, "meta_sgd", None) is None:
         raise ValueError("meta_sgd_steps needs meta_sgd.enabled: the checkpoint's, or +train_overrides.meta_sgd.enabled=true with inner_lr (and adapt_substrings).")
     if schedule not in ("hold", "stretch", "segment"):
         raise ValueError(f"meta_sgd_schedule must be 'hold', 'stretch' or 'segment', got {schedule!r}")
     if schedule == "segment" and model.meta_sgd.steps % segments:
         raise ValueError(f"meta_sgd_schedule=segment needs the trained steps ({model.meta_sgd.steps}) to be whole trajectories of {segments} segments")
-    targets, emb_name, losses, carry = _meta_sgd_targets(model, substrings), _puzzle_emb_name(model), [], None
+    all_targets, emb_name, losses, carry = _meta_sgd_targets(model, substrings), _puzzle_emb_name(model), [], None
+    if not 0 <= embed_first <= 1:
+        raise ValueError(f"meta_sgd_embed_first must be in [0, 1], got {embed_first}")
+    embed_steps = round(embed_first * steps)
+    if embed_steps and (emb_name is None or not any(n == emb_name for n, _ in all_targets)):
+        raise ValueError("meta_sgd_embed_first needs adapted puzzle-embedding rows.")
     for k in range(steps):
+        targets = all_targets if not embed_steps else [(n, p) for n, p in all_targets if (n == emb_name) == (k < embed_steps)]
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
         alpha_step = _alpha_step(k, steps, model.meta_sgd.steps, schedule, segments)
         if segment_inner_steps and halt_wait:  # halted rows sit out until the trajectory ends, then all restart together
@@ -199,7 +207,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             support = tree_to_device(_support_batch(config, train_metadata), next(train_state.model.parameters()).device)
             losses = meta_sgd_adapt(train_state.model, support, cfg.meta_sgd_steps, config.meta_sgd.adapt_substrings, cfg.meta_sgd_schedule,
                                     config.meta_sgd.segment_inner_steps, config.meta_sgd.last_segment_grad, config.arch.halt_max_steps,
-                                    config.meta_sgd.halt_wait)
+                                    config.meta_sgd.halt_wait, cfg.meta_sgd_embed_first)
             alpha_mean, alpha_max = train_state.model.meta_sgd.summary()
             print_info(f"TTT run {run}: {cfg.meta_sgd_steps} Meta-SGD steps (alpha geometric mean {alpha_mean:.3g}, max {alpha_max:.3g}) on {support['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
         else:
