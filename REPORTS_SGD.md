@@ -162,6 +162,10 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | msgd21_trm_act | round 21: TRM meta-fine-tuned with ACT on, ACT on at test, segment schedule, 1000 steps | <u>11</u> | <u>11</u> | <u>13</u> | 14 | 0.832 |
 | trm_ho3 | round 22: plain TRM, ACT on, halt-and-wait, hand-set alpha, 1000 steps | 5 | 6 | 7 | 13 | 0.816 |
 | msgd22_trm_wait | round 22: TRM meta-fine-tuned with ACT on and halt-and-wait, segment schedule, 1000 steps | 9 | <u>11</u> | <u>13</u> | <u>17</u> | 0.816 |
+| varc_ho3 | round 23: plain VARC (this branch), Embed-TTT (embedding only, arXiv 2609.21181), ttt_mini length | 2 | 3 | 3 | 3 | 0.760 |
+| varc_ho3 | round 23: plain VARC (this branch), Embed-Full-TTT (embedding, then backbone), ttt_mini length | 3 | 3 | 3 | 3 | 0.779 |
+| trm_ho3 | round 23: plain TRM (this branch), Embed-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.751 |
+| trm_ho3 | round 23: plain TRM (this branch), Embed-Full-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.755 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -475,6 +479,18 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 23 (2026-10-25 09:10): arXiv 2609.21181's TTT protocols, at ttt_mini's length
+
+| plain checkpoint (this branch) | Full-TTT (= ttt_mini) | Embed-TTT (embedding only) | Embed-Full-TTT (embedding, then backbone) |
+|---|---|---|---|
+| VARC varc_ho3 | 3 / 4 / 5, .793 | 2 / 3 / 3, .760 | 3 / 3 / 3, .779 |
+| TRM trm_ho3 | 1 / 2 / 3, .779 | 1 / 1 / 1, .751 | 1 / 1 / 1, .755 |
+
+At ttt_mini's ~120 steps the paper's protocols do not help: the embedding alone already recovers most of Full-TTT at
+pass@1 (2 of 3 on VARC, 1 of 1 on TRM) with <0.01% of the parameters, as the paper reports, but the two-step version
+ends at or below Full-TTT, with its backbone phase only ~60 updates at the decayed half of a single schedule. Round 24
+puts the two phases into the 1000-step normalised loop instead.
 
 ## Round 22 (2026-10-25 08:52): halt-and-wait
 
@@ -1020,3 +1036,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   plain with ACT on 12/14/14 (.835). Section "Round 21". Round 22 (halt-and-wait) started.
 - **2026-10-25 08:52. Round 22 done:** halt-and-wait: plain 5/6/7 (.816), meta-fine-tuned 9/11/13 (.816). Section
   "Round 22". Round 23 (the paper's TTT protocols) started.
+- **2026-10-25 09:10. Round 23 done** (section "Round 23"): Embed-TTT / Embed-Full-TTT at ttt_mini's length at or
+  below Full-TTT on both models. Round 24 started.
