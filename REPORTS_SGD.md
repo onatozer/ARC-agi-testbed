@@ -160,6 +160,8 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | trm_ho3 | round 19: plain TRM (this branch), normalised segment steps, ACT ON, hand-set alpha, 1000 steps | **12** | **14** | <u>14</u> | <u>16</u> | 0.835 |
 | msgd18_trm | round 20: TRM meta-fine-tuned (ACT off in training), ACT ON at test, segment schedule, 1000 steps | 9 | <u>11</u> | 12 | 13 | 0.825 |
 | msgd21_trm_act | round 21: TRM meta-fine-tuned with ACT on, ACT on at test, segment schedule, 1000 steps | <u>11</u> | <u>11</u> | <u>13</u> | 14 | 0.832 |
+| trm_ho3 | round 22: plain TRM, ACT on, halt-and-wait, hand-set alpha, 1000 steps | 5 | 6 | 7 | 13 | 0.816 |
+| msgd22_trm_wait | round 22: TRM meta-fine-tuned with ACT on and halt-and-wait, segment schedule, 1000 steps | 9 | <u>11</u> | <u>13</u> | <u>17</u> | 0.816 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -473,6 +475,25 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 22 (2026-10-25 08:52): halt-and-wait
+
+| TRM (this branch), normalised segment steps, 1000 steps | plain trm_ho3, hand-set alpha | meta-fine-tuned to match, segment schedule |
+|---|---|---|
+| ACT off (rows always run 8 segments) | 8 / 9 / 12, .815 | 11 / 13 / 15, .829 (round 18) |
+| ACT on, halted rows restart at once | **12 / 14 / 14, .835** | 11 / 11 / 13, .832 (round 21) |
+| ACT on, halt-and-wait | 5 / 6 / 7, .816 | 9 / 11 / 13, .816 (round 22; 3 h 9 min) |
+
+- **Halt-and-wait hurts, the plain checkpoint most** (12/14/14 -> 5/6/7), i.e. it is worse than turning ACT off. With
+  halting on, letting a halted row restart at once is clearly the best of the three adaptation loops for the plain TRM.
+- With halt-and-wait the meta-fine-tuned checkpoint gains the most over its plain pair of any ACT setting (+4 / +5 / +6),
+  but the absolute level stays below plain with immediate restarts.
+- Not measured: how often rows halt during the adaptation loop. The 6% early halts were measured at the starting weights
+  on training tasks; as the loop fits a held-out task's demos the halt head plausibly fires earlier and more often, so
+  halt-and-wait would idle many rows for most of each trajectory, while immediate restarts turn the same halts into extra
+  early-segment training. That would explain the ordering, but it is a hypothesis.
+- Across all six TRM cells, the best remains the plain checkpoint with ACT on and immediate restarts. On TRM, Meta-SGD
+  fine-tuning has not beaten it in any configuration tried.
 
 ## Round 21 (2026-10-25 04:39): TRM with ACT on throughout
 
@@ -997,3 +1018,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   each against its single-phase result. ~2.5 h, ETA ~13:00.
 - **2026-10-25 04:39. Round 21 done:** TRM meta-fine-tuned with ACT on throughout, 1000 steps: 11/11/13 (.832), against
   plain with ACT on 12/14/14 (.835). Section "Round 21". Round 22 (halt-and-wait) started.
+- **2026-10-25 08:52. Round 22 done:** halt-and-wait: plain 5/6/7 (.816), meta-fine-tuned 9/11/13 (.816). Section
+  "Round 22". Round 23 (the paper's TTT protocols) started.
