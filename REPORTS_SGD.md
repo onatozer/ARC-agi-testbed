@@ -943,3 +943,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   against plain 5/7/8, 7/10/11, 8/9/12. Section "Round 18". Round 19 (ACT on) running.
 - **2026-10-24 21:32. Round 19 done:** trm_ho3 with ACT on, 1000 steps: 12/14/14 (.835) vs ACT off 8/9/12 (.815). Section
   "Round 19". GPU idle.
+- **2026-10-24 21:55. Round 20 queued** (user, `msgd20_trm_act.sh`): msgd18_trm with ACT on at test time, segment
+  schedule, 1000 steps, against plain trm_ho3 with ACT on (12/14/14, .835). ~50 min.
