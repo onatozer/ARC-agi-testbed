@@ -166,6 +166,10 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | varc_ho3 | round 23: plain VARC (this branch), Embed-Full-TTT (embedding, then backbone), ttt_mini length | 3 | 3 | 3 | 3 | 0.779 |
 | trm_ho3 | round 23: plain TRM (this branch), Embed-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.751 |
 | trm_ho3 | round 23: plain TRM (this branch), Embed-Full-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.755 |
+| varc_ho3 | round 24: plain VARC, embedding first (500 rows-only + 500 weights-only steps), hand-set alpha | 9 | <u>11</u> | <u>13</u> | <u>15</u> | 0.858 |
+| msgd17_v_a1e-3 | round 24: VARC meta-fine-tuned, embedding first, stretched, 1000 steps | 9 | <u>12</u> | 12 | <u>17</u> | <u>0.876</u> |
+| trm_ho3 | round 24: plain TRM, ACT on, embedding first, hand-set alpha, 1000 steps | 9 | <u>11</u> | 11 | 12 | 0.817 |
+| msgd18_trm | round 24: TRM meta-fine-tuned (ACT off), embedding first, segment schedule, 1000 steps | 9 | 10 | 11 | 12 | 0.806 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -479,6 +483,24 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 24 (2026-10-25 11:18): embedding first, then weights, inside the best recipes
+
+1000 normalised steps; `meta_sgd_embed_first=0.5` = 500 steps on the puzzle-embedding rows only, then 500 on the weights
+only with the rows frozen; everything else as the single-phase run it is paired with:
+
+| configuration | single phase | embedding first | single phase, clean 29 | embedding first, clean 29 |
+|---|---|---|---|---|
+| VARC plain, hand-set alpha | 11 / 13 / 13, .878 | 9 / 11 / 13, .858 | 10 / 12 / 12 | 9 / 11 / 13 |
+| VARC meta-fine-tuned, stretched | 12 / 13 / 14, .885 | 9 / 12 / 12, .876 | 12 / 13 / 14 | 9 / 12 / 12 |
+| TRM plain, ACT on, hand-set alpha | 12 / 14 / 14, .835 | 9 / 11 / 11, .817 | 11 / 13 / 13 | 9 / 11 / 11 |
+| TRM meta-fine-tuned, ACT off, segment | 11 / 13 / 15, .829 | 9 / 10 / 11, .806 | 11 / 13 / 15 | 8 / 9 / 10 |
+
+**The two-phase loop is worse in all four configurations**: -2 to -3 at pass@1 and -.009 to -.023 token accuracy, also on
+the 29 tasks without the MiniARC duplicate. The loops were still improving at 1000 steps, so halving the steps that
+reach the weights (500 instead of 1000) is the likely cost; the embedding-only phase does not make up for it. A fairer
+test at matched weight steps (e.g. 500 rows-only + 1000 weights-only) was not run. Together with round 23, the idea of
+arXiv 2609.21181 does not carry over to these recipes at the budgets tried.
 
 ## Round 23 (2026-10-25 09:10): arXiv 2609.21181's TTT protocols, at ttt_mini's length
 
@@ -1038,3 +1060,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   "Round 22". Round 23 (the paper's TTT protocols) started.
 - **2026-10-25 09:10. Round 23 done** (section "Round 23"): Embed-TTT / Embed-Full-TTT at ttt_mini's length at or
   below Full-TTT on both models. Round 24 started.
+- **2026-10-25 11:18. Round 24 done:** embedding-first loop worse than single phase in all four configurations (section
+  "Round 24"). GPU idle.
