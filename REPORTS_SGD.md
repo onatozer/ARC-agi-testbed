@@ -159,6 +159,7 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | msgd18_trm | round 18: TRM (from trm_ho3) meta-fine-tuned, 8 segment steps, ACT off, alpha init 1e-3; 120 / 300 / 1000 steps, segment schedule | 6 / 8 / <u>11</u> | 6 / 9 / <u>13</u> | 7 / 9 / **15** | 10 / 13 / <u>17</u> | .798 / .817 / .829 |
 | trm_ho3 | round 19: plain TRM (this branch), normalised segment steps, ACT ON, hand-set alpha, 1000 steps | **12** | **14** | <u>14</u> | <u>16</u> | 0.835 |
 | msgd18_trm | round 20: TRM meta-fine-tuned (ACT off in training), ACT ON at test, segment schedule, 1000 steps | 9 | <u>11</u> | 12 | 13 | 0.825 |
+| msgd21_trm_act | round 21: TRM meta-fine-tuned with ACT on, ACT on at test, segment schedule, 1000 steps | <u>11</u> | <u>11</u> | <u>13</u> | 14 | 0.832 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -472,6 +473,18 @@ on this build (training variance).
   checkpoints all descend from varc_ho2, so the like-for-like comparison remains against varc_ho2.
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
+
+## Round 21 (2026-10-25 04:39): TRM with ACT on throughout
+
+| TRM (this branch), normalised segment steps, 1000 steps, ACT on at test | pass@1/2/5 | token acc | clean 29 tasks |
+|---|---|---|---|
+| plain trm_ho3, hand-set alpha | 12 / 14 / 14 | .835 | 11 / 13 / 13 |
+| meta-fine-tuned with ACT off (round 18), segment schedule | 9 / 11 / 12 | .825 | 8 / 10 / 11 |
+| meta-fine-tuned with ACT on (round 21, 3 h 19 min), segment schedule | 11 / 11 / 13 | .832 | 10 / 10 / 12 |
+
+Meta-fine-tuning with ACT on beats meta-fine-tuning with ACT off when the test loop has ACT on (+2 / 0 / +1), but it does
+not beat the plain checkpoint under the same rule (-1 / -3 / -1). Halted rows still restart at once here, so its
+per-segment alphas see mixed positions; round 22 (halt-and-wait) removes that.
 
 ## Round 20 (2026-10-24 23:56): the meta-fine-tuned TRM with ACT on at test time
 
@@ -982,3 +995,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   steps that adapt only the puzzle-embedding rows; the rest adapt only the weights, rows frozen; tested). At 0.5 and 1000
   steps on varc_ho3 (hand-set), msgd17_v_a1e-3 (stretched), trm_ho3 (ACT on, hand-set) and msgd18_trm (ACT off, segment),
   each against its single-phase result. ~2.5 h, ETA ~13:00.
+- **2026-10-25 04:39. Round 21 done:** TRM meta-fine-tuned with ACT on throughout, 1000 steps: 11/11/13 (.832), against
+  plain with ACT on 12/14/14 (.835). Section "Round 21". Round 22 (halt-and-wait) started.
