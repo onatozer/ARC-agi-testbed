@@ -119,7 +119,7 @@ Bold: the best value in its column; underlined: the rest of the column's top 10%
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 1 | 4 | 7 | 8 | 11 | 0.829 |
 | varc_ho2 | round 10: plain VARC, normalised step, hand-set alpha, 120 steps, eval seed 2 | 5 | 8 | 8 | 11 | 0.824 |
 | msgd7_norm | round 10: normalised learned loop, 120 steps, eval seed 2 | 6 | 8 | 9 | 9 | 0.839 |
-| msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | 0.862 |
+| msgd7_norm | round 11: normalised learned loop, 300 steps | 8 | 9 | 9 | 13 | <u>0.862</u> |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 300 steps | 7 | 9 | 10 | 11 | 0.853 |
 | msgd7_norm | round 11: normalised learned loop, 1000 steps | <u>10</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.887</u> |
 | varc_ho2 | round 11: plain VARC, normalised step, hand-set alpha, 1000 steps | <u>10</u> | <u>13</u> | <u>15</u> | <u>16</u> | <u>0.879</u> |
@@ -139,7 +139,7 @@ Bold: the best value in its column; underlined: the rest of the column's top 10%
 | msgd11_ms10 | round 11: meta-trained with 10 normalised inner steps (alpha per tensor and step, MSL); learned loop 10 / 30 / 120 steps, last alpha held | 1 / 2 / 4 | 1 / 3 / 5 | 2 / 4 / 6 | 2 / 7 / 8 | .782 / .803 / .833 |
 | msgd11_ms10 | round 11: 10-step meta-trained; then ttt_mini | 3 | 3 | 3 | 5 | 0.806 |
 | msgd11_ms10 | round 12: 10-step meta-trained; 120 / 300 / 1000 steps, stretched | 7 / <u>10</u> / <u>12</u> | 7 / 11 / <u>13</u> | 10 / <u>13</u> / <u>14</u> | 10 / 14 / **18** | .845 / <u>.870</u> / <u>.888</u> |
-| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / 11 | <u>13</u> / <u>14</u> | 14 / <u>16</u> | .862 / <u>.884</u> |
+| msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / 11 | <u>13</u> / <u>14</u> | 14 / <u>16</u> | <u>.862</u> / <u>.884</u> |
 | msgd15_n1_fo | round 15: one-step normalised recipe, entirely first order; 120 steps | 5 | 6 | 8 | 9 | 0.832 |
 | msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | <u>0.863</u> |
 | msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | 11 | <u>13</u> | <u>15</u> | <u>0.884</u> |
@@ -158,6 +158,7 @@ Bold: the best value in its column; underlined: the rest of the column's top 10%
 | trm_ho3 | round 18: plain TRM retrained on this branch, ttt_mini | 1 | 2 | 3 | 3 | 0.779 |
 | trm_ho3 | round 18: plain TRM (this branch), normalised segment steps, ACT off, hand-set alpha; 120 / 300 / 1000 steps | 5 / 7 / 8 | 7 / 10 / 9 | 8 / 11 / 12 | 10 / 12 / <u>15</u> | .799 / .822 / .815 |
 | msgd18_trm | round 18: TRM (from trm_ho3) meta-fine-tuned, 8 segment steps, ACT off, alpha init 1e-3; 120 / 300 / 1000 steps, segment schedule | 6 / 8 / <u>11</u> | 6 / 9 / <u>13</u> | 7 / 9 / <u>15</u> | 10 / 13 / <u>17</u> | .798 / .817 / .829 |
+| trm_ho3 | round 19: plain TRM (this branch), normalised segment steps, ACT ON, hand-set alpha, 1000 steps | <u>12</u> | <u>14</u> | <u>14</u> | <u>16</u> | 0.835 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 120 steps, stretched | 4 | 5 | 5 | 9 | 0.801 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned (5 segment steps, first order); 300 steps, stretched | 8 | 10 | 12 | 13 | 0.809 |
 | msgd16_trm_ms5 | round 16: TRM meta-fine-tuned; 1000 steps, stretched | <u>11</u> | <u>12</u> | <u>13</u> | 13 | 0.836 |
@@ -477,6 +478,25 @@ on this build (training variance).
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
 
+## Round 19 (2026-10-24 21:32): ACT off was the handicap
+
+| plain TRM, normalised segment steps, hand-set alpha, 1000 steps | pass@1/2/5 | token acc |
+|---|---|---|
+| trm_ho2 (other build), ACT on | 14 / 16 / 17 | .825 |
+| trm_ho3 (this branch and build), ACT on | 12 / 14 / 14 | .835 |
+| trm_ho3, ACT off | 8 / 9 / 12 | .815 |
+| trm_ho3 meta-fine-tuned with ACT off (round 18), segment schedule | 11 / 13 / 15 | .829 |
+
+- **Turning ACT halting off costs the plain TRM ~4 tasks at 1000 steps** (12/14/14 -> 8/9/12) on the same checkpoint. The
+  build accounts for less (trm_ho2 vs trm_ho3 with ACT on: 14/16/17 vs 12/14/14, token accuracy .825 vs .835).
+- So round 18's meta-learning gain (+3 / +4 / +3 at 1000 steps) was measured against a baseline handicapped by ACT-off;
+  against the plain checkpoint with ACT on, the ACT-off meta-fine-tuned TRM is about level (11/13/15 vs 12/14/14, .829 vs
+  .835). Why halting helps the long loop is not established: only ~6% of rows halt before the cap, but exploration noise
+  in training mode (which the test-time loop runs in) also randomises trajectory lengths when ACT is on, desynchronising
+  and restarting rows more often.
+- Not run: the meta-fine-tuned checkpoint evaluated with ACT on (its rows would no longer be in lockstep, so the segment
+  schedule would be approximate), or meta-fine-tuning with ACT on.
+
 ## Round 18 (2026-10-24 20:43): TRM, one trajectory of segment steps, ACT off, segment-indexed alphas
 
 All from trm_ho3 (plain TRM retrained on this branch and build), ACT halting off throughout:
@@ -494,7 +514,7 @@ All from trm_ho3 (plain TRM retrained on this branch and build), ACT halting off
   checkpoint at every length.
 - Learned alphas by segment position (weights, geometric mean): 0.00033 0.00024 0.00031 0.0002 0.0004 0.00031 0.00031 0.00018; rows: 0.022 0.026 0.023 0.014 0.02 0.014 0.012 0.01.
 - Against round 16's TRM (other build, ACT on: plain 14/16/17 at 1000), this branch's plain TRM with ACT off is far
-  lower (8/9/12); round 19 evaluates trm_ho3 with ACT on to tell the build from ACT-off.
+  lower (8/9/12); round 19 shows that is mostly ACT-off, not the build.
 
 ## Round 17 (2026-10-24 14:15): very large alpha inits, VARC
 
@@ -927,3 +947,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   rule with ACT halting on, 1000 steps, to separate the build from ACT-off in round 18's plain-TRM drop. ~45 min, ETA ~01:30.
 - **2026-10-24 20:43. Round 18 done:** meta-fine-tuned TRM 6/6/7, 8/9/9, 11/13/15 at 120 / 300 / 1000 (segment schedule)
   against plain 5/7/8, 7/10/11, 8/9/12. Section "Round 18". Round 19 (ACT on) running.
+- **2026-10-24 21:32. Round 19 done:** trm_ho3 with ACT on, 1000 steps: 12/14/14 (.835) vs ACT off 8/9/12 (.815). Section
+  "Round 19". GPU idle.
