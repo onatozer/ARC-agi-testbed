@@ -66,4 +66,5 @@ meta_sgd:
   first_order_steps: 0 # derivative-order annealing: first-order inner gradients for this many steps
   segment_inner_steps: false # each inner step is one ACT segment continuing the previous step's carry (TRM; no effect on one-segment models)
   last_segment_grad: false # full-trajectory losses backpropagate only through each row's final segment
+  halt_wait: false # segment steps: halted rows sit out until the trajectory ends, then all rows restart together
   normalize_grad: false # inner step on the gradient divided by its RMS per tensor (a step moves a tensor by ~alpha, as Adam does)

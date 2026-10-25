@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
 from evaluate_ttt import meta_sgd_adapt
-from pretrain import _adapt, _adapt_segment, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -375,6 +375,40 @@ def test_last_segment_grad_counts_only_final_segments_and_still_trains_alpha():
     targets = _meta_sgd_targets(model, [])
     _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.5, 0.5],
                          segment_inner_steps=True, last_segment_grad=True)
+    for name, _ in targets:
+        g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
+        assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0, name
+
+
+def test_halt_wait_rows_sit_out_until_the_trajectory_ends_then_all_restart():
+    """meta_sgd.halt_wait: a halted row contributes no loss until the trajectory boundary (every halt_max_steps steps),
+    where every row starts afresh; with no row running the weights do not move."""
+    config, train_state, batch = _state()  # halt_max_steps=4
+    model = train_state.model.eval()  # rows halt only at the cap
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    n = support["inputs"].shape[0]
+    _, theta, state = _adapt_segment_wait(model, named, overrides, support, None, 0, 4, second_order=False)
+    carry, idx = state
+    assert idx.tolist() == list(range(n)) and carry.steps.tolist() == [1] * n
+    carry.halted[0] = True  # as if the ACT head had halted row 0 at segment 1
+    _, _, (carry1, idx1) = _adapt_segment_wait(model, named, overrides, support, (carry, idx), 1, 4, second_order=False)
+    assert idx1.tolist() == list(range(1, n)) and carry1.steps.tolist() == [2] * (n - 1)
+    # Boundary: everyone restarts, the halted row included
+    _, _, (carry4, idx4) = _adapt_segment_wait(model, named, overrides, support, (carry1, idx1), 4, 4, second_order=False)
+    assert idx4.tolist() == list(range(n)) and carry4.steps.tolist() == [1] * n
+    # Nobody running mid-trajectory: no loss, no update
+    carry4.halted[:] = True
+    loss, theta_same, _ = _adapt_segment_wait(model, named, overrides, support, (carry4, idx4), 5, 4, second_order=False)
+    assert loss is None and theta_same.keys() == overrides.keys()
+
+
+def test_outer_backward_with_halt_wait_trains_every_steps_alpha():
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.halt_wait=true", "meta_sgd.inner_steps=2", "meta_sgd.alpha_per_step=true")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    targets = _meta_sgd_targets(model, [])
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.5, 0.5],
+                         segment_inner_steps=True, last_segment_grad=True, halt_wait=True, segments=config.arch.halt_max_steps)
     for name, _ in targets:
         g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
         assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0, name

@@ -784,6 +784,28 @@ def _adapt_segment(
     return loss_s, _inner_update(model, named, overrides, loss_s, step, second_order), apply_to_tensors(carry, lambda t: t.detach().clone())
 
 
+def _adapt_segment_wait(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
+    state: Any, k: int, segments: int, step: int = 0, second_order: bool = True,
+) -> Tuple[Optional[torch.Tensor], Dict[str, torch.Tensor], Any]:
+    """_adapt_segment with meta_sgd.halt_wait: `state` is (carry of the rows still running, their indices into `support`).
+    Inner step k starts every row afresh when k is a multiple of `segments` (a trajectory boundary); otherwise the rows
+    the previous segment halted sit out. The loss is per running row; with none running the weights are unchanged and the
+    loss is None."""
+    if k % segments == 0 or state is None:
+        carry, idx = None, torch.arange(support["inputs"].shape[0], device=support["inputs"].device)
+    else:
+        carry, idx = state
+        keep = ~carry.halted
+        carry, idx = apply_to_tensors(carry, lambda t: t[keep]), idx[keep]
+    if idx.numel() == 0:
+        return None, dict(overrides), (carry, idx)
+    rows = {key: v[idx] for key, v in support.items()}
+    carry, loss = _segment(model, overrides, rows, carry)
+    loss_s = loss / idx.numel()
+    return loss_s, _inner_update(model, named, overrides, loss_s, step, second_order), (apply_to_tensors(carry, lambda t: t.detach().clone()), idx)
+
+
 def _inner_update(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], loss_s: torch.Tensor, step: int, second_order: bool,
 ) -> Dict[str, torch.Tensor]:
@@ -824,6 +846,7 @@ def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, fresh_rows: bool = False,
     msl_weights: Optional[List[float]] = None, second_order: bool = True, segment_inner_steps: bool = False, last_segment_grad: bool = False,
+    halt_wait: bool = False, segments: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Meta-SGD on one task: theta_k = theta_{k-1} - alpha_k * grad of the per-row support loss (graph kept) for each inner
     step, then the query losses at the theta_k, weighted by msl_weights ([1.0]: one step) and times loss_scale, are
@@ -843,7 +866,10 @@ def _task_outer_backward(
     with sdpa_kernel(SDPBackend.MATH):  # only the math attention kernel has a double backward
         theta, total, loss_s0, carry = overrides, 0.0, None, None
         for k, w in enumerate(weights):
-            if segment_inner_steps:
+            if segment_inner_steps and halt_wait:
+                loss_s, theta, carry = _adapt_segment_wait(model, named, theta, support, carry, k, segments, step=k, second_order=second_order)
+                loss_s = loss_s if loss_s is not None else torch.zeros((), device=support["inputs"].device)
+            elif segment_inner_steps:
                 loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, step=k, second_order=second_order)
             else:
                 loss_s, theta = _adapt(model, named, theta, support, step=k, second_order=second_order, last_segment_grad=last_segment_grad)
@@ -897,6 +923,7 @@ def meta_sgd_batch(
             loss_s, loss_q, ids, row_grad = _task_outer_backward(
                 model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
                 segment_inner_steps=cfg.segment_inner_steps, last_segment_grad=cfg.last_segment_grad,
+                halt_wait=cfg.halt_wait, segments=config.arch.halt_max_steps,
             )
             support_losses.append(loss_s)
             query_losses.append(loss_q)

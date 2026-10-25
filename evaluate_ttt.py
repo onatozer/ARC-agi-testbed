@@ -36,7 +36,7 @@ from dataset.build_miniarc_dataset import MiniARCDataProcessConfig
 from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_checkpoint, _seed, _summarize
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
-from pretrain import _adapt, _adapt_segment, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, create_dataloader, create_evaluators, init_train_state, train_batch
+from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, create_dataloader, create_evaluators, init_train_state, train_batch
 from utils.checkpoint import load_model_state_dict
 from utils.functions import load_model_class
 from utils.printing import print_info
@@ -109,7 +109,7 @@ def _alpha_step(k: int, steps: int, trained: int, schedule: str, segments: int =
 
 def meta_sgd_adapt(
     model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, substrings: List[str], schedule: str = "hold",
-    segment_inner_steps: bool = False, last_segment_grad: bool = False, segments: int = 1,
+    segment_inner_steps: bool = False, last_segment_grad: bool = False, segments: int = 1, halt_wait: bool = False,
 ) -> List[float]:
     """Test-time Meta-SGD: `steps` inner steps with the model's learned alpha (model.meta_sgd) on the task's support rows,
     written into the weights and the rows' puzzle embeddings. With per-step alphas and more steps than were trained,
@@ -127,7 +127,10 @@ def meta_sgd_adapt(
     for k in range(steps):
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
         alpha_step = _alpha_step(k, steps, model.meta_sgd.steps, schedule, segments)
-        if segment_inner_steps:  # one supervision segment per step, the rows continuing their carry (TRM)
+        if segment_inner_steps and halt_wait:  # halted rows sit out until the trajectory ends, then all restart together
+            loss, theta1, carry = _adapt_segment_wait(model, named, overrides, batch, carry, k, segments, step=alpha_step, second_order=False)
+            loss = loss if loss is not None else torch.zeros(())
+        elif segment_inner_steps:  # one supervision segment per step, the rows continuing their carry (TRM)
             loss, theta1, carry = _adapt_segment(model, named, overrides, batch, carry, step=alpha_step, second_order=False)
         else:
             loss, theta1 = _adapt(model, named, overrides, batch, step=alpha_step, second_order=False, last_segment_grad=last_segment_grad)  # no outer loss: the values suffice
@@ -195,7 +198,8 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
             support = tree_to_device(_support_batch(config, train_metadata), next(train_state.model.parameters()).device)
             losses = meta_sgd_adapt(train_state.model, support, cfg.meta_sgd_steps, config.meta_sgd.adapt_substrings, cfg.meta_sgd_schedule,
-                                    config.meta_sgd.segment_inner_steps, config.meta_sgd.last_segment_grad, config.arch.halt_max_steps)
+                                    config.meta_sgd.segment_inner_steps, config.meta_sgd.last_segment_grad, config.arch.halt_max_steps,
+                                    config.meta_sgd.halt_wait)
             alpha_mean, alpha_max = train_state.model.meta_sgd.summary()
             print_info(f"TTT run {run}: {cfg.meta_sgd_steps} Meta-SGD steps (alpha geometric mean {alpha_mean:.3g}, max {alpha_max:.3g}) on {support['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
         else:

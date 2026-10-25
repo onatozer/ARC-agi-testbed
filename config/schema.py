@@ -66,6 +66,9 @@ class MetaSGDConfig(BaseModel):
     # earlier ones run without gradient, as TRM's own H-cycles). One-segment models (VARC) are unaffected by either.
     segment_inner_steps: bool = False
     last_segment_grad: bool = False
+    # With segment_inner_steps: a row the ACT head halts sits out (no loss) until its trajectory ends, every
+    # arch.halt_max_steps inner steps, then all rows restart together, so per-step alphas index segment positions exactly
+    halt_wait: bool = False
     normalize_grad: bool = False  # inner step on the gradient divided by its RMS per tensor: a step moves a tensor by ~alpha whatever the gradient's scale (as Adam does; not Meta-SGD proper)
 
     @pydantic.model_validator(mode="after")
