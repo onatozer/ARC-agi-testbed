@@ -972,3 +972,8 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   restart together; before, a halted row restarted at once, so later inner steps mixed rows at different trajectory
   positions under one per-step alpha). Round 21's recipe plus halt_wait, and the plain trm_ho3 control under the same
   rule, both at 1000 steps. ~3.5 h + 2 x 50 min, ETA ~10:00.
+- **2026-10-25 01:00. Round 23 queued** (user, `msgd23_embed_ttt.sh`, after round 22): arXiv 2609.21181's protocols on
+  varc_ho3 and trm_ho3 at ttt_mini's length. Embed-TTT = embedding only (`train_overrides.freeze_weights=true`);
+  Embed-Full-TTT, the paper's best = embedding for epochs 1-10, then the backbone with the embedding frozen for 11-20
+  (`train_overrides.freeze_alternation_epochs=10`; the lr schedule spans all 20 epochs, the paper's per-step schedule
+  is not given in its text). Full-TTT = ttt_mini, already run. ~20 min, ETA ~10:20.
