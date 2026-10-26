@@ -484,6 +484,35 @@ on this build (training variance).
 - The from-scratch Meta-SGD run (this build, 1/1/2, .775) is still below both plain checkpoints on the same build
   (2/5/5 .811, 4/6/8 .817): round 11c's conclusion holds with the matched baseline.
 
+## Learned trajectory targets: diagnostic (2026-10-26 00:06)
+
+New option `meta_sgd.query_loss=trajectory` (user's idea after DIS, arXiv 2511.16886, whose per-step targets are a fixed
+corruption schedule of the answer): with the adapted weights frozen, the query rows' latent states after each of the 8
+segments are optimised as leaves (Adam on CE(decode(s~_8)) + lambda * mean_t ||s~_{t+1} - F(s~_t)||^2, from the model's own
+rollout, every H-cycle carrying gradient), and the outer loss matches the adapted model's free-running per-segment states
+to them, instead of the final CE. Under it the output and halt heads get no outer gradient.
+
+Diagnostic (`scratchpad/traj_diag.py`): trm_ho3 frozen, 601 query rows of 10 training batches in 16-row episodes, Adam lr
+1e-2. Delta_t = RMS distance of the target from the rollout at segment t; R = RMS transition residual; the rollout's own
+per-segment step is .716.
+
+| lambda | K | CE before -> after | exact match before -> after | R | Delta_1 | Delta_7 | Delta_8 | s / episode |
+|---|---|---|---|---|---|---|---|---|
+| 0.1 | 5 | .630 -> .553 | 4.3% -> 5.2% | .017 | .0004 | .011 | .049 | 4.9 |
+| 0.1 | 20 | .630 -> .369 | 4.3% -> 9.4% | .058 | .0025 | .046 | .183 | 18.1 |
+| 1 | 5 | .630 -> .553 | 4.3% -> 5.2% | .018 | .0004 | .011 | .049 | 4.4 |
+| 1 | 20 | .630 -> .369 | 4.3% -> 9.4% | .053 | .0032 | .045 | .170 | 16.7 |
+| 10 | 5 | .630 -> .553 | 4.3% -> 5.2% | .016 | .0004 | .011 | .043 | 5.4 |
+| 10 | 20 | .630 -> .374 | 4.3% -> 9.4% | .036 | .0034 | .042 | .127 | 18.7 |
+
+- **Accuracy:** 20 iterations double the exact-match rate of decode(s~_8) (4.3% -> 9.4%) and lower its CE by 40%.
+- **Consistency:** the residuals stay at 2-8% of the rollout's own step; lambda mostly trades residual for final-state
+  movement (lambda 10: R .036, Delta_8 .127 vs lambda 0.1: .058, .183) at nearly equal CE (Adam normalises the step).
+- **Where the change sits:** concentrated at the end, as the multiple-shooting analysis predicted. Delta_7 / Delta_8 is
+  .25-.33, but Delta_1 / Delta_8 is only .014-.027 even at K = 20: in 20 iterations the signal reaches the early
+  segments only weakly, so the targets are mostly a correction of the last two or three segments.
+- Cost: ~0.9 s per iteration per 16-row episode; at K = 20 ~+63 s per meta-step if recomputed every step.
+
 ## Round 24 (2026-10-25 11:18): embedding first, then weights, inside the best recipes
 
 1000 normalised steps; `meta_sgd_embed_first=0.5` = 500 steps on the puzzle-embedding rows only, then 500 on the weights
