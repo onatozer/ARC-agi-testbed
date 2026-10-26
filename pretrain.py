@@ -908,6 +908,38 @@ def _optimize_trajectory(
     return targets, diag
 
 
+def _row_key(pid: int, inputs: torch.Tensor) -> Tuple[int, bytes]:
+    return int(pid), inputs.cpu().numpy().tobytes()
+
+
+def _trajectory_cache(
+    model: nn.Module, rows: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float, chunk: int = 16,
+) -> Tuple[Dict[Tuple[int, bytes], Tuple[torch.Tensor, torch.Tensor]], Dict[str, float]]:
+    """meta_sgd.traj_refresh: _optimize_trajectory's targets for every row of `rows` (inputs, labels, puzzle_identifiers)
+    with the model's own weights and embedding rows, in `chunk`-row pieces, keyed by (puzzle id, inputs) and kept on the
+    CPU in bf16 as ((n, ...) z_H, (n, ...) z_L). Also the diagnostics averaged over the chunks."""
+    device = next(model.parameters()).device
+    cache, diags = {}, []
+    for j in range(0, rows["inputs"].shape[0], chunk):
+        part = {k: v[j : j + chunk].to(device) for k, v in rows.items()}
+        targets, d = _optimize_trajectory(model, {}, part, n, lam, iters, lr)
+        diags.append(d)
+        z_H = torch.stack([h for h, _ in targets], 1).to("cpu", torch.bfloat16)
+        z_L = torch.stack([l for _, l in targets], 1).to("cpu", torch.bfloat16)
+        for i in range(part["inputs"].shape[0]):
+            cache[_row_key(part["puzzle_identifiers"][i], part["inputs"][i])] = (z_H[i], z_L[i])
+    return cache, {k: sum(d[k] for d in diags) / len(diags) for k in diags[0]}
+
+
+def _cached_goal(cache: Dict[Tuple[int, bytes], Tuple[torch.Tensor, torch.Tensor]], query: Dict[str, torch.Tensor]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    """The cached targets of the query rows (original puzzle ids), as _trajectory_loss takes them: one (z_H, z_L) per segment."""
+    pairs = [cache[_row_key(pid, x)] for pid, x in zip(query["puzzle_identifiers"], query["inputs"])]
+    device = query["inputs"].device
+    z_H = torch.stack([h for h, _ in pairs], 0).to(device, torch.float32)
+    z_L = torch.stack([l for _, l in pairs], 0).to(device, torch.float32)
+    return [(z_H[:, t], z_L[:, t]) for t in range(z_H.shape[1])]
+
+
 def _trajectory_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], targets: List[Tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
     """Free-running matching: the adapted model (weights in `overrides`, with gradient) rolls out from s_0, carry detached
     between segments as in deep supervision, and each segment's state is pulled toward its target. Summed over rows,
@@ -982,8 +1014,11 @@ def _task_outer_backward(
             loss_s0 = loss_s if loss_s0 is None else loss_s0
             named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
             if w > 0 or k == len(weights) - 1:
-                if query_loss == "trajectory":
+                if query_loss == "trajectory" and "goal" in traj:  # cached from the unadapted weights (traj_refresh)
+                    goal = traj["goal"]
+                if query_loss == "trajectory" and "goal" not in traj:
                     goal, traj["diag"] = _optimize_trajectory(model, theta, query, segments, traj["lambda"], traj["iters"], traj["lr"])
+                if query_loss == "trajectory":
                     loss_q = _trajectory_loss(model, theta, query, goal)
                 else:
                     loss_q = _supervised_loss(model, theta, query, last_segment_grad)
@@ -1028,9 +1063,20 @@ def meta_sgd_batch(
     msl_weights = _msl_weights(cfg.inner_steps, progress)
     second_order = train_state.step > cfg.first_order_steps
     support_losses, query_losses, traj_diags = [], [], []
+    if cfg.query_loss == "trajectory" and cfg.traj_refresh > 0:
+        every = max(1, round(cfg.traj_refresh * train_state.total_steps))
+        if (train_state.step - 1) % every == 0 or getattr(model.meta_sgd, "traj_cache", None) is None:
+            # shortcut: each rank builds the whole cache itself, fine on one GPU; shard it before multi-GPU runs
+            loader, _ = create_dataloader(config, "train", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=0, world_size=1)
+            parts = [{k: b[k][b["validation"].bool() & (b["puzzle_identifiers"] != 0)] for k in ("inputs", "labels", "puzzle_identifiers")} for _, b, _ in loader]
+            rows = {k: torch.cat([p[k] for p in parts]) for k in parts[0]}
+            model.meta_sgd.traj_cache, refresh = _trajectory_cache(model, rows, config.arch.halt_max_steps, cfg.traj_lambda, cfg.traj_iters, cfg.traj_lr)
+            traj_diags.append(refresh)
     with flop_counter:
         for _key, support, query in episodes:
             traj = {"lambda": cfg.traj_lambda, "iters": cfg.traj_iters, "lr": cfg.traj_lr}
+            if cfg.query_loss == "trajectory" and cfg.traj_refresh > 0:
+                traj["goal"] = _cached_goal(model.meta_sgd.traj_cache, query)
             loss_s, loss_q, ids, row_grad = _task_outer_backward(
                 model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
                 segment_inner_steps=cfg.segment_inner_steps, last_segment_grad=cfg.last_segment_grad,

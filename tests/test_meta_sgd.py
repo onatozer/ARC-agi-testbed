@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
 from evaluate_ttt import meta_sgd_adapt
-from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _initial_state, _optimize_trajectory, _trajectory_loss, _transition, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _cached_goal, _initial_state, _optimize_trajectory, _trajectory_cache, _trajectory_loss, _transition, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -498,3 +498,24 @@ def test_trajectory_query_loss_trains_theta_and_alpha():
     assert _config().meta_sgd.query_loss == "ce"
     with pytest.raises(Exception):
         _config("meta_sgd.query_loss=other")
+
+
+def test_cached_trajectory_targets_round_trip_and_drive_the_outer_loss():
+    """traj_refresh: targets built for every query row from the unadapted weights are looked up by (puzzle id, inputs) and
+    used as the outer loss's goal without re-optimising."""
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory", "meta_sgd.inner_steps=2")
+    model = train_state.model
+    q = batch["validation"].bool()
+    rows = {k: batch[k][q] for k in ("inputs", "labels", "puzzle_identifiers")}
+    n = config.arch.halt_max_steps
+    cache, diag = _trajectory_cache(model, rows, n, 1.0, 2, 1e-2, chunk=2)
+    assert len(cache) == int(q.sum()) and diag["ce_after"] <= diag["ce_before"]
+    goal = _cached_goal(cache, rows)
+    assert len(goal) == n and goal[0][0].shape[0] == int(q.sum())
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)  # puzzle 1
+    targets = _meta_sgd_targets(model, [])
+    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "goal": _cached_goal(cache, {k: batch[k][q & (batch["puzzle_identifiers"] == 1)] for k in ("inputs", "puzzle_identifiers")})}
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.0, 1.0], second_order=False,
+                         segment_inner_steps=True, segments=n, query_loss="trajectory", traj=traj)
+    assert "diag" not in traj  # the cached goal was used, nothing re-optimised
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for name, p in model.named_parameters() if not name.startswith("meta_sgd."))

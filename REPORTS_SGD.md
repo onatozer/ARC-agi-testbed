@@ -1091,3 +1091,10 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   below Full-TTT on both models. Round 24 started.
 - **2026-10-25 11:18. Round 24 done:** embedding-first loop worse than single phase in all four configurations (section
   "Round 24"). GPU idle.
+- **2026-10-26 00:40. Round 25 queued** (user, `msgd25_trm_traj.sh`): TRM Meta-SGD with the trajectory query loss, lambda
+  10, from trm_ho3 on round 21's recipe (MSL off). First targets re-optimised per episode at the adapted weights, K = 10
+  (smoke: 60-100 s / meta-step, ~22 h), then targets cached from the unadapted weights with each puzzle's own embedding
+  row (new option `meta_sgd.traj_refresh=0.25`: rebuilt every 25% of training, K = 20, ~75 min per rebuild, ~8.5 h).
+  Smoke matching losses: ~1e-3 per-step (targets start at the adapted rollout) vs ~0.8 cached (the adapted model, from a
+  fresh row, starts far from the base model's trajectory). Each evaluated at 1000 steps, ACT on, segment schedule.
+  ETA ~09:00 on 2026-10-27.
