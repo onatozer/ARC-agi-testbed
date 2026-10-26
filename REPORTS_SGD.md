@@ -1098,3 +1098,6 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   Smoke matching losses: ~1e-3 per-step (targets start at the adapted rollout) vs ~0.8 cached (the adapted model, from a
   fresh row, starts far from the base model's trajectory). Each evaluated at 1000 steps, ACT on, segment schedule.
   ETA ~09:00 on 2026-10-27.
+- **2026-10-26 18:25. Laptop restart during round 25.** The per-step run (`msgd25_traj_k10`) had finished training (15 h 8
+  min, checkpoint saved) and its evaluation was at 8 / 30 tasks; relaunched, the evaluation resumes from task 9 and the
+  cached-target run follows (~9 h).
