@@ -69,6 +69,14 @@ class MetaSGDConfig(BaseModel):
     # With segment_inner_steps: a row the ACT head halts sits out (no loss) until its trajectory ends, every
     # arch.halt_max_steps inner steps, then all rows restart together, so per-step alphas index segment positions exactly
     halt_wait: bool = False
+    # Query (outer) loss: "ce", the loss head's loss of the query trajectory; or "trajectory" (multi-segment models): with
+    # the adapted weights frozen, optimise latent targets s~_1..s~_N for the query rows (traj_iters Adam steps at traj_lr on
+    # CE(decode(s~_N)) + traj_lambda * mean_t ||s~_{t+1} - F(s~_t)||^2, from the model's own rollout), then match the adapted
+    # model's free-running per-segment states to them
+    query_loss: str = "ce"
+    traj_lambda: float = 1.0
+    traj_iters: int = 20
+    traj_lr: float = 1e-2
     normalize_grad: bool = False  # inner step on the gradient divided by its RMS per tensor: a step moves a tensor by ~alpha whatever the gradient's scale (as Adam does; not Meta-SGD proper)
 
     @pydantic.model_validator(mode="after")
@@ -77,6 +85,8 @@ class MetaSGDConfig(BaseModel):
             raise ValueError("meta_sgd: inner_lr > 0 (inner_lr_rows too), alpha_range >= 0 and copies_per_group >= 1 are required.")
         if self.inner_steps < 1 or self.first_order_steps < 0 or (self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1):
             raise ValueError("meta_sgd: inner_steps >= 1, first_order_steps >= 0 and msl_anneal_fraction in (0, 1] are required.")
+        if self.query_loss not in ("ce", "trajectory") or self.traj_iters < 0 or self.traj_lambda < 0 or self.traj_lr <= 0:
+            raise ValueError("meta_sgd: query_loss in {ce, trajectory}, traj_iters >= 0, traj_lambda >= 0 and traj_lr > 0 are required.")
         return self
 
 

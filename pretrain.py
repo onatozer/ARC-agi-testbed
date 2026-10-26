@@ -73,7 +73,8 @@ from utils.wandb import _config_to_wandb_dict
 from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
-from contextlib import nullcontext, suppress
+from contextlib import contextmanager, nullcontext, suppress
+from models.losses import IGNORE_LABEL_ID
 
 WANDB_RUN_ID: Optional[str] = None
 WANDB_RUN_DIR: Optional[str] = None
@@ -818,6 +819,109 @@ def _inner_update(
     return theta1
 
 
+_INNER = "model.inner."  # the multi-segment (TRM) inner network under the loss head
+
+
+@contextmanager
+def _full_grad_cycles(inner: nn.Module):
+    """Run every H-cycle of a TRM segment with gradient: by default the first H_cycles - grad_cycles run under no_grad, so a
+    segment's output carries no gradient to its input state (needed when the states themselves are optimised)."""
+    cfg = getattr(inner, "config", None)
+    if cfg is None or not hasattr(cfg, "grad_cycles"):
+        raise ValueError("meta_sgd.query_loss=trajectory needs a multi-segment model with config.grad_cycles (TRM).")
+    old, cfg.grad_cycles = cfg.grad_cycles, cfg.H_cycles
+    try:
+        yield
+    finally:
+        cfg.grad_cycles = old
+
+
+def _transition(inner: nn.Module, overrides: Dict[str, torch.Tensor], state: Tuple[torch.Tensor, torch.Tensor], batch: Dict[str, torch.Tensor]):
+    """F: one segment of the inner network from `state` = (z_H, z_L), weights substituted. Returns ((z_H, z_L), logits)."""
+    from models.recursive_reasoning.merged_arch import LatentCarry
+    dtype = inner.forward_dtype
+    carry, info = torch.func.functional_call(inner, overrides, (LatentCarry(state[0].to(dtype), state[1].to(dtype)), batch))
+    return (carry.z_H, carry.z_L), info["logits"]
+
+
+def _initial_state(inner: nn.Module, batch_size: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    """s_0: the inner network's reset state, as a fresh trajectory starts."""
+    c = inner.reset_carry(torch.ones(batch_size, dtype=torch.bool, device=device), inner.empty_carry(batch_size, device=device), None)
+    return c.z_H, c.z_L
+
+
+def _optimize_trajectory(
+    model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float,
+) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], Dict[str, float]]:
+    """Latent targets for meta_sgd.query_loss=trajectory (multiple shooting): with the weights in `overrides` frozen, roll the
+    inner network out from s_0 for n segments, then optimise s~_1..s~_n (leaves, fp32, from the rollout) with Adam on
+    sum_rows [CE(decode(s~_n), labels) + lam * mean_t ||s~_{t+1} - F(s~_t)||^2], s~_0 = s_0 fixed. Returns the targets
+    (detached) and diagnostics: CE and exact match of decode(s_n) / decode(s~_n), the mean residual R_t, and Delta_t =
+    ||s~_t - s_t|| at t = 1, n-1 and n."""
+    inner = model.model.inner
+    ov = {k[len(_INNER):]: v.detach() for k, v in overrides.items() if k.startswith(_INNER)}
+    head = {k[len("lm_head."):]: v for k, v in ov.items() if k.startswith("lm_head.")}
+    labels = batch["labels"]
+    mask = labels != IGNORE_LABEL_ID
+    divisor = mask.sum(-1).clamp_min(1).unsqueeze(-1)
+
+    def decode(z_H):
+        return torch.func.functional_call(inner.lm_head, head, (z_H.to(inner.forward_dtype)[:, inner.config.puzzle_emb_len :],))
+
+    def ce(logits):  # per row, as the loss head computes its lm loss
+        return (model.loss_fn(logits, labels, valid_mask=mask) / divisor).sum(-1)
+
+    def exact(logits):
+        return float(((logits.argmax(-1) == labels) | ~mask).all(-1).float().mean())
+
+    def dist(a, b):  # per row, over (z_H, z_L)
+        return ((a[0].float() - b[0].float()).square().mean((1, 2)) + (a[1].float() - b[1].float()).square().mean((1, 2)))
+
+    with torch.no_grad():
+        states = [_initial_state(inner, labels.shape[0], labels.device)]
+        for _ in range(n):
+            nxt, logits = _transition(inner, ov, states[-1], batch)
+            states.append(nxt)
+        ce0, exact0 = float(ce(logits).mean()), exact(logits)
+    var = [(h.float().clone().requires_grad_(), l.float().clone().requires_grad_()) for h, l in states[1:]]
+    leaves = [t for pair in var for t in pair]
+    opt = torch.optim.Adam(leaves, lr=lr)
+    with _full_grad_cycles(inner), torch.enable_grad():
+        for _ in range(iters):
+            traj = [states[0]] + var
+            cons = sum(dist(traj[t + 1], _transition(inner, ov, traj[t], batch)[0]) for t in range(n)) / n
+            loss = (ce(decode(var[-1][0])) + lam * cons).sum()
+            grads = torch.autograd.grad(loss, leaves)  # the states only: nothing accumulates into the weights
+            opt.zero_grad(set_to_none=True)
+            for t, g in zip(leaves, grads):
+                t.grad = g
+            opt.step()
+    with torch.no_grad():
+        targets = [(h.detach(), l.detach()) for h, l in var]
+        traj = [states[0]] + targets
+        residual = float((sum(dist(traj[t + 1], _transition(inner, ov, traj[t], batch)[0]) for t in range(n)) / n).sqrt().mean())
+        delta = [float(dist(targets[t], states[t + 1]).sqrt().mean()) for t in range(n)]
+        step = float((sum(dist(states[t + 1], states[t]) for t in range(n)) / n).sqrt().mean())
+        logits1 = decode(targets[-1][0])
+        diag = {"ce_before": ce0, "ce_after": float(ce(logits1).mean()), "exact_before": exact0, "exact_after": exact(logits1),
+                "residual": residual, "step": step, "delta_first": delta[0], "delta_prev": delta[-2] if n > 1 else 0.0, "delta_last": delta[-1]}
+    return targets, diag
+
+
+def _trajectory_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], targets: List[Tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
+    """Free-running matching: the adapted model (weights in `overrides`, with gradient) rolls out from s_0, carry detached
+    between segments as in deep supervision, and each segment's state is pulled toward its target. Summed over rows,
+    averaged over segments and elements."""
+    inner = model.model.inner
+    ov = {k[len(_INNER):]: v for k, v in overrides.items() if k.startswith(_INNER)}
+    state, total = _initial_state(inner, batch["inputs"].shape[0], batch["inputs"].device), 0.0
+    for h, l in targets:
+        (z_H, z_L), _ = _transition(inner, ov, state, batch)
+        total = total + (z_H.float() - h).square().mean((1, 2)) + (z_L.float() - l).square().mean((1, 2))
+        state = (z_H.detach(), z_L.detach())
+    return (total / len(targets)).sum()
+
+
 def _msl_weights(steps: int, progress: float) -> List[float]:
     """Multi-step loss weights (arXiv 1810.09502): uniform over the inner steps at progress 0, linearly to the last step only
     at progress 1 (and beyond). One step, or progress >= 1: [0, ..., 1]."""
@@ -846,13 +950,15 @@ def _task_outer_backward(
     model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, fresh_rows: bool = False,
     msl_weights: Optional[List[float]] = None, second_order: bool = True, segment_inner_steps: bool = False, last_segment_grad: bool = False,
-    halt_wait: bool = False, segments: int = 1,
+    halt_wait: bool = False, segments: int = 1, query_loss: str = "ce", traj: Optional[Dict[str, float]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Meta-SGD on one task: theta_k = theta_{k-1} - alpha_k * grad of the per-row support loss (graph kept) for each inner
     step, then the query losses at the theta_k, weighted by msl_weights ([1.0]: one step) and times loss_scale, are
     backpropagated into theta (second order, through the chain of steps), rho and the task's embedding rows. fresh_rows: the
     rows start from the table mean, as a held-out task's do at test time. Returns (support loss per row at theta, query loss
-    per row at the last step, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings."""
+    per row at the last step, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings.
+    query_loss="trajectory": the query term is _trajectory_loss against _optimize_trajectory's targets at the adapted
+    weights (traj: {"lambda", "iters", "lr"}; its diagnostics are written back into it under "diag")."""
     named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support)
     if emb_name is not None:
         if fresh_rows:
@@ -876,7 +982,11 @@ def _task_outer_backward(
             loss_s0 = loss_s if loss_s0 is None else loss_s0
             named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
             if w > 0 or k == len(weights) - 1:
-                loss_q = _supervised_loss(model, theta, query, last_segment_grad)
+                if query_loss == "trajectory":
+                    goal, traj["diag"] = _optimize_trajectory(model, theta, query, segments, traj["lambda"], traj["iters"], traj["lr"])
+                    loss_q = _trajectory_loss(model, theta, query, goal)
+                else:
+                    loss_q = _supervised_loss(model, theta, query, last_segment_grad)
                 total = total + w * loss_q
         (total * loss_scale).backward()
     row_grad = None if emb_name is None else overrides[emb_name].grad
@@ -917,14 +1027,17 @@ def meta_sgd_batch(
     progress = 1.0 if cfg.msl_anneal_fraction is None else train_state.step / (cfg.msl_anneal_fraction * train_state.total_steps)
     msl_weights = _msl_weights(cfg.inner_steps, progress)
     second_order = train_state.step > cfg.first_order_steps
-    support_losses, query_losses = [], []
+    support_losses, query_losses, traj_diags = [], [], []
     with flop_counter:
         for _key, support, query in episodes:
+            traj = {"lambda": cfg.traj_lambda, "iters": cfg.traj_iters, "lr": cfg.traj_lr}
             loss_s, loss_q, ids, row_grad = _task_outer_backward(
                 model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
                 segment_inner_steps=cfg.segment_inner_steps, last_segment_grad=cfg.last_segment_grad,
-                halt_wait=cfg.halt_wait, segments=config.arch.halt_max_steps,
+                halt_wait=cfg.halt_wait, segments=config.arch.halt_max_steps, query_loss=cfg.query_loss, traj=traj,
             )
+            if "diag" in traj:
+                traj_diags.append(traj["diag"])
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if row_grad is not None:
@@ -947,6 +1060,8 @@ def meta_sgd_batch(
         "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
         "meta/alpha_max": torch.tensor(alpha_max, device=device),
     }
+    for key in (traj_diags[0] if traj_diags else {}):  # trajectory targets: CE / exact match before and after, residuals, deltas
+        metrics[f"meta/traj_{key}"] = torch.tensor(sum(d[key] for d in traj_diags) / len(traj_diags), device=device)
     out = _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)
     model.meta_sgd.clamp_()
     return out

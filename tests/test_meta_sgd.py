@@ -13,7 +13,7 @@ from omegaconf import OmegaConf
 from config.schema import PretrainConfig
 from dataset.common import PuzzleDatasetMetadata
 from evaluate_ttt import meta_sgd_adapt
-from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
+from pretrain import _adapt, _adapt_segment, _adapt_segment_wait, _initial_state, _optimize_trajectory, _trajectory_loss, _transition, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _msl_weights, _puzzle_emb_name, _supervised_loss, _task_outer_backward, init_train_state, meta_sgd_batch
 
 # 3 puzzles x (2 demos + 1 validation row), one batch of 9 = one epoch
 METADATA = PuzzleDatasetMetadata(
@@ -437,3 +437,64 @@ def test_embed_first_adapts_the_rows_then_only_the_weights():
     torch.testing.assert_close(weight2.detach(), w2)
     with pytest.raises(ValueError):
         meta_sgd_adapt(model2, support, 2, [], embed_first=1.5)
+
+
+def _inner_ov(overrides):
+    return {k[len("model.inner."):]: v for k, v in overrides.items() if k.startswith("model.inner.")}
+
+
+def test_transition_is_one_segment_of_the_act_wrapper():
+    config, train_state, batch = _state()
+    model = train_state.model.eval()
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    inner = model.model.inner
+    (z_H, z_L), _ = _transition(inner, _inner_ov(overrides), _initial_state(inner, query["inputs"].shape[0], query["inputs"].device), query)
+    trm = {k[len("model."):]: v for k, v in overrides.items() if k.startswith("model.")}
+    carry, _ = torch.func.functional_call(model.model, trm, args=(), kwargs=dict(carry=None, batch=query))
+    torch.testing.assert_close(z_H, carry.inner_carry.z_H)
+    torch.testing.assert_close(z_L, carry.inner_carry.z_L)
+
+
+def test_trajectory_targets_start_at_the_rollout_and_move_back_from_the_end():
+    """No iterations: the targets are the model's own rollout. With iterations the final CE drops, and the task signal reaches
+    s~_1 through the consistency terms only when the segment carries gradient to its input state (all H-cycles with grad);
+    with lambda = 0 nothing couples the states, so only s~_N moves."""
+    from contextlib import nullcontext
+    from unittest import mock
+    config, train_state, batch = _state()  # halt_max_steps = 4
+    model = train_state.model.eval()
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    n = config.arch.halt_max_steps
+    _, d0 = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=0, lr=1e-2)
+    assert d0["delta_last"] == 0 and d0["delta_first"] == 0 and d0["ce_after"] == pytest.approx(d0["ce_before"], rel=1e-3)
+    _, d = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3 * n, lr=5e-2)
+    assert d["ce_after"] < d["ce_before"] and d["delta_last"] > 0 and d["delta_first"] > 0
+    with mock.patch("pretrain._full_grad_cycles", lambda inner: nullcontext()):  # TRM's default: no gradient into the state
+        _, d1 = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3 * n, lr=5e-2)
+    assert d1["delta_first"] == 0 and d1["delta_last"] > 0
+    _, d2 = _optimize_trajectory(model, overrides, query, n, lam=0.0, iters=3 * n, lr=5e-2)
+    assert d2["delta_first"] == 0 and d2["delta_last"] > 0
+    assert model.model.inner.config.grad_cycles == 1  # restored
+
+
+def test_trajectory_query_loss_trains_theta_and_alpha():
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory", "meta_sgd.traj_iters=3",
+                                        "meta_sgd.inner_steps=2", "meta_sgd.alpha_per_step=true")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    targets = _meta_sgd_targets(model, [])
+    traj = {"lambda": 1.0, "iters": 3, "lr": 1e-2}
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.0, 1.0], second_order=False,
+                         segment_inner_steps=True, segments=config.arch.halt_max_steps, query_loss="trajectory", traj=traj)
+    assert set(traj["diag"]) >= {"ce_before", "ce_after", "residual", "delta_first", "delta_last"}
+    heads = ("lm_head", "q_head")  # read out of the states, not on their path: matching states gives them no meta-gradient
+    for name, _ in targets:
+        g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
+        if any(h in name for h in heads):
+            assert g is None or g.abs().sum() == 0, name
+        else:
+            assert g is not None and torch.isfinite(g).all() and g.abs().sum() > 0, name
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for n, p in model.named_parameters() if not n.startswith("meta_sgd."))
+    assert _config().meta_sgd.query_loss == "ce"
+    with pytest.raises(Exception):
+        _config("meta_sgd.query_loss=other")
