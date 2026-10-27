@@ -514,6 +514,31 @@ per-segment step is .716.
   segments only weakly, so the targets are mostly a correction of the last two or three segments.
 - Cost: ~0.9 s per iteration per 16-row episode; at K = 20 ~+63 s per meta-step if recomputed every step.
 
+## Learned trajectory targets: the target budget (2026-10-26 22:41)
+
+`scripts/miniarc5/traj_diag_budget.py`: trm_ho3 frozen, 146 query rows of 10 training batches (16-row episodes), lambda 10;
+the rollout itself decodes 3.1% of them exactly, its per-segment step is .713.
+
+| lr | K | CE after (before .650) | exact match after | R | Delta_1 | Delta_7 | Delta_8 | s / episode |
+|---|---|---|---|---|---|---|---|---|
+| 0.01 | 20 | .388 | 7.5% | .036 | .003 | .042 | .126 | 18.6 |
+| 0.01 | 50 | .215 | 23.1% | .056 | .002 | .094 | .224 | 44.7 |
+| 0.01 | 100 | .137 | 44.4% | .065 | .002 | .147 | .302 | 95.4 |
+| 0.05 | 20 | .121 | 58.8% | .082 | .013 | .148 | .349 | 19.8 |
+| 0.05 | 50 | .073 | 99.4% | .074 | .005 | .214 | .426 | 47.5 |
+| 0.05 | 100 | .068 | 100% | .067 | .004 | .233 | .449 | 88.9 |
+| 0.1 | 20 | .076 | **100%** | .095 | .028 | .210 | .451 | 17.4 |
+| 0.1 | 50 | .067 | 100% | .070 | .008 | .232 | .459 | 44.1 |
+| 0.1 | 100 | .067 | 100% | .067 | .005 | .241 | .465 | 87.8 |
+
+- **The learning rate was the bottleneck, not K or lambda:** at lr 0.1 the targets solve every query row within 20
+  iterations (round 25's setting, lr 0.01 / K 10, solved well under 7.5%). Residuals stay at 9-13% of the rollout's own
+  step, so the paths remain close to reachable.
+- The change is still concentrated in the last segments: Delta_7 / Delta_8 ~.5, Delta_1 / Delta_8 at most .06. Longer
+  optimisation pulls s~_1 back toward the rollout (Delta_1 .028 -> .005 from K 20 to 100) while the residuals shrink.
+- Cheapest full-accuracy setting: lr 0.1, K 20 (~17 s per episode; the cached build ~70 min). lr 0.1 / K 50 has lower
+  residuals (.070 vs .095) at ~2.5x the cost.
+
 ## Round 24 (2026-10-25 11:18): embedding first, then weights, inside the best recipes
 
 1000 normalised steps; `meta_sgd_embed_first=0.5` = 500 steps on the puzzle-embedding rows only, then 500 on the weights
