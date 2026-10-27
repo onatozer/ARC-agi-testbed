@@ -547,3 +547,24 @@ def test_multi_start_targets_each_keep_their_own_start():
         _trajectory_cache(fixed_state.model, rows, n, 1.0, 1, 1e-2, starts=2)
     with pytest.raises(Exception):
         _config("meta_sgd.traj_starts=2")  # multi-start needs cached targets
+
+
+# GRAM fields its code reads but config/arch/gram.yaml does not define (values of the earlier GRAM runs)
+GRAM_FIELDS = ["+arch.kl_reduction=sum", "+arch.lprm_prior_rollouts=0", "+arch.lprm_rollout_cycles=grad", "+arch.posterior_nograd_cycles=false",
+               "+arch.prior_sample_frac=0.0", "+arch.prior_sample_per_puzzle=false", "+arch.value_bootstrap_weight=0.5"]
+
+
+def test_trajectory_query_loss_runs_on_gram():
+    """GRAM in TRM's place (its inner network is TRM's plus the prior / posterior heads): targets optimise and the outer
+    loss trains theta, with no code specific to it."""
+    config, train_state, batch = _state("arch=gram", *GRAM_FIELDS, "meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory")
+    model = train_state.model
+    assert type(model.model.inner).__name__ == "GRAM_Inner"
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    n = config.arch.halt_max_steps
+    _, d = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3, lr=5e-2)
+    assert d["delta_last"] > 0
+    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2}
+    _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, support, query, torch.tensor(1.0), msl_weights=[1.0], second_order=False,
+                         segment_inner_steps=True, segments=n, query_loss="trajectory", traj=traj)
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for name, p in model.named_parameters() if not name.startswith("meta_sgd."))

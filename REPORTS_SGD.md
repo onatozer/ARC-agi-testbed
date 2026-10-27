@@ -1156,3 +1156,13 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   lambda 10), cached from the unadapted weights, built once (`msgd26_traj_once`, ~70 min build + ~3.5 h), then rebuilt
   every 25% (`msgd26_traj_q25`, ~4 builds + ~3.5 h), each evaluated at 1000 steps. Then (user): the random-start TRM runs,
   then GRAM in TRM's place (architecture swap only, no posterior change).
+- **2026-10-26 23:45. Rounds 27-28 queued** (user), chained after round 26. Round 27 (`msgd27_trm_random.sh`): trm_ho3r =
+  plain TRM retrained with `arch.random_initialization=true`; meta-fine-tune with the trajectory loss and 4 random starts
+  per query row (new option `meta_sgd.traj_starts`: one cached target path per start, stored with its start, outer loss
+  averaged over the four, the adapted model starting from the same states; tested); round 26's better refresh
+  (`pick_traj_refresh.py`). Every checkpoint evaluated twice at 1000 steps: one start (num_views 1) and 4 restarts voted
+  (num_views 4). Round 28 (`msgd28_gram.sh`): GRAM in TRM's place, no posterior change: gram_ho3 pretrained here, its
+  controls, and the trajectory meta-fine-tune. **Pre-existing gap:** this branch's (and main's) GRAM code reads seven
+  fields `config/arch/gram.yaml` does not define (kl_reduction, lprm_prior_rollouts, lprm_rollout_cycles,
+  posterior_nograd_cycles, prior_sample_frac, prior_sample_per_puzzle, value_bootstrap_weight), so GRAM cannot be built
+  from the configs as they are; the scripts and the new GRAM test pass them with the earlier GRAM runs' values.
