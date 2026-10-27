@@ -1116,6 +1116,10 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
 - **2026-10-26 19:55. Queued idea, after the current batch (user):** multi-start trajectory targets. Per puzzle, M random
   starts s_0 (small noise around the fixed initial state; trm_ho3 was pretrained from the fixed start), one optimised
   target path per start, and the meta outer loss over all M paths (the adapted model's free-running trajectory from each
-  start matched to that start's path). Optional at test time: several starts, vote. Open: M and the noise scale. GRAM
+  start matched to that start's path). Amended (user): retrain the plain TRM with random starts
+  (`arch.random_initialization=true`, otherwise trm_ho3's recipe, this branch and build) instead of adding noise to a
+  fixed-start checkpoint, and evaluate every multi-start checkpoint twice: one start with no vote, and M restarts with a
+  majority vote (evaluate_ttt's `num_views=M`, which pools the passes' predictions; each pass draws new starts), so a
+  voting gain cannot be mistaken for a training gain. Open: M. GRAM
   variant (user, revised): the posterior was trained on the answer, so feeding it the next latent target is out of
   distribution; a decoded target grid decode(s~_{t+1}) as its per-step "answer" would be in distribution (not checked).
