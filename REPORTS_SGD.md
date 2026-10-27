@@ -145,7 +145,7 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | msgd11_ms10 | round 12: 10-step meta-trained; 300 / 1000 steps, last alpha held | 9 / <u>10</u> | 10 / <u>11</u> | <u>13</u> / <u>14</u> | 14 / <u>16</u> | .862 / <u>.884</u> |
 | msgd15_n1_fo | round 15: one-step normalised recipe, entirely first order; 120 steps | 5 | 6 | 8 | 9 | 0.832 |
 | msgd15_n1_fo | round 15: one-step normalised recipe, first order; 300 steps | 6 | 10 | 11 | 12 | <u>0.863</u> |
-| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | <u>11</u> | <u>13</u> | 15 | <u>0.884</u> |
+| msgd15_n1_fo | round 15: one-step normalised recipe, first order; 1000 steps | <u>10</u> | <u>11</u> | <u>13</u> | <u>15</u> | <u>0.884</u> |
 | msgd15_ms5_fo | round 15: 5-step normalised recipe, first order; 120 steps, stretched | 7 | 7 | 8 | 10 | 0.841 |
 | msgd15_ms5_fo | round 15: 5-step first order; 300 steps, stretched | 8 | 9 | 12 | 12 | <u>0.872</u> |
 | msgd15_ms5_fo | round 15: 5-step first order; 1000 steps, stretched | **12** | <u>12</u> | <u>14</u> | <u>17</u> | **0.890** |
@@ -155,7 +155,7 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | msgd17_v_a0.1 | round 17: same, alpha init 0.1; 120 / 300 / 1000 steps, stretched | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | .087 / .000 / .000 |
 | msgd17_v_a1 | round 17: same, alpha init 1; 120 / 300 / 1000 steps, stretched | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | .000 / .000 / .000 |
 | trm_ho3 | round 18: plain TRM retrained on this branch, ttt_mini | 1 | 2 | 3 | 3 | 0.779 |
-| trm_ho3 | round 18: plain TRM (this branch), normalised segment steps, ACT off, hand-set alpha; 120 / 300 / 1000 steps | 5 / 7 / 8 | 7 / 10 / 9 | 8 / 11 / 12 | 10 / 12 / 15 | .799 / .822 / .815 |
+| trm_ho3 | round 18: plain TRM (this branch), normalised segment steps, ACT off, hand-set alpha; 120 / 300 / 1000 steps | 5 / 7 / 8 | 7 / 10 / 9 | 8 / 11 / 12 | 10 / 12 / <u>15</u> | .799 / .822 / .815 |
 | msgd18_trm | round 18: TRM (from trm_ho3) meta-fine-tuned, 8 segment steps, ACT off, alpha init 1e-3; 120 / 300 / 1000 steps, segment schedule | 6 / 8 / <u>11</u> | 6 / 9 / <u>13</u> | 7 / 9 / **15** | 10 / 13 / <u>17</u> | .798 / .817 / .829 |
 | trm_ho3 | round 19: plain TRM (this branch), normalised segment steps, ACT ON, hand-set alpha, 1000 steps | **12** | **14** | <u>14</u> | <u>16</u> | 0.835 |
 | msgd18_trm | round 20: TRM meta-fine-tuned (ACT off in training), ACT ON at test, segment schedule, 1000 steps | 9 | <u>11</u> | 12 | 13 | 0.825 |
@@ -166,11 +166,13 @@ TRM rows use only checkpoints trained on this branch and build (trm_ho3 and its 
 | varc_ho3 | round 23: plain VARC (this branch), Embed-Full-TTT (embedding, then backbone), ttt_mini length | 3 | 3 | 3 | 3 | 0.779 |
 | trm_ho3 | round 23: plain TRM (this branch), Embed-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.751 |
 | trm_ho3 | round 23: plain TRM (this branch), Embed-Full-TTT, ttt_mini length | 1 | 1 | 1 | 1 | 0.755 |
-| varc_ho3 | round 24: plain VARC, embedding first (500 rows-only + 500 weights-only steps), hand-set alpha | 9 | <u>11</u> | <u>13</u> | 15 | 0.858 |
+| varc_ho3 | round 24: plain VARC, embedding first (500 rows-only + 500 weights-only steps), hand-set alpha | 9 | <u>11</u> | <u>13</u> | <u>15</u> | 0.858 |
 | msgd17_v_a1e-3 | round 24: VARC meta-fine-tuned, embedding first, stretched, 1000 steps | 9 | <u>12</u> | 12 | <u>17</u> | <u>0.876</u> |
 | trm_ho3 | round 24: plain TRM, ACT on, embedding first, hand-set alpha, 1000 steps | 9 | <u>11</u> | 11 | 12 | 0.817 |
 | msgd18_trm | round 24: TRM meta-fine-tuned (ACT off), embedding first, segment schedule, 1000 steps | 9 | 10 | 11 | 12 | 0.806 |
 | msgd25_traj_k10 | round 25: TRM meta-fine-tuned, trajectory targets re-optimised per episode (K 10, lambda 10), ACT on, segment schedule, 1000 steps | 9 | <u>11</u> | <u>13</u> | <u>16</u> | 0.830 |
+| msgd26_traj_once | round 26: TRM meta-fine-tuned, trajectory targets built once (lr 0.1, K 20, lambda 10), ACT on, segment schedule, 1000 steps | **12** | <u>12</u> | <u>14</u> | <u>15</u> | 0.826 |
+| msgd26_traj_q25 | round 26: same, targets rebuilt every 25% | 8 | 9 | 11 | 13 | 0.827 |
 | msgd11_scratch | round 11: normalised recipe from scratch, 4000 x batch 128 (baseline budget); learned loop 10 / 30 / 120 steps | 1 / 1 / 1 | 3 / 2 / 1 | 3 / 2 / 2 | 4 / 3 / 3 | .746 / .751 / .775 |
 | msgd11_scratch | round 11: from scratch; then ttt_mini | 2 | 3 | 3 | 3 | 0.772 |
 | varc_ho2 | plain VARC, ttt_mini, eval seed 1 | 3 | 4 | 6 | 7 | 0.812 |
@@ -513,6 +515,28 @@ per-segment step is .716.
   .25-.33, but Delta_1 / Delta_8 is only .014-.027 even at K = 20: in 20 iterations the signal reaches the early
   segments only weakly, so the targets are mostly a correction of the last two or three segments.
 - Cost: ~0.9 s per iteration per 16-row episode; at K = 20 ~+63 s per meta-step if recomputed every step.
+
+## Round 26 (2026-10-27 09:47): trajectory targets at the fixed budget
+
+From trm_ho3, round 21's recipe (ACT on, 8 segment steps, first order, normalised, alpha per tensor and per step), MSL
+off, query loss = matching cached targets (lr 0.1, K 20, lambda 10: every target path decodes correctly at build time).
+All evaluated with ACT on, 1000 steps; clean = without the MiniARC duplicate.
+
+| outer loss | pass@1/2/5 | token acc | clean 29 |
+|---|---|---|---|
+| plain trm_ho3, hand-set alpha (no meta-training) | 12 / 14 / 14 | .835 | 11 / 13 / 13 |
+| final CE (round 21) | 11 / 11 / 13 | .832 | 10 / 10 / 12 |
+| targets re-optimised per episode, lr 0.01, K 10 (round 25) | 9 / 11 / 13 | .830 | 8 / 10 / 12 |
+| **targets built once** (2 h 57 min incl. the ~70 min build) | **12 / 12 / 14** | .826 | 11 / 11 / 13 |
+| targets rebuilt every 25% (6 h 29 min) | 8 / 9 / 11 | .827 | 8 / 9 / 10 |
+
+- With targets that actually solve the training tasks, the trajectory loss is the best Meta-SGD outer loss so far on TRM
+  (+1 pass@1 over the CE loss, +3 over round 25's under-powered targets), and ties the plain checkpoint at pass@1 and
+  pass@5 (clean: 11 vs 11, 13 vs 13); it is 2 behind at pass@2 and .009 lower in token accuracy.
+- Rebuilding the targets during meta-training hurts (-4 pass@1): rebuilt targets follow the drifting weights, so each
+  rebuild moves the goal (and the later builds are made from weights already pulled toward the earlier targets). Built
+  once from the base weights is the better schedule; rounds 27-28 use it (`pick_traj_refresh.py`).
+- Single seeds; a one-task difference is within noise.
 
 ## Learned trajectory targets: the target budget (2026-10-26 22:41)
 
@@ -1166,3 +1190,5 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   fields `config/arch/gram.yaml` does not define (kl_reduction, lprm_prior_rollouts, lprm_rollout_cycles,
   posterior_nograd_cycles, prior_sample_frac, prior_sample_per_puzzle, value_bootstrap_weight), so GRAM cannot be built
   from the configs as they are; the scripts and the new GRAM test pass them with the earlier GRAM runs' values.
+- **2026-10-27 09:47. Round 26 done** (section "Round 26"): targets built once 12/12/14 (.826), rebuilt every 25% 8/9/11
+  (.827). Round 27 started (trm_ho3r pretraining).
