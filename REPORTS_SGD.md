@@ -533,8 +533,8 @@ All evaluated with ACT on, 1000 steps; clean = without the MiniARC duplicate.
 - With targets that actually solve the training tasks, the trajectory loss is the best Meta-SGD outer loss so far on TRM
   (+1 pass@1 over the CE loss, +3 over round 25's under-powered targets), and ties the plain checkpoint at pass@1 and
   pass@5 (clean: 11 vs 11, 13 vs 13); it is 2 behind at pass@2 and .009 lower in token accuracy.
-- Rebuilding the targets during meta-training hurts (-4 pass@1): rebuilt targets follow the drifting weights, so each
-  rebuild moves the goal (and the later builds are made from weights already pulled toward the earlier targets). Built
+- Rebuilding the targets during meta-training hurts (-4 pass@1). Likely reason (not measured): rebuilt targets follow
+  the drifting weights, so each rebuild moves the goal the meta-training is converging on. Built
   once from the base weights is the better schedule; rounds 27-28 use it (`pick_traj_refresh.py`).
 - Single seeds; a one-task difference is within noise.
 
