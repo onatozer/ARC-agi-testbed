@@ -493,7 +493,7 @@ segments are optimised as leaves (Adam on CE(decode(s~_8)) + lambda * mean_t ||s
 rollout, every H-cycle carrying gradient), and the outer loss matches the adapted model's free-running per-segment states
 to them, instead of the final CE. Under it the output and halt heads get no outer gradient.
 
-Diagnostic (`scratchpad/traj_diag.py`): trm_ho3 frozen, 601 query rows of 10 training batches in 16-row episodes, Adam lr
+Diagnostic (`scripts/miniarc5/traj_diag_lambda.py`): trm_ho3 frozen, 601 query rows of 10 training batches in 16-row episodes, Adam lr
 1e-2. Delta_t = RMS distance of the target from the rollout at segment t; R = RMS transition residual; the rollout's own
 per-segment step is .716.
 
@@ -1110,7 +1110,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   targets (K 20, lr 1e-2, the diagnostic's setting) decode to the correct output on only ~9.4% of query rows, and with the
   final CE dropped from the outer loss, meta-training would mostly learn paths ending at wrong answers. First fix the
   target optimisation: budget diagnostic (lr 1e-2 / 5e-2 / 1e-1 x K 20 / 50 / 100, lambda 10, 10 episodes,
-  `scratchpad/traj_diag_budget.py`, log `autoresearch_runs/miniarc5/traj_diag_budget.log`) running. Then decide between
+  `scripts/miniarc5/traj_diag_budget.py`, log `autoresearch_runs/miniarc5/traj_diag_budget.log`) running. Then decide between
   targets built once and refreshed every x. Ideas recorded (user), not started: guiding GRAM's posterior toward the
   optimised path; several starting points s_0 with one optimised path each.
 - **2026-10-26 ~21:35. Queued idea, after the current batch (user):** multi-start trajectory targets. Per puzzle, M random
