@@ -77,6 +77,7 @@ class MetaSGDConfig(BaseModel):
     traj_lambda: float = 1.0
     traj_iters: int = 20
     traj_lr: float = 1e-2
+    traj_starts: int = 1  # > 1 (cached targets, arch.random_initialization): that many random starts per query row, one optimised path each, the outer loss over all of them
     traj_refresh: float = 0.0  # > 0: targets cached for every training query row from the current weights (before adaptation, each puzzle's own embedding row), recomputed every this fraction of training; 0: recomputed per episode at the adapted weights
     normalize_grad: bool = False  # inner step on the gradient divided by its RMS per tensor: a step moves a tensor by ~alpha whatever the gradient's scale (as Adam does; not Meta-SGD proper)
 
@@ -86,8 +87,8 @@ class MetaSGDConfig(BaseModel):
             raise ValueError("meta_sgd: inner_lr > 0 (inner_lr_rows too), alpha_range >= 0 and copies_per_group >= 1 are required.")
         if self.inner_steps < 1 or self.first_order_steps < 0 or (self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1):
             raise ValueError("meta_sgd: inner_steps >= 1, first_order_steps >= 0 and msl_anneal_fraction in (0, 1] are required.")
-        if self.query_loss not in ("ce", "trajectory") or self.traj_iters < 0 or self.traj_lambda < 0 or self.traj_lr <= 0 or not 0 <= self.traj_refresh <= 1:
-            raise ValueError("meta_sgd: query_loss in {ce, trajectory}, traj_iters >= 0, traj_lambda >= 0, traj_lr > 0 and traj_refresh in [0, 1] are required.")
+        if self.query_loss not in ("ce", "trajectory") or self.traj_iters < 0 or self.traj_lambda < 0 or self.traj_lr <= 0 or not 0 <= self.traj_refresh <= 1 or self.traj_starts < 1 or (self.traj_starts > 1 and self.traj_refresh == 0):
+            raise ValueError("meta_sgd: query_loss in {ce, trajectory}, traj_iters >= 0, traj_lambda >= 0, traj_lr > 0, traj_refresh in [0, 1] and traj_starts >= 1 (> 1 only with cached targets, traj_refresh > 0) are required.")
         return self
 
 

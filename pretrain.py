@@ -852,12 +852,13 @@ def _initial_state(inner: nn.Module, batch_size: int, device: torch.device) -> T
 
 def _optimize_trajectory(
     model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float,
+    s0: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
 ) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], Dict[str, float]]:
     """Latent targets for meta_sgd.query_loss=trajectory (multiple shooting): with the weights in `overrides` frozen, roll the
     inner network out from s_0 for n segments, then optimise s~_1..s~_n (leaves, fp32, from the rollout) with Adam on
     sum_rows [CE(decode(s~_n), labels) + lam * mean_t ||s~_{t+1} - F(s~_t)||^2], s~_0 = s_0 fixed. Returns the targets
     (detached) and diagnostics: CE and exact match of decode(s_n) / decode(s~_n), the mean residual R_t, and Delta_t =
-    ||s~_t - s_t|| at t = 1, n-1 and n."""
+    ||s~_t - s_t|| at t = 1, n-1 and n. s0: the start (default: the inner network's reset state)."""
     inner = model.model.inner
     ov = {k[len(_INNER):]: v.detach() for k, v in overrides.items() if k.startswith(_INNER)}
     head = {k[len("lm_head."):]: v for k, v in ov.items() if k.startswith("lm_head.")}
@@ -878,7 +879,7 @@ def _optimize_trajectory(
         return ((a[0].float() - b[0].float()).square().mean((1, 2)) + (a[1].float() - b[1].float()).square().mean((1, 2)))
 
     with torch.no_grad():
-        states = [_initial_state(inner, labels.shape[0], labels.device)]
+        states = [s0 if s0 is not None else _initial_state(inner, labels.shape[0], labels.device)]
         for _ in range(n):
             nxt, logits = _transition(inner, ov, states[-1], batch)
             states.append(nxt)
@@ -913,40 +914,54 @@ def _row_key(pid: int, inputs: torch.Tensor) -> Tuple[int, bytes]:
 
 
 def _trajectory_cache(
-    model: nn.Module, rows: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float, chunk: int = 16,
-) -> Tuple[Dict[Tuple[int, bytes], Tuple[torch.Tensor, torch.Tensor]], Dict[str, float]]:
+    model: nn.Module, rows: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float, chunk: int = 16, starts: int = 1,
+) -> Tuple[Dict[Tuple[int, bytes, int], Tuple[torch.Tensor, ...]], Dict[str, float]]:
     """meta_sgd.traj_refresh: _optimize_trajectory's targets for every row of `rows` (inputs, labels, puzzle_identifiers)
-    with the model's own weights and embedding rows, in `chunk`-row pieces, keyed by (puzzle id, inputs) and kept on the
-    CPU in bf16 as ((n, ...) z_H, (n, ...) z_L). Also the diagnostics averaged over the chunks."""
+    with the model's own weights and embedding rows, in `chunk`-row pieces, once per start (meta_sgd.traj_starts: each
+    from its own random reset state), keyed by (puzzle id, inputs, start) and kept on the CPU in bf16 as (s_0 z_H, s_0 z_L,
+    (n, ...) target z_H, (n, ...) target z_L). Also the diagnostics averaged over the chunks."""
     device = next(model.parameters()).device
+    inner = model.model.inner
+    if starts > 1 and not getattr(inner, "random_initialization", False):
+        raise ValueError("meta_sgd.traj_starts > 1 needs arch.random_initialization=true: otherwise every start is the same state.")
     cache, diags = {}, []
     for j in range(0, rows["inputs"].shape[0], chunk):
         part = {k: v[j : j + chunk].to(device) for k, v in rows.items()}
-        targets, d = _optimize_trajectory(model, {}, part, n, lam, iters, lr)
-        diags.append(d)
-        z_H = torch.stack([h for h, _ in targets], 1).to("cpu", torch.bfloat16)
-        z_L = torch.stack([l for _, l in targets], 1).to("cpu", torch.bfloat16)
-        for i in range(part["inputs"].shape[0]):
-            cache[_row_key(part["puzzle_identifiers"][i], part["inputs"][i])] = (z_H[i], z_L[i])
+        for m in range(starts):
+            s0 = _initial_state(inner, part["inputs"].shape[0], device)
+            targets, d = _optimize_trajectory(model, {}, part, n, lam, iters, lr, s0=s0)
+            diags.append(d)
+            h0, l0 = (t.to("cpu", torch.bfloat16) for t in s0)
+            z_H = torch.stack([h for h, _ in targets], 1).to("cpu", torch.bfloat16)
+            z_L = torch.stack([l for _, l in targets], 1).to("cpu", torch.bfloat16)
+            for i in range(part["inputs"].shape[0]):
+                cache[_row_key(part["puzzle_identifiers"][i], part["inputs"][i]) + (m,)] = (h0[i], l0[i], z_H[i], z_L[i])
     return cache, {k: sum(d[k] for d in diags) / len(diags) for k in diags[0]}
 
 
-def _cached_goal(cache: Dict[Tuple[int, bytes], Tuple[torch.Tensor, torch.Tensor]], query: Dict[str, torch.Tensor]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """The cached targets of the query rows (original puzzle ids), as _trajectory_loss takes them: one (z_H, z_L) per segment."""
-    pairs = [cache[_row_key(pid, x)] for pid, x in zip(query["puzzle_identifiers"], query["inputs"])]
+def _cached_goal(
+    cache: Dict[Tuple[int, bytes, int], Tuple[torch.Tensor, ...]], query: Dict[str, torch.Tensor], starts: int = 1,
+) -> Tuple[Tuple[torch.Tensor, torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
+    """The cached starts and targets of the query rows (original puzzle ids), start-major (rows of start 0, then start 1,
+    ...), as _trajectory_loss takes them: (s_0, one (z_H, z_L) per segment)."""
+    entries = [cache[_row_key(pid, x) + (m,)] for m in range(starts) for pid, x in zip(query["puzzle_identifiers"], query["inputs"])]
     device = query["inputs"].device
-    z_H = torch.stack([h for h, _ in pairs], 0).to(device, torch.float32)
-    z_L = torch.stack([l for _, l in pairs], 0).to(device, torch.float32)
-    return [(z_H[:, t], z_L[:, t]) for t in range(z_H.shape[1])]
+    h0, l0, z_H, z_L = (torch.stack([e[i] for e in entries], 0).to(device) for i in range(4))
+    z_H, z_L = z_H.float(), z_L.float()
+    return (h0, l0), [(z_H[:, t], z_L[:, t]) for t in range(z_H.shape[1])]
 
 
-def _trajectory_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], targets: List[Tuple[torch.Tensor, torch.Tensor]]) -> torch.Tensor:
+def _trajectory_loss(
+    model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], targets: List[Tuple[torch.Tensor, torch.Tensor]],
+    s0: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+) -> torch.Tensor:
     """Free-running matching: the adapted model (weights in `overrides`, with gradient) rolls out from s_0, carry detached
     between segments as in deep supervision, and each segment's state is pulled toward its target. Summed over rows,
     averaged over segments and elements."""
     inner = model.model.inner
     ov = {k[len(_INNER):]: v for k, v in overrides.items() if k.startswith(_INNER)}
-    state, total = _initial_state(inner, batch["inputs"].shape[0], batch["inputs"].device), 0.0
+    state = s0 if s0 is not None else _initial_state(inner, batch["inputs"].shape[0], batch["inputs"].device)
+    total = 0.0
     for h, l in targets:
         (z_H, z_L), _ = _transition(inner, ov, state, batch)
         total = total + (z_H.float() - h).square().mean((1, 2)) + (z_L.float() - l).square().mean((1, 2))
@@ -1014,11 +1029,12 @@ def _task_outer_backward(
             loss_s0 = loss_s if loss_s0 is None else loss_s0
             named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
             if w > 0 or k == len(weights) - 1:
-                if query_loss == "trajectory" and "goal" in traj:  # cached from the unadapted weights (traj_refresh)
-                    goal = traj["goal"]
-                if query_loss == "trajectory" and "goal" not in traj:
+                if query_loss == "trajectory" and "goal" in traj:  # cached from the unadapted weights (traj_refresh), M starts
+                    m = traj.get("starts", 1)
+                    q = {key: v.repeat(m, *[1] * (v.dim() - 1)) for key, v in query.items()}  # start-major, as _cached_goal
+                    loss_q = _trajectory_loss(model, theta, q, traj["goal"], traj["s0"]) / m
+                elif query_loss == "trajectory":
                     goal, traj["diag"] = _optimize_trajectory(model, theta, query, segments, traj["lambda"], traj["iters"], traj["lr"])
-                if query_loss == "trajectory":
                     loss_q = _trajectory_loss(model, theta, query, goal)
                 else:
                     loss_q = _supervised_loss(model, theta, query, last_segment_grad)
@@ -1070,13 +1086,14 @@ def meta_sgd_batch(
             loader, _ = create_dataloader(config, "train", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=0, world_size=1)
             parts = [{k: b[k][b["validation"].bool() & (b["puzzle_identifiers"] != 0)] for k in ("inputs", "labels", "puzzle_identifiers")} for _, b, _ in loader]
             rows = {k: torch.cat([p[k] for p in parts]) for k in parts[0]}
-            model.meta_sgd.traj_cache, refresh = _trajectory_cache(model, rows, config.arch.halt_max_steps, cfg.traj_lambda, cfg.traj_iters, cfg.traj_lr)
+            model.meta_sgd.traj_cache, refresh = _trajectory_cache(model, rows, config.arch.halt_max_steps, cfg.traj_lambda, cfg.traj_iters, cfg.traj_lr, starts=cfg.traj_starts)
             traj_diags.append(refresh)
     with flop_counter:
         for _key, support, query in episodes:
             traj = {"lambda": cfg.traj_lambda, "iters": cfg.traj_iters, "lr": cfg.traj_lr}
             if cfg.query_loss == "trajectory" and cfg.traj_refresh > 0:
-                traj["goal"] = _cached_goal(model.meta_sgd.traj_cache, query)
+                traj["s0"], traj["goal"] = _cached_goal(model.meta_sgd.traj_cache, query, cfg.traj_starts)
+                traj["starts"] = cfg.traj_starts
             loss_s, loss_q, ids, row_grad = _task_outer_backward(
                 model, targets, emb_name, support, query, 1.0 / n_query, cfg.fresh_rows, msl_weights=msl_weights, second_order=second_order,
                 segment_inner_steps=cfg.segment_inner_steps, last_segment_grad=cfg.last_segment_grad,

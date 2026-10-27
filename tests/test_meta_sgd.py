@@ -510,12 +510,40 @@ def test_cached_trajectory_targets_round_trip_and_drive_the_outer_loss():
     n = config.arch.halt_max_steps
     cache, diag = _trajectory_cache(model, rows, n, 1.0, 2, 1e-2, chunk=2)
     assert len(cache) == int(q.sum()) and diag["ce_after"] <= diag["ce_before"]
-    goal = _cached_goal(cache, rows)
-    assert len(goal) == n and goal[0][0].shape[0] == int(q.sum())
+    s0, goal = _cached_goal(cache, rows)
+    assert len(goal) == n and goal[0][0].shape[0] == int(q.sum()) and s0[0].shape[0] == int(q.sum())
     named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)  # puzzle 1
     targets = _meta_sgd_targets(model, [])
-    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "goal": _cached_goal(cache, {k: batch[k][q & (batch["puzzle_identifiers"] == 1)] for k in ("inputs", "puzzle_identifiers")})}
+    s0_1, goal_1 = _cached_goal(cache, {k: batch[k][q & (batch["puzzle_identifiers"] == 1)] for k in ("inputs", "puzzle_identifiers")})
+    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "goal": goal_1, "s0": s0_1}
     _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.0, 1.0], second_order=False,
                          segment_inner_steps=True, segments=n, query_loss="trajectory", traj=traj)
     assert "diag" not in traj  # the cached goal was used, nothing re-optimised
     assert any(p.grad is not None and p.grad.abs().sum() > 0 for name, p in model.named_parameters() if not name.startswith("meta_sgd."))
+
+
+def test_multi_start_targets_each_keep_their_own_start():
+    """traj_starts: M random starts per query row, one optimised path each, stored with its start; the outer loss averages
+    the M matches, the adapted model starting from the same states. Fixed starts are refused."""
+    config, train_state, batch = _state("arch.random_initialization=true", "meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory")
+    model = train_state.model
+    q = batch["validation"].bool()
+    rows = {k: batch[k][q] for k in ("inputs", "labels", "puzzle_identifiers")}
+    n, m = config.arch.halt_max_steps, 3
+    cache, _ = _trajectory_cache(model, rows, n, 1.0, 2, 1e-2, starts=m)
+    assert len(cache) == m * int(q.sum())
+    s0, goal = _cached_goal(cache, rows, m)
+    r = int(q.sum())
+    assert s0[0].shape[0] == m * r and not torch.equal(s0[0][:r], s0[0][r : 2 * r])  # the starts differ
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    one = {k: batch[k][q & (batch["puzzle_identifiers"] == 1)] for k in ("inputs", "puzzle_identifiers")}
+    s0_1, goal_1 = _cached_goal(cache, one, m)
+    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "goal": goal_1, "s0": s0_1, "starts": m}
+    _task_outer_backward(model, _meta_sgd_targets(model, []), emb_name, support, query, torch.tensor(1.0), msl_weights=[1.0], second_order=False,
+                         segment_inner_steps=True, segments=n, query_loss="trajectory", traj=traj)
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for name, p in model.named_parameters() if not name.startswith("meta_sgd."))
+    _, fixed_state, _ = _state()
+    with pytest.raises(ValueError):
+        _trajectory_cache(fixed_state.model, rows, n, 1.0, 1, 1e-2, starts=2)
+    with pytest.raises(Exception):
+        _config("meta_sgd.traj_starts=2")  # multi-start needs cached targets

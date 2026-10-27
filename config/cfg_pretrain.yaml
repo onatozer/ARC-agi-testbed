@@ -71,5 +71,6 @@ meta_sgd:
   traj_lambda: 1.0 # trajectory: weight of the transition-consistency term in the target optimisation
   traj_iters: 20 # trajectory: Adam iterations of the target optimisation
   traj_lr: 1e-2 # trajectory: Adam lr of the target optimisation
+  traj_starts: 1 # trajectory, cached: random starts per query row (needs arch.random_initialization), one target path each
   traj_refresh: 0.0 # trajectory: > 0 caches targets from the current (unadapted) weights, refreshed every this fraction of training
   normalize_grad: false # inner step on the gradient divided by its RMS per tensor (a step moves a tensor by ~alpha, as Adam does)
