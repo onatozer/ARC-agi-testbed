@@ -538,6 +538,39 @@ All evaluated with ACT on, 1000 steps; clean = without the MiniARC duplicate.
   once from the base weights is the better schedule; rounds 27-28 use it (`pick_traj_refresh.py`).
 - Single seeds; a one-task difference is within noise.
 
+## Round 26 post-mortem (2026-10-27): why targets that solve every row did not help
+
+From the W&B history of `msgd26_traj_once` (targets built once) and `msgd21_trm_act` (final-CE outer loss), means over
+100-step windows, plus the build-time diagnostics. Matching loss = per query row, mean over segments of the squared
+distance (mean over elements) of (z_H, z_L) to the target.
+
+| per 100 steps | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| round 26 matching loss (query) | .841 | .766 | .849 | .777 | .733 | .698 | .698 | .681 | .663 | .653 |
+| round 26 support CE before the inner loop | 1.62 | 2.73 | 2.98 | 2.99 | 2.99 | 2.86 | 2.87 | 2.91 | 2.87 | 2.84 |
+| round 21 support CE before the inner loop | 1.44 | 1.24 | 1.27 | 1.28 | 1.33 | 1.31 | 1.35 | 1.38 | 1.39 | 1.46 |
+
+- **"100%" described the targets, not the model.** At build time the optimised targets decode every row (the base
+  model's own 8-segment rollout: 2.5%). The adapted model never reached them: the matching loss fell 22% in 1000 steps
+  and was still falling. Whether the adapted model's own decode improved on training rows was not logged.
+- **Most of the matching loss is not the answer signal.** Target vs the base rollout it was optimised from: Delta_1 .029,
+  Delta_7 .214, Delta_8 .496, i.e. squared .001 / .046 / .246, under ~.07 averaged over the 8 segments. The loss starts
+  at .84, so ~90% of it is the gap between the episode's model (fresh embedding rows, `fresh_rows=true`, adapted by 8
+  inner steps) and the model the targets were built from (the trained weights with each puzzle's **own** trained row,
+  prefix positions included). The outer gradient mostly taught "imitate the trained-row trajectory", a row-distillation
+  signal, and only a small part "move toward the answer". Inferred from magnitudes, not measured per component.
+- **Nothing anchored the decoder.** With no CE term the latents moved while lm_head got no gradient: the unadapted
+  model's support CE rose from 1.6 to ~2.9 within 200 steps and stayed there (round 21: ~1.3-1.4 throughout). The
+  checkpoint starts TTT as a worse predictor; 1000 test-time steps recover most of it (token acc .826 vs .835 plain).
+- **The useful part is a latent version of final CE.** The target change sits at the last segment (Delta_1 / Delta_8 =
+  .06), so no intermediate curriculum emerged; matching s~_8 is close in content to the final CE that round 21 used.
+- Net: the meta-gradient was dominated by a fresh-row/own-row mismatch, the decoder drifted, and what answer signal
+  remained was close to CE, so a tie with CE-meta and plain (within single-seed noise) is the expected outcome.
+- Checks not run (GPU busy with rounds 27-28): split the step-0 matching loss into ||adapted - base rollout||^2 and
+  ||target - base rollout||^2; decode accuracy of the round 26 checkpoint's adapted trajectory on training rows.
+  Possible fixes, not run: build targets from the episode's own starting point (fresh row), match the displacement
+  (target - base rollout) instead of the absolute state, exclude the prefix positions, or keep a final CE term.
+
 ## Learned trajectory targets: the target budget (2026-10-26 22:41)
 
 `scripts/miniarc5/traj_diag_budget.py`: trm_ho3 frozen, 146 query rows of 10 training batches (16-row episodes), lambda 10;
