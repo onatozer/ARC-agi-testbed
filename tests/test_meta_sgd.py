@@ -549,6 +549,67 @@ def test_multi_start_targets_each_keep_their_own_start():
         _config("meta_sgd.traj_starts=2")  # multi-start needs cached targets
 
 
+def test_rising_link_weights_move_the_correction_earlier():
+    """traj_lambda_growth: growth 1 is the plain objective; stiffer late links push the target change toward segment 1."""
+    config, train_state, batch = _state()
+    model = train_state.model.eval()
+    _, _, _, overrides, _, query = _episode(model, batch)
+    n = config.arch.halt_max_steps
+    t1, d1 = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3 * n, lr=5e-2)
+    t1b, _ = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3 * n, lr=5e-2, growth=1.0)
+    torch.testing.assert_close(t1[-1][0], t1b[-1][0])
+    _, d10 = _optimize_trajectory(model, overrides, query, n, lam=1.0, iters=3 * n, lr=5e-2, growth=10.0)
+    assert d10["delta_first"] / d10["delta_last"] > d1["delta_first"] / d1["delta_last"]
+    assert _config().meta_sgd.traj_lambda_growth == 1.0
+    with pytest.raises(Exception):
+        _config("meta_sgd.traj_lambda_growth=0")
+
+
+def test_fresh_row_cache_starts_from_the_table_mean():
+    """fresh_emb: the cached targets are built with every row reading the table mean (as the episode's fresh rows start),
+    not each puzzle's own row; with no iterations they are that model's rollout."""
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory")
+    model = train_state.model.eval()
+    emb_name = _puzzle_emb_name(model)
+    table = model.get_buffer(emb_name)
+    table.copy_(torch.randn_like(table))  # rows differ from their mean
+    q = batch["validation"].bool()
+    rows = {k: batch[k][q] for k in ("inputs", "labels", "puzzle_identifiers")}
+    n = config.arch.halt_max_steps
+    own, _ = _trajectory_cache(model, rows, n, 1.0, 0, 1e-2)
+    fresh, _ = _trajectory_cache(model, rows, n, 1.0, 0, 1e-2, fresh_emb=emb_name)
+    s0, goal = _cached_goal(fresh, rows)
+    ov = {emb_name: table.mean(0, keepdim=True), emb_name[: -len("weights")] + "local_weights": table.new_zeros(0, table.shape[1])}
+    ov = {k[len("model.inner."):]: v for k, v in ov.items()}
+    mean_rows = {**rows, "puzzle_identifiers": torch.zeros_like(rows["puzzle_identifiers"])}
+    (z_H, _), _ = _transition(model.model.inner, ov, s0, mean_rows)
+    torch.testing.assert_close(goal[0][0], z_H.float().to(torch.bfloat16).float())
+    _, goal_own = _cached_goal(own, rows)
+    assert not torch.allclose(goal[0][0], goal_own[0][0])
+
+
+def test_trajectory_ce_term_gives_the_heads_a_meta_gradient():
+    """traj_ce_weight > 0: the query CE joins the matching loss, so lm_head and q_head get rho gradients; 0 adds nothing."""
+    config, train_state, batch = _state("meta_sgd.segment_inner_steps=true", "meta_sgd.query_loss=trajectory", "meta_sgd.inner_steps=2",
+                                        "meta_sgd.traj_ce_weight=1.0")
+    model = train_state.model
+    named, emb_name, emb_rows, overrides, support, query = _episode(model, batch)
+    targets = _meta_sgd_targets(model, [])
+    traj = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "ce_weight": 1.0}
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.0, 1.0], second_order=False,
+                         segment_inner_steps=True, segments=config.arch.halt_max_steps, query_loss="trajectory", traj=traj)
+    assert torch.isfinite(traj["ce"]) and traj["ce"] > 0
+    for name, _ in targets:
+        if "lm_head" in name or "q_head" in name:
+            g = model.meta_sgd.rho[model.meta_sgd.key(name)].grad
+            assert g is not None and g.abs().sum() > 0, name
+    traj0 = {"lambda": 1.0, "iters": 2, "lr": 1e-2, "ce_weight": 0.0}
+    _task_outer_backward(model, targets, emb_name, support, query, torch.tensor(1.0), msl_weights=[0.0, 1.0], second_order=False,
+                         segment_inner_steps=True, segments=config.arch.halt_max_steps, query_loss="trajectory", traj=traj0)
+    assert "ce" not in traj0
+    assert _config().meta_sgd.traj_ce_weight == 0.0
+
+
 # GRAM fields its code reads but config/arch/gram.yaml does not define (values of the earlier GRAM runs)
 GRAM_FIELDS = ["+arch.kl_reduction=sum", "+arch.lprm_prior_rollouts=0", "+arch.lprm_rollout_cycles=grad", "+arch.posterior_nograd_cycles=false",
                "+arch.prior_sample_frac=0.0", "+arch.prior_sample_per_puzzle=false", "+arch.value_bootstrap_weight=0.5"]

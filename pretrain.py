@@ -852,13 +852,14 @@ def _initial_state(inner: nn.Module, batch_size: int, device: torch.device) -> T
 
 def _optimize_trajectory(
     model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float,
-    s0: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+    s0: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, growth: float = 1.0,
 ) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], Dict[str, float]]:
     """Latent targets for meta_sgd.query_loss=trajectory (multiple shooting): with the weights in `overrides` frozen, roll the
     inner network out from s_0 for n segments, then optimise s~_1..s~_n (leaves, fp32, from the rollout) with Adam on
     sum_rows [CE(decode(s~_n), labels) + lam * mean_t ||s~_{t+1} - F(s~_t)||^2], s~_0 = s_0 fixed. Returns the targets
     (detached) and diagnostics: CE and exact match of decode(s_n) / decode(s~_n), the mean residual R_t, and Delta_t =
-    ||s~_t - s_t|| at t = 1, n-1 and n. s0: the start (default: the inner network's reset state)."""
+    ||s~_t - s_t|| at t = 1, n-1 and n. s0: the start (default: the inner network's reset state). growth: link t's consistency
+weight is lam * growth^t, rescaled to mean lam (meta_sgd.traj_lambda_growth); R_t stays unweighted."""
     inner = model.model.inner
     ov = {k[len(_INNER):]: v.detach() for k, v in overrides.items() if k.startswith(_INNER)}
     head = {k[len("lm_head."):]: v for k, v in ov.items() if k.startswith("lm_head.")}
@@ -884,13 +885,15 @@ def _optimize_trajectory(
             nxt, logits = _transition(inner, ov, states[-1], batch)
             states.append(nxt)
         ce0, exact0 = float(ce(logits).mean()), exact(logits)
+    link = [growth**t for t in range(n)]
+    link = [w * n / sum(link) for w in link]
     var = [(h.float().clone().requires_grad_(), l.float().clone().requires_grad_()) for h, l in states[1:]]
     leaves = [t for pair in var for t in pair]
     opt = torch.optim.Adam(leaves, lr=lr)
     with _full_grad_cycles(inner), torch.enable_grad():
         for _ in range(iters):
             traj = [states[0]] + var
-            cons = sum(dist(traj[t + 1], _transition(inner, ov, traj[t], batch)[0]) for t in range(n)) / n
+            cons = sum(link[t] * dist(traj[t + 1], _transition(inner, ov, traj[t], batch)[0]) for t in range(n)) / n
             loss = (ce(decode(var[-1][0])) + lam * cons).sum()
             grads = torch.autograd.grad(loss, leaves)  # the states only: nothing accumulates into the weights
             opt.zero_grad(set_to_none=True)
@@ -915,21 +918,28 @@ def _row_key(pid: int, inputs: torch.Tensor) -> Tuple[int, bytes]:
 
 def _trajectory_cache(
     model: nn.Module, rows: Dict[str, torch.Tensor], n: int, lam: float, iters: int, lr: float, chunk: int = 16, starts: int = 1,
+    growth: float = 1.0, fresh_emb: Optional[str] = None,
 ) -> Tuple[Dict[Tuple[int, bytes, int], Tuple[torch.Tensor, ...]], Dict[str, float]]:
     """meta_sgd.traj_refresh: _optimize_trajectory's targets for every row of `rows` (inputs, labels, puzzle_identifiers)
     with the model's own weights and embedding rows, in `chunk`-row pieces, once per start (meta_sgd.traj_starts: each
     from its own random reset state), keyed by (puzzle id, inputs, start) and kept on the CPU in bf16 as (s_0 z_H, s_0 z_L,
-    (n, ...) target z_H, (n, ...) target z_L). Also the diagnostics averaged over the chunks."""
+    (n, ...) target z_H, (n, ...) target z_L). Also the diagnostics averaged over the chunks. fresh_emb (the embedding table's
+name, with meta_sgd.fresh_rows): every row reads the table mean instead of its own row, as the episode's fresh rows start."""
     device = next(model.parameters()).device
     inner = model.model.inner
     if starts > 1 and not getattr(inner, "random_initialization", False):
         raise ValueError("meta_sgd.traj_starts > 1 needs arch.random_initialization=true: otherwise every start is the same state.")
+    ov = {}
+    if fresh_emb is not None:  # one row, the table mean, read by every row (the gather path, as _episode_overrides)
+        table = model.get_buffer(fresh_emb)
+        ov = {fresh_emb: table.mean(0, keepdim=True), fresh_emb[: -len("weights")] + "local_weights": table.new_zeros(0, table.shape[1])}
     cache, diags = {}, []
     for j in range(0, rows["inputs"].shape[0], chunk):
         part = {k: v[j : j + chunk].to(device) for k, v in rows.items()}
+        fwd = {**part, "puzzle_identifiers": torch.zeros_like(part["puzzle_identifiers"])} if ov else part
         for m in range(starts):
             s0 = _initial_state(inner, part["inputs"].shape[0], device)
-            targets, d = _optimize_trajectory(model, {}, part, n, lam, iters, lr, s0=s0)
+            targets, d = _optimize_trajectory(model, ov, fwd, n, lam, iters, lr, s0=s0, growth=growth)
             diags.append(d)
             h0, l0 = (t.to("cpu", torch.bfloat16) for t in s0)
             z_H = torch.stack([h for h, _ in targets], 1).to("cpu", torch.bfloat16)
@@ -1005,7 +1015,8 @@ def _task_outer_backward(
     rows start from the table mean, as a held-out task's do at test time. Returns (support loss per row at theta, query loss
     per row at the last step, the rows' puzzle ids, their gradient); the last two are None without puzzle embeddings.
     query_loss="trajectory": the query term is _trajectory_loss against _optimize_trajectory's targets at the adapted
-    weights (traj: {"lambda", "iters", "lr"}; its diagnostics are written back into it under "diag")."""
+    weights (traj: {"lambda", "iters", "lr", optional "growth"}; its diagnostics are written back into it under "diag"); with
+traj["ce_weight"] > 0 the query CE is added at that weight (its per-row value written back under "ce")."""
     named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support)
     if emb_name is not None:
         if fresh_rows:
@@ -1034,10 +1045,14 @@ def _task_outer_backward(
                     q = {key: v.repeat(m, *[1] * (v.dim() - 1)) for key, v in query.items()}  # start-major, as _cached_goal
                     loss_q = _trajectory_loss(model, theta, q, traj["goal"], traj["s0"]) / m
                 elif query_loss == "trajectory":
-                    goal, traj["diag"] = _optimize_trajectory(model, theta, query, segments, traj["lambda"], traj["iters"], traj["lr"])
+                    goal, traj["diag"] = _optimize_trajectory(model, theta, query, segments, traj["lambda"], traj["iters"], traj["lr"], growth=traj.get("growth", 1.0))
                     loss_q = _trajectory_loss(model, theta, query, goal)
                 else:
                     loss_q = _supervised_loss(model, theta, query, last_segment_grad)
+                if query_loss == "trajectory" and traj.get("ce_weight", 0) > 0:  # the heads are not on the states' path
+                    ce_q = _supervised_loss(model, theta, query, last_segment_grad)
+                    traj["ce"] = ce_q.detach() / query["inputs"].shape[0]
+                    loss_q = loss_q + traj["ce_weight"] * ce_q
                 total = total + w * loss_q
         (total * loss_scale).backward()
     row_grad = None if emb_name is None else overrides[emb_name].grad
@@ -1078,7 +1093,7 @@ def meta_sgd_batch(
     progress = 1.0 if cfg.msl_anneal_fraction is None else train_state.step / (cfg.msl_anneal_fraction * train_state.total_steps)
     msl_weights = _msl_weights(cfg.inner_steps, progress)
     second_order = train_state.step > cfg.first_order_steps
-    support_losses, query_losses, traj_diags = [], [], []
+    support_losses, query_losses, traj_diags, query_ces = [], [], [], []
     if cfg.query_loss == "trajectory" and cfg.traj_refresh > 0:
         every = max(1, round(cfg.traj_refresh * train_state.total_steps))
         if (train_state.step - 1) % every == 0 or getattr(model.meta_sgd, "traj_cache", None) is None:
@@ -1086,11 +1101,14 @@ def meta_sgd_batch(
             loader, _ = create_dataloader(config, "train", test_set_mode=True, epochs_per_iter=1, global_batch_size=config.global_batch_size, rank=0, world_size=1)
             parts = [{k: b[k][b["validation"].bool() & (b["puzzle_identifiers"] != 0)] for k in ("inputs", "labels", "puzzle_identifiers")} for _, b, _ in loader]
             rows = {k: torch.cat([p[k] for p in parts]) for k in parts[0]}
-            model.meta_sgd.traj_cache, refresh = _trajectory_cache(model, rows, config.arch.halt_max_steps, cfg.traj_lambda, cfg.traj_iters, cfg.traj_lr, starts=cfg.traj_starts)
+            model.meta_sgd.traj_cache, refresh = _trajectory_cache(
+                model, rows, config.arch.halt_max_steps, cfg.traj_lambda, cfg.traj_iters, cfg.traj_lr, starts=cfg.traj_starts,
+                growth=cfg.traj_lambda_growth, fresh_emb=emb_name if cfg.fresh_rows else None,
+            )
             traj_diags.append(refresh)
     with flop_counter:
         for _key, support, query in episodes:
-            traj = {"lambda": cfg.traj_lambda, "iters": cfg.traj_iters, "lr": cfg.traj_lr}
+            traj = {"lambda": cfg.traj_lambda, "iters": cfg.traj_iters, "lr": cfg.traj_lr, "growth": cfg.traj_lambda_growth, "ce_weight": cfg.traj_ce_weight}
             if cfg.query_loss == "trajectory" and cfg.traj_refresh > 0:
                 traj["s0"], traj["goal"] = _cached_goal(model.meta_sgd.traj_cache, query, cfg.traj_starts)
                 traj["starts"] = cfg.traj_starts
@@ -1101,6 +1119,8 @@ def meta_sgd_batch(
             )
             if "diag" in traj:
                 traj_diags.append(traj["diag"])
+            if "ce" in traj:
+                query_ces.append(traj["ce"])
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if row_grad is not None:
@@ -1123,6 +1143,8 @@ def meta_sgd_batch(
         "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
         "meta/alpha_max": torch.tensor(alpha_max, device=device),
     }
+    if query_ces:  # traj_ce_weight: the CE part of meta/query_loss
+        metrics["meta/query_ce"] = torch.stack(query_ces).mean()
     for key in (traj_diags[0] if traj_diags else {}):  # trajectory targets: CE / exact match before and after, residuals, deltas
         metrics[f"meta/traj_{key}"] = torch.tensor(sum(d[key] for d in traj_diags) / len(traj_diags), device=device)
     out = _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)

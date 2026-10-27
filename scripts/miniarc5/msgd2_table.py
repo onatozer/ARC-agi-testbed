@@ -167,6 +167,7 @@ ROWS = [  # (run, eval suffix, label)
     ("msgd25_traj_k10", "ms19k_sg1000", "round 25: TRM meta-fine-tuned, trajectory targets re-optimised per episode (K 10), 1000 steps"),
     ("msgd25_traj_cache", "ms19c_sg1000", "round 25: TRM meta-fine-tuned, trajectory targets cached from the base weights (K 20, refresh 25%), 1000 steps"),
     ("msgd26_traj_once", "ms20o_sg1000", "round 26: TRM, trajectory targets built once (lr 0.1, K 20), 1000 steps"),
+    ("msgd29_traj_fixes", "ms23f_sg1000", "round 29: TRM, trajectory targets from fresh rows, rising link weights, + query CE, 1000 steps"),
     ("msgd26_traj_q25", "ms20q_sg1000", "round 26: TRM, trajectory targets rebuilt every 25% (lr 0.1, K 20), 1000 steps"),
     ("trm_ho3r", "ms21t_v1", "round 27: plain TRM with random starts, normalised segment steps, hand-set alpha, 1000 steps, 1 start(s)"),
     ("trm_ho3r", "ms21t_v4", "round 27: plain TRM with random starts, normalised segment steps, hand-set alpha, 1000 steps, 4 start(s)"),

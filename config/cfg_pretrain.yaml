@@ -72,5 +72,7 @@ meta_sgd:
   traj_iters: 20 # trajectory: Adam iterations of the target optimisation
   traj_lr: 1e-2 # trajectory: Adam lr of the target optimisation
   traj_starts: 1 # trajectory, cached: random starts per query row (needs arch.random_initialization), one target path each
-  traj_refresh: 0.0 # trajectory: > 0 caches targets from the current (unadapted) weights, refreshed every this fraction of training
+  traj_refresh: 0.0 # trajectory: > 0 caches targets from the current (unadapted) weights (own rows, or the table mean with fresh_rows), refreshed every this fraction of training
+  traj_lambda_growth: 1.0 # trajectory: consistency weight of link t ~ growth^t (mean traj_lambda); > 1 moves the correction to earlier segments
+  traj_ce_weight: 0.0 # trajectory: > 0 adds this times the query CE to the outer loss (gives lm_head / q_head a meta-gradient)
   normalize_grad: false # inner step on the gradient divided by its RMS per tensor (a step moves a tensor by ~alpha, as Adam does)
