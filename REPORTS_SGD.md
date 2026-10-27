@@ -1152,3 +1152,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   is ~0.93 s per 16-row chunk per iteration, 238 chunks: K 100 ~6 h, K 300 ~18 h, K 1000 ~61 h (the 10-chunk diagnostic
   subset: ~2.6 h at K 1000). Exact match of the targets so far: 7.5% / 23.1% / 44.4% at K 20 / 50 / 100 (lr 1e-2), still
   rising; segment 1 unmoved at every K.
+- **2026-10-26 22:50. Round 26 queued** (user, `msgd26_trm_traj.sh`): trajectory targets at the fixed budget (lr 0.1, K 20,
+  lambda 10), cached from the unadapted weights, built once (`msgd26_traj_once`, ~70 min build + ~3.5 h), then rebuilt
+  every 25% (`msgd26_traj_q25`, ~4 builds + ~3.5 h), each evaluated at 1000 steps. Then (user): the random-start TRM runs,
+  then GRAM in TRM's place (architecture swap only, no posterior change).
