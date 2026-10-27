@@ -1123,3 +1123,7 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   voting gain cannot be mistaken for a training gain. Open: M. GRAM
   variant (user, revised): the posterior was trained on the answer, so feeding it the next latent target is out of
   distribution; a decoded target grid decode(s~_{t+1}) as its per-step "answer" would be in distribution (not checked).
+- **2026-10-26 ~22:00. Tabled (user): K = 1000 target optimisation**, for a larger GPU. On this laptop the cached build
+  is ~0.93 s per 16-row chunk per iteration, 238 chunks: K 100 ~6 h, K 300 ~18 h, K 1000 ~61 h (the 10-chunk diagnostic
+  subset: ~2.6 h at K 1000). Exact match of the targets so far: 7.5% / 23.1% / 44.4% at K 20 / 50 / 100 (lr 1e-2), still
+  rising; segment 1 unmoved at every K.
