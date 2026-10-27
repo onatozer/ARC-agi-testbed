@@ -1106,3 +1106,10 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   (clean 29: 8/10/12), against round 21's CE-meta checkpoint 11/11/13 (.832) and plain trm_ho3 12/14/14 (.835), same
   checkpoint, ACT on, same evaluation. Training 15 h 8 min (~54 s / meta-step); matching loss ~6e-4 at the end (the
   targets stay close to the adapted model's own rollout, see the diagnostic). Cached-target run started 19:02.
+- **2026-10-26 19:40. Cached-target run stopped** (user), ~40 min in (log `msgd25_traj_cache/train_stopped_k20.log`): its
+  targets (K 20, lr 1e-2, the diagnostic's setting) decode to the correct output on only ~9.4% of query rows, and with the
+  final CE dropped from the outer loss, meta-training would mostly learn paths ending at wrong answers. First fix the
+  target optimisation: budget diagnostic (lr 1e-2 / 5e-2 / 1e-1 x K 20 / 50 / 100, lambda 10, 10 episodes,
+  `scratchpad/traj_diag_budget.py`, log `autoresearch_runs/miniarc5/traj_diag_budget.log`) running. Then decide between
+  targets built once and refreshed every x. Ideas recorded (user), not started: guiding GRAM's posterior toward the
+  optimised path; several starting points s_0 with one optimised path each.
