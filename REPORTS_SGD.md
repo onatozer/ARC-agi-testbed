@@ -1113,3 +1113,9 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   `scratchpad/traj_diag_budget.py`, log `autoresearch_runs/miniarc5/traj_diag_budget.log`) running. Then decide between
   targets built once and refreshed every x. Ideas recorded (user), not started: guiding GRAM's posterior toward the
   optimised path; several starting points s_0 with one optimised path each.
+- **2026-10-26 19:55. Queued idea, after the current batch (user):** multi-start trajectory targets. Per puzzle, M random
+  starts s_0 (small noise around the fixed initial state; trm_ho3 was pretrained from the fixed start), one optimised
+  target path per start, and the meta outer loss over all M paths (the adapted model's free-running trajectory from each
+  start matched to that start's path). Optional at test time: several starts, vote. Open: M and the noise scale. GRAM
+  variant (user, revised): the posterior was trained on the answer, so feeding it the next latent target is out of
+  distribution; a decoded target grid decode(s~_{t+1}) as its per-step "answer" would be in distribution (not checked).
