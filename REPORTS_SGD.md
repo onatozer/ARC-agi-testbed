@@ -1225,3 +1225,10 @@ the same recipe and the ordinary step), batch 256 (~3.5 tasks x 16 copies), lr 1
   from the configs as they are; the scripts and the new GRAM test pass them with the earlier GRAM runs' values.
 - **2026-10-27 09:47. Round 26 done** (section "Round 26"): targets built once 12/12/14 (.826), rebuilt every 25% 8/9/11
   (.827). Round 27 started (trm_ho3r pretraining).
+- **2026-10-27 ~14:00. Rounds 27-28 cancelled** (user), after round 27's plain controls: trm_ho3r (TRM retrained with
+  random starts) at 1000 normalised segment steps, 1 start 12/13/13 (.833), 4 restarts voted 12/13/14 (.837); the
+  4-start trajectory meta-fine-tune and round 28 (GRAM) never ran. **Round 29 queued** (user, `msgd29_traj_fixes.sh`):
+  the post-mortem's three fixes together on round 26's built-once recipe: cached targets built with the table-mean row
+  when `fresh_rows` is on (now derived, no option; round 26 built them with each puzzle's own row), rising consistency
+  weights `traj_lambda_growth` (link t ~ growth^t, mean lambda; picked by `traj_diag_fixes.py`: largest Delta_1 /
+  Delta_N with >= 95% exact), and `traj_ce_weight=1` (query CE added, so the heads get a meta-gradient).

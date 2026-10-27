@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "$0")/msgd_common.sh"
 export PRETRAIN_CFG=cfg_pretrain_miniarc ARCH="$TRM_ARCH"
 LOG=autoresearch_runs/miniarc5/traj_diag_fixes.log
-venv/bin/python scripts/miniarc5/traj_diag_fixes.py > "$LOG" 2>&1
+PYTHONPATH=. venv/bin/python scripts/miniarc5/traj_diag_fixes.py > "$LOG" 2>&1
 G=$(sed -n 's/^chosen growth: //p' "$LOG")
 echo "[growth] $G"
 BASE=$(ckpt_of trm_ho3)
