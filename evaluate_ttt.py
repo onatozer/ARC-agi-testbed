@@ -147,7 +147,7 @@ def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module,
 
     device = next(model.parameters()).device
     segment_steps, segments = config.meta_sgd.segment_inner_steps, config.arch.halt_max_steps
-    recon_args = (config.recon, train_metadata.pad_id, train_metadata.num_puzzle_identifiers)
+    recon_args = (config.recon, train_metadata.vocab_size, train_metadata.num_puzzle_identifiers)
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos

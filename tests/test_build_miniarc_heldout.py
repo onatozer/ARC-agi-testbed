@@ -57,3 +57,22 @@ def test_default_build_keeps_every_task_in_both_splits(tmp_path):
     results, test_puzzles = load_puzzles_miniarc(config)
     assert len(test_puzzles) == 4 and len(results["train"]["all"]) == 4 and len(results["test"]["all"]) == 4
     assert not (tmp_path / "out" / "heldout_tasks.json").exists()
+
+
+def test_arc_heldout_test_set_keeps_its_demos_out_of_training(tmp_path):
+    from dataset.build_arc_dataset import DataProcessConfig, load_puzzles_arcagi
+
+    for subset in ("training", "evaluation"):
+        tasks = {f"{subset}{k}": _task(k) for k in (1, 2)}
+        (tmp_path / f"arc_{subset}_challenges.json").write_text(json.dumps({n: {**t, "test": [{"input": p["input"]} for p in t["test"]]} for n, t in tasks.items()}))
+        (tmp_path / f"arc_{subset}_solutions.json").write_text(json.dumps({n: [p["output"] for p in t["test"]] for n, t in tasks.items()}))
+
+    for heldout in (False, True):
+        config = DataProcessConfig(input_file_prefix=str(tmp_path / "arc"), output_dir=str(tmp_path / "out"), subsets=["training", "evaluation"],
+                                   test_set_name="evaluation", num_aug=0, heldout_test_set=heldout)
+        np.random.seed(0)
+        results, test_puzzles = load_puzzles_arcagi(config)
+        train_ids = {copy.id for group in results["train"]["all"] for copy in group}
+        assert set(test_puzzles) == {"evaluation1", "evaluation2"}
+        assert ({"evaluation1", "evaluation2"} <= train_ids) != heldout  # the eval demos train only without the held-out protocol
+        assert all(copy.validation == [False, False, True] for group in results["train"]["all"] for copy in group if copy.id.startswith("training"))

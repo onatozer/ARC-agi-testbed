@@ -75,20 +75,20 @@ class MetaSGDConfig(BaseModel):
 class ReconConfig(BaseModel):
     """Masked-input reconstruction as an extra task (after arXiv 1909.13231's test-time training). Each training row gets
     `copies` extra rows:
-      - input: the row's input with `cells` random non-pad cells set to mask_token (an id the grids never use);
+      - input: the row's input with `fraction` of its color cells, at random, set to a mask token (a new id, the
+        dataset's vocab_size: the model's vocabulary grows by one);
       - label: the full input;
       - weight: 1 / copies (batch["row_weight"], read by a *RowWeight loss head);
       - puzzle embedding: one extra learned row shared by every copy (id num_puzzle_identifiers), so a copy is
         reconstructed from its visible cells rather than recalled from its task's row.
     0 copies: off."""
     copies: int = 0
-    cells: int = 6
-    mask_token: int = 1
+    fraction: float = 0.24  # 6 of a 5x5 MiniARC grid's 25 cells
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.copies < 0 or self.cells < 1:
-            raise ValueError("recon: copies >= 0 and cells >= 1 are required.")
+        if self.copies < 0 or not 0 < self.fraction <= 1:
+            raise ValueError("recon: copies >= 0 and fraction in (0, 1] are required.")
         return self
 
 

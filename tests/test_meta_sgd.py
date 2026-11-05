@@ -27,7 +27,7 @@ TINY = ["arch.hidden_size=32", "arch.num_heads=2", "arch.expansion=2", "arch.L_l
         "arch.halt_max_steps=4", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true",
         "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1"]
 SEGMENTS = ["meta_sgd.segment_inner_steps=true"]
-RECON = ["recon.copies=1", "recon.cells=2", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
+RECON = ["recon.copies=1", "recon.fraction=0.25", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
 
 _g = torch.Generator().manual_seed(0)
 BATCH = {
@@ -181,19 +181,21 @@ def test_test_time_rows_frozen_adapts_only_the_weights():
 
 
 def test_recon_rows_mask_cells_and_weight_the_copies():
-    """Each row gets `copies` masked copies: `cells` random non-pad cells set to the mask token, labelled with the full
-    input, on the shared row, weighted 1 / copies; the row-weighting head then counts them together as one row."""
+    """Each row gets `copies` masked copies: `fraction` of its color cells (tokens 2-11; never pad 0 or end-of-grid 1) set
+    to the mask token, labelled with the full input, on the shared row, weighted 1 / copies; the row-weighting head then
+    counts them together as one row."""
     from models.losses.loss_heads import ACTLossHeadRowWeight
 
-    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 0, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
+    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 1, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
              "puzzle_identifiers": torch.tensor([3, 4])}
-    out = _with_recon_rows(batch, ReconConfig(copies=5, cells=2), pad_id=0, shared_id=9)
+    out = _with_recon_rows(batch, ReconConfig(copies=5, fraction=0.5), mask_token=12, shared_id=9)
     assert out["inputs"].shape == (12, 6) and out["puzzle_identifiers"].tolist() == [3, 4] + [9] * 10
     assert torch.equal(out["labels"][2:], batch["inputs"].repeat(5, 1)) and torch.equal(out["inputs"][:2], batch["inputs"])
     assert torch.allclose(out["row_weight"], torch.tensor([1.0, 1.0] + [0.2] * 10))
 
-    masked = out["inputs"][2:] == 1
-    assert (masked.sum(-1) == 2).all() and not masked[:, 4:][0::2].any()  # never a pad cell
+    masked = out["inputs"][2:] == 12
+    assert masked.sum(-1).tolist() == [2, 3] * 5  # half of 4 and of 6 color cells
+    assert not masked[0::2, 4:].any()  # never the end-of-grid or pad cell
     assert torch.equal(out["inputs"][2:][~masked], batch["inputs"].repeat(5, 1)[~masked])
 
     # The weighted loss: 5 copies at 1/5 count as one row

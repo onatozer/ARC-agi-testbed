@@ -279,7 +279,7 @@ def create_model(
         **config.arch.__pydantic_extra__,  # type: ignore
         # config.recon appends its masked copies to the ordinary training batch, and adds one shared embedding row
         batch_size=config.global_batch_size // world_size * (1 if config.meta_sgd.enabled else 1 + config.recon.copies),
-        vocab_size=train_metadata.vocab_size,
+        vocab_size=train_metadata.vocab_size + int(config.recon.copies > 0),  # config.recon's mask token
         seq_len=train_metadata.seq_len,
         num_puzzle_identifiers=train_metadata.num_puzzle_identifiers + int(config.recon.copies > 0),
         causal=False,
@@ -308,7 +308,7 @@ def create_model(
         if config.meta_sgd.enabled:
             cfg = config.meta_sgd
             model.meta_sgd = MetaSGD(_meta_sgd_targets(model), cfg.inner_steps, cfg.inner_lr, cfg.inner_lr_rows, cfg.alpha_range)
-            model.meta_sgd.pad_id = train_metadata.pad_id  # config.recon's masks skip pad cells
+            model.meta_sgd.mask_token = train_metadata.vocab_size  # config.recon's
         
         # if "DISABLE_COMPILE" not in os.environ:
         #     model = torch.compile(model)  # type: ignore
@@ -483,14 +483,16 @@ def _copies_per_group(config: PretrainConfig) -> int:
     return config.meta_sgd.copies_per_group if config.meta_sgd.enabled else 1
 
 
-def _with_recon_rows(batch: Dict[str, torch.Tensor], cfg: Any, pad_id: int, shared_id: int) -> Dict[str, torch.Tensor]:
+def _with_recon_rows(batch: Dict[str, torch.Tensor], cfg: Any, mask_token: int, shared_id: int) -> Dict[str, torch.Tensor]:
     """config.recon: the batch plus cfg.copies masked copies of every row (ReconConfig) and batch["row_weight"]."""
     x, k = batch["inputs"], cfg.copies
     xs = x.repeat(k, 1)
 
-    # cfg.cells random non-pad cells of each copy set to the mask token
-    scores = torch.rand(xs.shape).to(xs.device).masked_fill(xs == pad_id, -1.0)
-    masked = xs.scatter(1, scores.topk(cfg.cells, dim=-1).indices, cfg.mask_token)
+    # round(cfg.fraction x its color cells) random color cells of each copy set to the mask token
+    colors = xs >= 2  # the ARC/MiniARC builds' tokens: 0 pad, 1 end of grid, 2-11 colors
+    scores = torch.rand(xs.shape).to(xs.device).masked_fill(~colors, -1.0)
+    rank = scores.argsort(-1, descending=True).argsort(-1)
+    masked = xs.masked_fill(rank < (cfg.fraction * colors.sum(-1, keepdim=True)).round(), mask_token)
 
     out = {key: torch.cat([v, v.repeat(k, *[1] * (v.dim() - 1))]) for key, v in batch.items()}
     out["inputs"] = torch.cat([x, masked])
@@ -865,7 +867,7 @@ def _task_outer_backward(
     shared = None
     if config.recon.copies:
         shared_id = model.get_buffer(emb_name).shape[0] - 1
-        support = _with_recon_rows(support, config.recon, model.meta_sgd.pad_id, shared_id)
+        support = _with_recon_rows(support, config.recon, model.meta_sgd.mask_token, shared_id)
         shared = torch.tensor([shared_id], device=support["inputs"].device)
 
     named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support, extra_ids=shared)
@@ -1224,7 +1226,7 @@ def launch(hydra_config: DictConfig):
         for i, (set_name, batch, global_batch_size) in enumerate(train_loader):
             # global_batch_size stays the ordinary rows': the masked copies add to their loss
             if config.recon.copies and not config.meta_sgd.enabled:
-                batch = _with_recon_rows(batch, config.recon, train_metadata.pad_id, train_metadata.num_puzzle_identifiers)
+                batch = _with_recon_rows(batch, config.recon, train_metadata.vocab_size, train_metadata.num_puzzle_identifiers)
 
             metrics = step_fn(
                 config,
