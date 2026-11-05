@@ -36,9 +36,10 @@ except Exception:
 
 from dataset.puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
-from models.sparse_embedding import CastedSparseEmbeddingSignSGD_Distributed
+from models.sparse_embedding import CastedSparseEmbedding, CastedSparseEmbeddingSignSGD_Distributed
 
 from utils.training import (
+    apply_to_tensors,
     build_wandb_run_dir,
     set_deterministic_mode,
     TrainState,
@@ -72,6 +73,8 @@ from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
 from contextlib import nullcontext, suppress
+from models.losses import IGNORE_LABEL_ID
+from models.losses.loss_heads import RowWeightMixin
 
 WANDB_RUN_ID: Optional[str] = None
 WANDB_RUN_DIR: Optional[str] = None
@@ -219,6 +222,53 @@ def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales
     return [{"params": params, "lr_scale": scale} for scale, params in groups.items()]
 
 
+class MetaSGD(nn.Module):
+    """Meta-SGD's learned step sizes (arXiv 1707.09835): one per adapted tensor and inner step (LSLR, arXiv 1810.09502),
+    and for the puzzle-embedding table one per column, shared by its rows (a test task's rows are new). alpha = exp(rho),
+    kept within alpha_range of its initial value. rho lives on the loss head, so it is checkpointed with the model."""
+
+    def __init__(self, named: List[Tuple[str, torch.Tensor]], steps: int, alpha0: float, alpha0_rows: float, alpha_range: float) -> None:
+        super().__init__()
+        is_table = lambda n: n.endswith("puzzle_emb.weights")
+        init = lambda n: math.log(alpha0_rows if is_table(n) else alpha0)
+        shape = lambda n, p: (steps, 1, p.shape[1]) if is_table(n) else (steps,)
+
+        self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), init(n), dtype=torch.float32, device=p.device)) for n, p in named})
+        self.bounds = {self.key(n): (init(n) - alpha_range, init(n) + alpha_range) for n, _ in named}
+        self.steps = steps
+
+    @staticmethod
+    def key(name: str) -> str:
+        return name.replace(".", "|")
+
+    def alpha(self, name: str, step: int) -> torch.Tensor:
+        return self.rho[self.key(name)][step].exp()
+
+    @torch.no_grad()
+    def clamp_(self) -> None:
+        for key, rho in self.rho.items():
+            rho.clamp_(*self.bounds[key])
+
+    def summary(self) -> Tuple[float, float]:
+        """(geometric mean, max) of the step sizes."""
+        rhos = torch.cat([r.detach().flatten() for r in self.rho.values()])
+        return float(rhos.mean().exp()), float(rhos.max().exp())
+
+
+def _puzzle_emb_name(model: nn.Module) -> Optional[str]:
+    """Qualified name of the puzzle-embedding table (a buffer); None when the model has no puzzle embeddings."""
+    return next((f"{n}.weights" for n, m in model.named_modules() if isinstance(m, CastedSparseEmbedding)), None)
+
+
+def _meta_sgd_targets(model: nn.Module) -> List[Tuple[str, torch.Tensor]]:
+    """The (name, tensor) pairs the inner step adapts: every trainable parameter plus the puzzle-embedding table."""
+    named = [(n, p) for n, p in model.named_parameters() if p.requires_grad and not n.startswith("meta_sgd.")]
+    emb_name = _puzzle_emb_name(model)
+    if emb_name is not None:
+        named.append((emb_name, model.get_buffer(emb_name)))
+    return named
+
+
 def create_model(
     config: PretrainConfig,
     train_metadata: PuzzleDatasetMetadata,
@@ -227,10 +277,11 @@ def create_model(
 ):
     model_cfg = dict(
         **config.arch.__pydantic_extra__,  # type: ignore
-        batch_size=config.global_batch_size // world_size,
+        # config.recon appends its masked copies to the ordinary training batch, and adds one shared embedding row
+        batch_size=config.global_batch_size // world_size * (1 if config.meta_sgd.enabled else 1 + config.recon.copies),
         vocab_size=train_metadata.vocab_size,
         seq_len=train_metadata.seq_len,
-        num_puzzle_identifiers=train_metadata.num_puzzle_identifiers,
+        num_puzzle_identifiers=train_metadata.num_puzzle_identifiers + int(config.recon.copies > 0),
         causal=False,
     )
     # The canvas width comes from the dataset like seq_len does: grid_size, or grid_size + 1 for an ARC border_tokens build
@@ -250,6 +301,14 @@ def create_model(
         model = loss_head_cls(model, **loss_kwargs)  # type: ignore
         
         model = apply_gradient_checkpointing(model, config, rank) 
+
+        if config.recon.copies and (not isinstance(model, RowWeightMixin) or config.arch.puzzle_emb_ndim == 0):
+            raise ValueError("recon.copies > 0 needs puzzle embeddings and a row-weighting loss head (arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight or LossHeadGRAMRowWeight).")
+
+        if config.meta_sgd.enabled:
+            cfg = config.meta_sgd
+            model.meta_sgd = MetaSGD(_meta_sgd_targets(model), cfg.inner_steps, cfg.inner_lr, cfg.inner_lr_rows, cfg.alpha_range)
+            model.meta_sgd.pad_id = train_metadata.pad_id  # config.recon's masks skip pad cells
         
         # if "DISABLE_COMPILE" not in os.environ:
         #     model = torch.compile(model)  # type: ignore
@@ -265,14 +324,15 @@ def create_model(
     # where they created an embedding for each type of puzzle and trained on those. I think this process can be removed, even for the ARC puzzles, but keeping for now
 
     # With optimizer=muon, the 2D weight matrices of the looped blocks go to Muon and everything else stays on AdamAtan2
+    weight_params = [(n, p) for n, p in model.named_parameters() if not n.startswith("meta_sgd.")]  # Meta-SGD's rho has its own Adam
     if config.optimizer == "muon":
-        muon_params = [p for name, p in model.named_parameters() if p.ndim == 2 and ".L_level." in name]
+        muon_params = [p for name, p in weight_params if p.ndim == 2 and ".L_level." in name]
         if not muon_params:
             raise ValueError(f"optimizer=muon found no 2D L_level weights in {config.arch.name}.")
         muon_ids = {id(p) for p in muon_params}
-        adam_params = _lr_scaled_groups([(n, p) for n, p in model.named_parameters() if id(p) not in muon_ids], config.param_lr_scales)
+        adam_params = _lr_scaled_groups([(n, p) for n, p in weight_params if id(p) not in muon_ids], config.param_lr_scales)
     elif config.optimizer == "adam_atan2":
-        muon_params, adam_params = [], _lr_scaled_groups(list(model.named_parameters()), config.param_lr_scales)
+        muon_params, adam_params = [], _lr_scaled_groups(weight_params, config.param_lr_scales)
     else:
         raise ValueError(f"Unknown optimizer {config.optimizer!r}; expected 'adam_atan2' or 'muon'.")
 
@@ -337,6 +397,10 @@ def create_model(
             )
         )
         optimizer_lrs.append(config.muon_lr if config.muon_lr is not None else config.lr)
+
+    if config.meta_sgd.enabled:
+        optimizers.append(torch.optim.Adam(model.meta_sgd.rho.parameters(), lr=1e-8))  # placeholder lr; the scheduler sets it
+        optimizer_lrs.append(config.meta_sgd.alpha_lr)
     return model, optimizers, optimizer_lrs
 
 def init_train_state(
@@ -352,7 +416,7 @@ def init_train_state(
     """
 
     total_samples = int(
-        train_metadata.total_groups * train_metadata.mean_puzzle_examples
+        train_metadata.total_groups * train_metadata.mean_puzzle_examples * _copies_per_group(config)  # a pass draws that many puzzles per group
     )
 
     steps_per_epoch = max(
@@ -412,6 +476,28 @@ def create_evaluators(config: PretrainConfig, eval_metadata: PuzzleDatasetMetada
         evaluators.append(cls)
 
     return evaluators
+
+
+def _copies_per_group(config: PretrainConfig) -> int:
+    """Puzzles the training sampler draws per group: a Meta-SGD episode's augmented copies of its task, else 1."""
+    return config.meta_sgd.copies_per_group if config.meta_sgd.enabled else 1
+
+
+def _with_recon_rows(batch: Dict[str, torch.Tensor], cfg: Any, pad_id: int, shared_id: int) -> Dict[str, torch.Tensor]:
+    """config.recon: the batch plus cfg.copies masked copies of every row (ReconConfig) and batch["row_weight"]."""
+    x, k = batch["inputs"], cfg.copies
+    xs = x.repeat(k, 1)
+
+    # cfg.cells random non-pad cells of each copy set to the mask token
+    scores = torch.rand(xs.shape).to(xs.device).masked_fill(xs == pad_id, -1.0)
+    masked = xs.scatter(1, scores.topk(cfg.cells, dim=-1).indices, cfg.mask_token)
+
+    out = {key: torch.cat([v, v.repeat(k, *[1] * (v.dim() - 1))]) for key, v in batch.items()}
+    out["inputs"] = torch.cat([x, masked])
+    out["labels"] = torch.cat([batch["labels"], xs])
+    out["puzzle_identifiers"][x.shape[0]:] = shared_id
+    out["row_weight"] = torch.cat([torch.ones(x.shape[0]), torch.full((k * x.shape[0],), 1.0 / k)]).to(x.device)
+    return out
 
 
 def train_batch(
@@ -475,6 +561,22 @@ def train_batch(
         retain_graph = bool(getattr(config, "retain_graph", False))
         loss_to_backprop.backward(retain_graph=retain_graph)
 
+    return _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)
+
+
+def _step_optimizers_and_log(
+    config: PretrainConfig,
+    train_state: TrainState,
+    metrics: Dict[str, torch.Tensor],
+    global_batch_size: int,
+    rank: int,
+    world_size: int,
+    current_epoch: int,
+    measure_flops: bool,
+    flop_counter: Any,
+) -> Optional[Dict[str, Any]]:
+    """The second half of a training step, after the gradients are in .grad: FLOPs bookkeeping, gradient all-reduce, grad
+    norms, the optimizer steps on the lr schedule (with freeze alternation), and the reduced metrics (rank 0)."""
     if measure_flops:
         train_state.flops_per_step = float(flop_counter.get_total_flops()) * world_size
     train_state.flops_total += train_state.flops_per_step
@@ -560,7 +662,7 @@ def train_batch(
             for k, v in reduced_metrics.items():
                 if "count" in k:
                     continue
-                if k.startswith("fprl/"):
+                if k.startswith(("fprl/", "meta/")):  # already means: summed over ranks, then averaged
                     processed_metrics[f"train/{k}"] = v / float(world_size)
                 else:
                     denom = global_batch_size if k.endswith("loss") else count
@@ -614,6 +716,246 @@ def train_batch(
                 for key in drop_when_empty:
                     processed_metrics.pop(key, None)
             return processed_metrics 
+
+
+def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]]:
+    """One (key, support rows, query rows) per task in the batch: query = the rows flagged validation (the task's former
+    test pair, see build_miniarc_dataset heldout_tasks), support = its other rows. A task is all the augmented copies of
+    it the sampler packed together (batch["group_ids"]), or one puzzle without them. Padded rows (blank id 0), tasks
+    missing either kind and query rows of a copy without demos (_sample_batch truncates the batch tail) are skipped."""
+    if "validation" not in batch:
+        raise ValueError("meta_sgd needs batch['validation']: build the dataset with heldout_tasks > 0 (dataset/build_miniarc_dataset.py).")
+
+    ids, is_query = batch["puzzle_identifiers"], batch["validation"].bool()
+    keys = batch["group_ids"] if "group_ids" in batch else ids
+
+    episodes = []
+    for key in torch.unique(keys[ids != 0]).tolist():
+        rows = (keys == key) & (ids != 0)
+        support = rows & ~is_query
+        query = rows & is_query & torch.isin(ids, ids[support])  # a copy whose demos the batch tail cut off has no row to adapt
+        if support.any() and query.any():
+            episodes.append((key, {k: v[support] for k, v in batch.items()}, {k: v[query] for k, v in batch.items()}))
+
+    if not episodes:
+        raise RuntimeError(f"meta_sgd: no task in the batch has both demo and validation rows ({torch.unique(ids).numel()} ids, {int(is_query.sum())} validation rows).")
+    return episodes
+
+
+def _segment(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], carry: Any) -> Tuple[Any, torch.Tensor]:
+    """One supervision segment of the loss head with `overrides` substituted: (new carry, loss summed over the rows). carry
+    None starts every row afresh; rows the carry marks halted restart, as in train_batch."""
+    carry, loss, _metrics, _, _ = torch.func.functional_call(model, overrides, args=(), kwargs=dict(return_keys=[], carry=carry, batch=batch))
+    return carry, loss
+
+
+def _supervised_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+    """The loss head's loss on `batch` with `overrides` substituted, summed over each row's ACT trajectory from a fresh
+    carry: a row contributes every segment until the model halts it, then drops out. The carry is detached between
+    segments (deep supervision)."""
+    carry, total = None, 0.0
+    while batch["inputs"].shape[0] > 0:
+        carry, loss = _segment(model, overrides, batch, carry)
+        total = total + loss
+
+        keep = ~carry.halted
+        carry = apply_to_tensors(carry, lambda t: t[keep].detach().clone())
+        batch = {k: v[keep] for k, v in batch.items()}
+    return total
+
+
+_INNER = "model.inner."  # the multi-segment (TRM, GRAM) inner network under the loss head
+
+
+def _final_ce(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], segments: int) -> torch.Tensor:
+    """The final prediction's CE on `batch`, per token as the loss head normalises, summed over the rows: `segments` calls
+    of the inner network from its reset state, no ACT halting, the state detached between segments."""
+    from models.recursive_reasoning.merged_arch import LatentCarry
+
+    inner = model.model.inner
+    inner_overrides = {k[len(_INNER):]: v for k, v in overrides.items() if k.startswith(_INNER)}
+    rows, device = batch["inputs"].shape[0], batch["inputs"].device
+
+    carry = inner.reset_carry(torch.ones(rows, dtype=torch.bool, device=device), inner.empty_carry(rows, device=device), None)
+    z_H, z_L = carry.z_H, carry.z_L
+    for t in range(segments):
+        if t > 0:
+            z_H, z_L = z_H.detach(), z_L.detach()
+        state = LatentCarry(z_H.to(inner.forward_dtype), z_L.to(inner.forward_dtype))
+        carry, info = torch.func.functional_call(inner, inner_overrides, (state, batch))
+        z_H, z_L = carry.z_H, carry.z_L
+
+    mask = batch["labels"] != IGNORE_LABEL_ID
+    ce = model.loss_fn(info["logits"], batch["labels"], valid_mask=mask) / mask.sum(-1, keepdim=True).clamp_min(1)
+    return ce.sum()
+
+
+def _inner_update(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], loss: torch.Tensor, step: int,
+) -> Dict[str, torch.Tensor]:
+    """theta - alpha * (gradient of loss / its RMS) for every tensor in `named`, alpha the step's per tensor. First order:
+    the gradient enters as a constant, so the outer loss reaches theta and alpha but not through the gradient."""
+    grads = torch.autograd.grad(loss, [p for _, p in named], allow_unused=True)
+
+    theta = dict(overrides)
+    for (name, p), g in zip(named, grads):
+        if g is not None:
+            theta[name] = p - model.meta_sgd.alpha(name, step) * g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+    return theta
+
+
+def _adapt(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor], step: int,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    """One inner step on every support row's whole trajectory: (per-row support loss, the adapted tensors)."""
+    loss = _supervised_loss(model, overrides, support) / support["inputs"].shape[0]
+    return loss, _inner_update(model, named, overrides, loss, step)
+
+
+def _adapt_segment(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor],
+    carry: Any, step: int,
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Any]:
+    """One inner step on one supervision segment, the rows continuing `carry` (None: a fresh start), as train_batch does:
+    (per-row support loss, the adapted tensors, the next step's carry, detached)."""
+    carry, loss = _segment(model, overrides, support, carry)
+    loss = loss / support["inputs"].shape[0]
+    return loss, _inner_update(model, named, overrides, loss, step), apply_to_tensors(carry, lambda t: t.detach().clone())
+
+
+def _msl_weights(steps: int, progress: float) -> List[float]:
+    """Multi-step loss weights (arXiv 1810.09502): uniform over the inner steps at progress 0, linearly to the last step only
+    at progress 1 (and beyond)."""
+    early = (1.0 - min(max(progress, 0.0), 1.0)) / steps
+    return [early] * (steps - 1) + [1.0 - early * (steps - 1)]
+
+
+def _episode_overrides(
+    model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str], batch: Dict[str, torch.Tensor],
+    extra_ids: Optional[torch.Tensor] = None,
+) -> Tuple[List[Tuple[str, torch.Tensor]], Dict[str, torch.Tensor], Dict[str, torch.Tensor], Optional[torch.Tensor]]:
+    """(targets with the embedding rows as a leaf, functional_call overrides, batch with its ids remapped, the ids). The rows
+    of the table the batch uses stand in for the whole table, so they are a differentiable leaf and the forward takes its
+    gather path (the row count differs from the emptied local_weights buffer). No embeddings: the inputs pass through.
+    extra_ids: rows to include although the batch does not use them (config.recon's shared row)."""
+    if emb_name is None:
+        return list(targets), {}, batch, None
+
+    table = model.get_buffer(emb_name)
+    pids = batch["puzzle_identifiers"]
+    ids = torch.unique(pids if extra_ids is None else torch.cat([pids, extra_ids.to(pids)]))
+    emb_rows = table[ids].detach().requires_grad_()
+
+    overrides = {emb_name: emb_rows, emb_name[: -len("weights")] + "local_weights": table.new_zeros(0, table.shape[1])}
+    named = [(n, emb_rows if n == emb_name else p) for n, p in targets]
+    batch = {**batch, "puzzle_identifiers": torch.searchsorted(ids, pids).to(pids.dtype)}
+    return named, overrides, batch, ids
+
+
+def _task_outer_backward(
+    config: PretrainConfig, model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
+    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor, msl_weights: List[float],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Meta-SGD on one task (MetaSGDConfig): the inner steps on its support rows, then the query losses after them
+    (weighted by msl_weights, times loss_scale) backpropagated into theta and the alphas. Returns (support loss per row
+    before the first step, query loss per row after the last)."""
+    cfg = config.meta_sgd
+
+    # config.recon: the inner steps also reconstruct masked copies of the demo inputs, on the shared row, as pretrained
+    shared = None
+    if config.recon.copies:
+        shared_id = model.get_buffer(emb_name).shape[0] - 1
+        support = _with_recon_rows(support, config.recon, model.meta_sgd.pad_id, shared_id)
+        shared = torch.tensor([shared_id], device=support["inputs"].device)
+
+    named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support, extra_ids=shared)
+
+    # The task's rows start from the table mean, as a held-out task's do at test time (the shared row keeps its value)
+    if emb_name is not None:
+        table = model.get_buffer(emb_name)
+        rows = table.mean(0, keepdim=True).expand(ids.numel(), -1).clone()
+        if shared is not None:
+            rows[ids == shared] = table[shared]
+        rows.requires_grad_()
+
+        overrides[emb_name] = rows
+        named = [(n, rows if n == emb_name else p) for n, p in named]
+        query = {**query, "puzzle_identifiers": torch.searchsorted(ids, query["puzzle_identifiers"]).to(query["puzzle_identifiers"].dtype)}
+
+    theta, carry, total, first_loss = overrides, None, 0.0, None
+    for k, w in enumerate(msl_weights):
+        if cfg.segment_inner_steps:
+            loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, k)
+        else:
+            loss_s, theta = _adapt(model, named, theta, support, k)
+        first_loss = loss_s if first_loss is None else first_loss
+        named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
+
+        if w > 0:  # the last step's weight is always > 0
+            if cfg.segment_inner_steps:
+                loss_q = _final_ce(model, theta, query, config.arch.halt_max_steps)
+            else:
+                loss_q = _supervised_loss(model, theta, query)
+            total = total + w * loss_q
+
+    (total * loss_scale).backward()
+    return first_loss.detach(), loss_q.detach() / query["inputs"].shape[0]
+
+
+def meta_sgd_batch(
+    config: PretrainConfig,
+    train_state: TrainState,
+    batch: Any,
+    global_batch_size: int,
+    rank: int,
+    world_size: int,
+):
+    """train_batch's counterpart with config.meta_sgd.enabled: every task in the batch (_episodes_from_batch) gets
+    _task_outer_backward, the query loss averaged over every rank's query rows, then the shared optimizer step. No
+    persistent carry: every loss starts its rows afresh. The puzzle-embedding table is not trained (fresh rows)."""
+    train_state.step += 1
+    if train_state.step >= train_state.total_steps:
+        return
+
+    model, cfg = train_state.model, config.meta_sgd
+    device = next(model.parameters()).device
+    batch = tree_to_device(batch, device)
+    current_epoch = (train_state.step - 1) // max(train_state.steps_per_epoch, 1)
+
+    episodes = _episodes_from_batch(batch)
+    n_query = torch.tensor(float(sum(q["inputs"].shape[0] for _, _, q in episodes)), device=device)
+    if world_size > 1:
+        dist.all_reduce(n_query)  # the scale makes the all-reduced gradient the mean over every rank's query rows
+
+    emb_name = _puzzle_emb_name(model)
+    targets = _meta_sgd_targets(model)
+    progress = 1.0 if cfg.msl_anneal_fraction is None else train_state.step / (cfg.msl_anneal_fraction * train_state.total_steps)
+    msl_weights = _msl_weights(cfg.inner_steps, progress)
+
+    measure_flops = _should_log_flops(config, train_state.step)
+    flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
+    support_losses, query_losses = [], []
+    with flop_counter:
+        for _key, support, query in episodes:
+            loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
+            support_losses.append(loss_s)
+            query_losses.append(loss_q)
+
+    alpha_mean, alpha_max = model.meta_sgd.summary()
+    tasks = torch.tensor(float(len(episodes)), device=device)
+    metrics = {
+        "count": tasks,
+        "meta/tasks": tasks,
+        "meta/support_loss": torch.stack(support_losses).mean(),
+        "meta/query_loss": torch.stack(query_losses).mean(),
+        "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
+        "meta/alpha_max": torch.tensor(alpha_max, device=device),
+    }
+
+    out = _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)
+    model.meta_sgd.clamp_()
+    return out
+
 
 def load_synced_config(hydra_config: DictConfig, rank: int, world_size: int) -> PretrainConfig:
     objects = [None]
@@ -680,6 +1022,7 @@ def launch(hydra_config: DictConfig):
         global_batch_size=config.global_batch_size,
         rank=RANK,
         world_size=WORLD_SIZE,
+        copies_per_group=_copies_per_group(config),
     )
     try:
         eval_loader, eval_metadata = create_dataloader(
@@ -835,7 +1178,7 @@ def launch(hydra_config: DictConfig):
                 "step": train_state.step
             })
 
-    if "DISABLE_COMPILE" not in os.environ:
+    if "DISABLE_COMPILE" not in os.environ and not config.meta_sgd.enabled:  # the meta step runs functional_call eagerly
         # Keep compilation deterministic across restarts and ranks.
         compile_kwargs = {
             "dynamic": False,
@@ -877,8 +1220,13 @@ def launch(hydra_config: DictConfig):
             progress_bar.refresh()
 
         train_state.model.train()
+        step_fn = meta_sgd_batch if config.meta_sgd.enabled else train_batch
         for i, (set_name, batch, global_batch_size) in enumerate(train_loader):
-            metrics = train_batch(
+            # global_batch_size stays the ordinary rows': the masked copies add to their loss
+            if config.recon.copies and not config.meta_sgd.enabled:
+                batch = _with_recon_rows(batch, config.recon, train_metadata.pad_id, train_metadata.num_puzzle_identifiers)
+
+            metrics = step_fn(
                 config,
                 train_state,
                 batch,
@@ -893,7 +1241,7 @@ def launch(hydra_config: DictConfig):
                     wandb.log(metrics)
                     if progress_bar is not None:
                         progress_bar.update(train_state.step - progress_bar.n)  # type: ignore
-                        train_loss = metrics.get("train/total_loss", metrics.get("train/lm_loss", 0.0))
+                        train_loss = metrics.get("train/total_loss", metrics.get("train/lm_loss", metrics.get("train/meta/query_loss", 0.0)))
                         progress_bar.set_postfix({"loss": f"{train_loss:.6f}"})
 
             if train_state.ema_helper is not None:

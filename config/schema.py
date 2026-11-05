@@ -39,11 +39,65 @@ class DatasetConfig(BaseModel):
     evaluators: List[EvaluatorConfig] = []
 
 
+class MetaSGDConfig(BaseModel):
+    """Meta-SGD (arXiv 1707.09835) in place of train_batch. Every task in the batch (copies_per_group augmented copies of
+    it) is an episode:
+      1. its puzzle-embedding rows start from the table mean, as a held-out task's do at test time;
+      2. inner_steps steps on its demos, each on the gradient divided by its RMS per tensor (so a step moves a tensor by
+         about alpha), with a learned alpha per tensor and per step (LSLR, arXiv 1810.09502);
+      3. theta and the alphas learn, first order, from the adapted weights' loss on the task's validation rows (its former
+         test pair: a build with heldout_tasks > 0).
+    With config.recon on, the demo steps also reconstruct recon.copies masked copies of each demo input."""
+    enabled: bool = False
+    inner_lr: float = 1e-3  # initial alpha of the weights
+    inner_lr_rows: float = 3e-2  # initial alpha of the puzzle-embedding rows (one per column)
+    alpha_lr: float = 3e-2  # Adam lr of log alpha, on the main lr schedule
+    alpha_range: float = 10.0  # alpha stays within its initial value * exp(+-alpha_range)
+    inner_steps: int = 8
+    copies_per_group: int = 16
+    # Multi-segment (ACT) models such as TRM and GRAM: each inner step is one supervision segment continuing the previous
+    # step's carry, and the query loss is the final prediction's CE after halt_max_steps segments. Off (VARC): each inner
+    # step and the query loss run every row's whole trajectory through the loss head.
+    segment_inner_steps: bool = False
+    # Multi-step loss (arXiv 1810.09502): the query loss after every inner step, annealed from uniform to the last step only
+    # over this fraction of training. None: the last step's only
+    msl_anneal_fraction: Optional[float] = None
+
+    @pydantic.model_validator(mode="after")
+    def _check(self):
+        if min(self.inner_lr, self.inner_lr_rows) <= 0 or self.alpha_range < 0 or self.inner_steps < 1 or self.copies_per_group < 1:
+            raise ValueError("meta_sgd: inner_lr, inner_lr_rows > 0, alpha_range >= 0, inner_steps >= 1 and copies_per_group >= 1 are required.")
+        if self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1:
+            raise ValueError("meta_sgd.msl_anneal_fraction must be in (0, 1].")
+        return self
+
+
+class ReconConfig(BaseModel):
+    """Masked-input reconstruction as an extra task (after arXiv 1909.13231's test-time training). Each training row gets
+    `copies` extra rows:
+      - input: the row's input with `cells` random non-pad cells set to mask_token (an id the grids never use);
+      - label: the full input;
+      - weight: 1 / copies (batch["row_weight"], read by a *RowWeight loss head);
+      - puzzle embedding: one extra learned row shared by every copy (id num_puzzle_identifiers), so a copy is
+        reconstructed from its visible cells rather than recalled from its task's row.
+    0 copies: off."""
+    copies: int = 0
+    cells: int = 6
+    mask_token: int = 1
+
+    @pydantic.model_validator(mode="after")
+    def _check(self):
+        if self.copies < 0 or self.cells < 1:
+            raise ValueError("recon: copies >= 0 and cells >= 1 are required.")
+        return self
+
+
 class PretrainConfig(BaseModel):
     model_config = pydantic.ConfigDict(extra="allow")
 
     arch: ArchConfig
     dataset: DatasetConfig
+    recon: ReconConfig = ReconConfig()
     optimizer_kwargs: Dict[str, Any] = pydantic.Field(default_factory=dict)
 
     global_batch_size: int
@@ -62,6 +116,7 @@ class PretrainConfig(BaseModel):
     beta2: float
 
     grad_clip_norm: Optional[float] = None
+    meta_sgd: MetaSGDConfig = MetaSGDConfig()
 
     target_q_update_every: int
 

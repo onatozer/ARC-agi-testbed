@@ -248,6 +248,26 @@ class ACTLossHead(MaxStepsLossHead):
         return metrics
 
 
+class RowWeightMixin:
+    """For a loss head: each row's loss terms also scaled by batch["row_weight"] (config.recon's masked copies, 1 / copies
+    each), through the per-row step weight. Halted rows are replaced from the same batch position, so the batch's weights
+    are the carry's. A batch without the key leaves the head unweighted."""
+
+    def forward(self, return_keys: Sequence[str], **model_kwargs: Any) -> Tuple[Any, torch.Tensor, Dict[str, torch.Tensor], Optional[Dict[str, torch.Tensor]], torch.Tensor]:
+        self._row_weight = model_kwargs["batch"].get("row_weight")
+        return super().forward(return_keys, **model_kwargs)
+
+    def _step_weights(self, steps: torch.Tensor) -> torch.Tensor:
+        weights = super()._step_weights(steps)
+        if self._row_weight is None:
+            return weights
+        return weights * self._row_weight.to(weights.device, torch.float32)
+
+
+class ACTLossHeadRowWeight(RowWeightMixin, ACTLossHead):
+    """ACTLossHead with each row's CE and q_halt losses weighted by batch["row_weight"]."""
+
+
 class MaxStepsInferenceLossHead(MaxStepsLossHead):
     """Eval loss head for models without a halt head: scores each puzzle once, at the step it halts."""
 
@@ -486,6 +506,10 @@ class LossHeadGRAM(MaxStepsLossHead):
 
         total_loss = (step_weight * lm_loss).sum() + kl_loss + self.model.config.lprm_weight * (step_weight * lprm_loss).sum()
         return total_loss, {"lm_loss": lm_loss.sum(), "kl_loss": kl_loss, "lprm_loss": lprm_loss.sum()}
+
+
+class LossHeadGRAMRowWeight(RowWeightMixin, LossHeadGRAM):
+    """LossHeadGRAM with each row's CE and LPRM losses weighted by batch["row_weight"] (the KL is a batch scalar)."""
 
 
 class LossHeadTreeRM(LossHeadGRAM):

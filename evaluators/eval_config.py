@@ -52,6 +52,7 @@ class TTTConfig(pydantic.BaseModel):
     suffix: str
     output_dir: Optional[str] = None  # None: <run_dir>/eval_preds/step_<N>_<suffix>
     task_ids: Optional[List[str]] = None
+    task_ids_file: Optional[str] = None  # a JSON list of task names (e.g. a held-out build's heldout_tasks.json); overrides task_ids
     max_tasks: Optional[int] = None
 
     num_aux_tasks: int  # the task itself + (num_aux_tasks - 1) dihedral/color augmentations, each with its own puzzle embedding
@@ -60,5 +61,10 @@ class TTTConfig(pydantic.BaseModel):
     ttt_runs_per_task: int  # independent runs whose votes are pooled
     num_views: int  # eval passes per run, pooled; > 1 only helps models with random views (e.g. VARC's canvas)
     train_overrides: Dict[str, Any] = Field(default_factory=dict)  # PretrainConfig fields for the TTT training, e.g. lr
+    # A Meta-SGD checkpoint (evaluate_ttt.meta_sgd_ttt): > 0 takes that many steps with its learned step sizes instead of
+    # the TTT epochs, then, with config.recon, recon_steps reconstruction steps at its step sizes times recon_alpha_scale
+    meta_sgd_steps: int = 0
+    recon_steps: int = 20
+    recon_alpha_scale: float = 0.01
     seed: int = 0
     wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

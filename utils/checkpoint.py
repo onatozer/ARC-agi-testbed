@@ -324,6 +324,12 @@ def load_training_state(
         except Exception:
             return False
 
+    def _reregister_ema() -> None:
+        # The EMA was registered from the random init when the model was built; restart it from the loaded weights
+        # (only the torch.compile path re-registers it, and Meta-SGD runs eagerly)
+        if getattr(train_state, "ema_helper", None) is not None:
+            train_state.ema_helper.register(train_state.model)
+
     # Legacy checkpoints only contain model weights
     if not isinstance(checkpoint_obj, dict) or "model" not in checkpoint_obj:
         load_model_state_dict(
@@ -336,6 +342,7 @@ def load_training_state(
             with torch.no_grad():
                 for param in list(train_state.model.parameters()) + list(train_state.model.buffers()):
                     dist.broadcast(param, src=0)
+        _reregister_ema()
         return None
 
     checkpoint: Dict[str, Any] = checkpoint_obj
@@ -353,6 +360,7 @@ def load_training_state(
             with torch.no_grad():
                 for param in list(train_state.model.parameters()) + list(train_state.model.buffers()):
                     dist.broadcast(param, src=0)
+        _reregister_ema()
         return None
 
     load_model_state_dict(
