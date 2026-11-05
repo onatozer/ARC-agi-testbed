@@ -264,3 +264,21 @@ def test_weights_only_load_restarts_the_ema_from_the_loaded_weights(tmp_path):
     for name, p in train_state.model.named_parameters():
         if name in train_state.ema_helper.shadow:
             assert torch.equal(train_state.ema_helper.shadow[name], p.data), name
+
+
+def test_loading_a_checkpoint_without_the_mask_token_grows_the_vocabulary():
+    """A plain checkpoint (vocab V) into a config.recon model (vocab V + 1): its rows load, the mask token's row keeps its init."""
+    from utils.checkpoint import load_model_state_dict
+
+    _, plain, _ = _state("meta_sgd.enabled=false")
+    _, recon, _ = _state("meta_sgd.enabled=false", *RECON)
+    src = {k: v.detach().clone() for k, v in plain.model.state_dict().items()}
+    keys = [k for k in src if k.endswith(("embed_tokens.embedding_weight", "lm_head.weight"))]
+    assert len(keys) == 2
+
+    init = {k: recon.model.state_dict()[k].detach().clone() for k in keys}
+    load_model_state_dict(recon.model, dict(src), strict=False)
+    for k in keys:
+        loaded = recon.model.state_dict()[k]
+        assert loaded.shape[0] == src[k].shape[0] + 1
+        assert torch.equal(loaded[:-1], src[k].to(loaded.dtype)) and torch.equal(loaded[-1], init[k][-1])

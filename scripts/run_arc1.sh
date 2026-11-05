@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 D=$PWD/data/arc1concept-aug-1000-ho  # python -m dataset.build_arc_dataset heldout_test_set=true data_path=<D>
 R=$PWD/runs
-NAME=${NAME:-arc1_recon1}
+RUN=${RUN:-arc1_recon1}
 export OMP_NUM_THREADS=4 WANDB_SILENT=true
 LAUNCH="python -m torch.distributed.run --standalone --nproc_per_node ${GPUS:-7}"
 
@@ -20,12 +20,12 @@ mkdir -p $R
 
 case ${MODE:-pre} in
   pre)
-    OUTPUT_ROOT=$R/${NAME}_pre $LAUNCH pretrain.py $COMMON +run_name=${NAME}_pre lr=1e-4 lr_warmup_steps=2000 \
+    OUTPUT_ROOT=$R/${RUN}_pre $LAUNCH pretrain.py $COMMON +run_name=${RUN}_pre lr=1e-4 lr_warmup_steps=2000 \
       epochs=100000 max_steps=null eval_interval_steps=null checkpoint_interval_steps=20000 ema=true "$@" ;;
   meta)
-    OUTPUT_ROOT=$R/${NAME}_meta $LAUNCH pretrain.py $COMMON +run_name=${NAME}_meta +load_checkpoint=$1 +load_weights_only=true \
+    OUTPUT_ROOT=$R/${RUN}_meta $LAUNCH pretrain.py $COMMON +run_name=${RUN}_meta +load_checkpoint=$1 +load_weights_only=true \
       lr=1e-4 lr_warmup_steps=50 epochs=100000 max_steps=${META_STEPS:-550} eval_interval_steps=null ema=false \
       meta_sgd.enabled=true meta_sgd.segment_inner_steps=true "${@:2}" ;;
   eval)
-    $LAUNCH evaluate_ttt.py checkpoint=$1 eval=ttt_mini output_dir=$R/${NAME}_eval meta_sgd_steps=1000 recon_steps=20 wandb_mode=disabled "${@:2}" ;;
+    $LAUNCH evaluate_ttt.py checkpoint=$1 eval=ttt_mini output_dir=$R/${RUN}_eval meta_sgd_steps=1000 recon_steps=20 wandb_mode=disabled "${@:2}" ;;
 esac
