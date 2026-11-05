@@ -48,3 +48,21 @@ ema: True # use Exponential-Moving-Average
 ema_rate: 0.999 # EMA-rate
 freeze_weights: False # If True, freeze weights and only learn the embeddings
 freeze_alternation_epochs: null # If set to N, alternate every N epochs between learning only the embeddings (first) and only the weights
+
+# Masked-input reconstruction rows (config/schema.py ReconConfig); copies 0 = off. Needs a *RowWeight loss head
+recon:
+  copies: 0
+  cells: 6
+  mask_token: 1
+
+# Meta-SGD instead of the ordinary training step (config/schema.py MetaSGDConfig); needs a build with heldout_tasks > 0
+meta_sgd:
+  enabled: false
+  inner_lr: 1e-3
+  inner_lr_rows: 3e-2
+  alpha_lr: 3e-2
+  alpha_range: 10.0
+  inner_steps: 8
+  copies_per_group: 16
+  segment_inner_steps: false # TRM / GRAM: one supervision segment per inner step, final-prediction CE query loss
+  msl_anneal_fraction: null
