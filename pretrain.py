@@ -824,6 +824,15 @@ def _inner_update(
     return theta
 
 
+def _recon_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], rows: Dict[str, torch.Tensor], segments: int) -> torch.Tensor:
+    """The reconstruction steps' loss on masked rows (labels = the inputs), summed over rows: the final prediction's CE after
+    `segments` segments on a multi-segment model (TRM, GRAM); on a one-pass model (VARC, no latent carry to reset) the loss
+    head's CE of its single forward pass, which is its final prediction."""
+    if hasattr(model.model.inner, "reset_carry"):
+        return _final_ce(model, overrides, rows, segments)
+    return _supervised_loss(model, overrides, rows)
+
+
 def _recon_steps(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], theta: Dict[str, torch.Tensor], rows: Dict[str, torch.Tensor],
     recon: Any, shared_id: int, segments: int, steps: int, step0: int = 0, trained: Optional[int] = None,
@@ -835,7 +844,7 @@ def _recon_steps(
     plain = {k: rows[k] for k in ("inputs", "labels", "puzzle_identifiers")}
     for k in range(steps):
         masked = {key: v[n:] for key, v in _with_recon_rows(plain, recon, model.meta_sgd.mask_token, shared_id).items() if key in plain}
-        loss = _final_ce(model, theta, masked, segments) / n
+        loss = _recon_loss(model, theta, masked, segments) / n
         theta = _inner_update(model, named, theta, loss, step0 + (k * trained // steps if trained else k), recon=True)
         named = [(name, theta.get(name, p)) for name, p in named]
     return theta

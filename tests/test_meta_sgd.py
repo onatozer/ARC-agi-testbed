@@ -318,8 +318,24 @@ def test_stage_two_test_time_takes_the_learned_reconstruction_steps():
     assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
 
 
-def test_stage_two_needs_reconstruction_and_segment_steps():
-    with pytest.raises(Exception, match="segment_inner_steps"):
-        _config(*RECON, "meta_sgd.recon_steps=2")
+def test_stage_two_needs_reconstruction():
     with pytest.raises(ValueError, match="config.recon"):
         _state(*SEGMENTS, "meta_sgd.recon_steps=2")
+
+
+def test_stage_two_runs_on_a_one_pass_model():
+    """VARC has no latent carry to roll out: its reconstruction steps take the loss head's CE of its single forward pass."""
+    with initialize(config_path="../config", version_base=None):
+        cfg = compose(config_name="cfg_pretrain_miniarc_varc", overrides=[
+            "dataset.grid_size=4", "arch.hidden_size=32", "arch.num_layers=1", "arch.mlp_dim=32", "arch.num_heads=2", "global_batch_size=9",
+            "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true", "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1",
+            "recon.copies=1", "recon.fraction=0.25", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight", "meta_sgd.recon_steps=2"])
+    config = PretrainConfig(**OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    train_state = init_train_state(config, METADATA.model_copy(update={"vocab_size": 12}), rank=0, world_size=1)  # VARC: ARC's tokens (+ the mask)
+    model = train_state.model
+    assert not hasattr(model.model.inner, "reset_carry")
+
+    before = model.meta_sgd.recon_log_scale.detach().clone()
+    device = next(model.parameters()).device
+    meta_sgd_batch(config, train_state, {k: v.to(device) for k, v in BATCH.items()}, global_batch_size=9, rank=0, world_size=1)
+    assert not torch.equal(before, model.meta_sgd.recon_log_scale)

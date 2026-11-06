@@ -65,14 +65,14 @@ class MetaSGDConfig(BaseModel):
     # Stage 2 (from a stage-1 checkpoint): > 0 learns only the sizes of that many reconstruction steps after the inner steps,
     # everything else frozen. Each step adapts the weights and rows on the final-prediction reconstruction CE of freshly
     # masked copies of the query inputs, at every tensor's initial step size times one learned scale per step (starting at
-    # recon_scale0); the query CE after them is the outer loss. Needs config.recon and segment_inner_steps
+    # recon_scale0); the query CE after them is the outer loss. Needs config.recon
     recon_steps: int = 0
     recon_scale0: float = 0.01
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.recon_steps < 0 or self.recon_scale0 <= 0 or (self.recon_steps and not self.segment_inner_steps):
-            raise ValueError("meta_sgd: recon_steps >= 0 (> 0 needs segment_inner_steps) and recon_scale0 > 0 are required.")
+        if self.recon_steps < 0 or self.recon_scale0 <= 0:
+            raise ValueError("meta_sgd: recon_steps >= 0 and recon_scale0 > 0 are required.")
         if min(self.inner_lr, self.inner_lr_rows) <= 0 or self.alpha_range < 0 or self.inner_steps < 1 or self.copies_per_group < 1:
             raise ValueError("meta_sgd: inner_lr, inner_lr_rows > 0, alpha_range >= 0, inner_steps >= 1 and copies_per_group >= 1 are required.")
         if self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1:
