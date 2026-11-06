@@ -225,9 +225,11 @@ def _lr_scaled_groups(named_params: List[Tuple[str, torch.nn.Parameter]], scales
 class MetaSGD(nn.Module):
     """Meta-SGD's learned step sizes (arXiv 1707.09835): one per adapted tensor and inner step (LSLR, arXiv 1810.09502),
     and for the puzzle-embedding table one per column, shared by its rows (a test task's rows are new). alpha = exp(rho),
-    kept within alpha_range of its initial value. rho lives on the loss head, so it is checkpointed with the model."""
+    kept within alpha_range of its initial value. rho lives on the loss head, so it is checkpointed with the model.
+    recon_steps > 0 (meta_sgd.recon_steps): also one learned log scale per reconstruction step, on every tensor's initial alpha."""
 
-    def __init__(self, named: List[Tuple[str, torch.Tensor]], steps: int, alpha0: float, alpha0_rows: float, alpha_range: float) -> None:
+    def __init__(self, named: List[Tuple[str, torch.Tensor]], steps: int, alpha0: float, alpha0_rows: float, alpha_range: float,
+                 recon_steps: int = 0, recon_scale0: float = 1.0) -> None:
         super().__init__()
         is_table = lambda n: n.endswith("puzzle_emb.weights")
         init = lambda n: math.log(alpha0_rows if is_table(n) else alpha0)
@@ -235,7 +237,12 @@ class MetaSGD(nn.Module):
 
         self.rho = nn.ParameterDict({self.key(n): nn.Parameter(torch.full(shape(n, p), init(n), dtype=torch.float32, device=p.device)) for n, p in named})
         self.bounds = {self.key(n): (init(n) - alpha_range, init(n) + alpha_range) for n, _ in named}
+        self.log_init = {self.key(n): init(n) for n, _ in named}
         self.steps = steps
+
+        self.recon_log_scale = None
+        if recon_steps:
+            self.recon_log_scale = nn.Parameter(torch.full((recon_steps,), math.log(recon_scale0), device=named[0][1].device))
 
     @staticmethod
     def key(name: str) -> str:
@@ -243,6 +250,9 @@ class MetaSGD(nn.Module):
 
     def alpha(self, name: str, step: int) -> torch.Tensor:
         return self.rho[self.key(name)][step].exp()
+
+    def recon_alpha(self, name: str, step: int) -> torch.Tensor:
+        return (self.recon_log_scale[step] + self.log_init[self.key(name)]).exp()
 
     @torch.no_grad()
     def clamp_(self) -> None:
@@ -302,12 +312,15 @@ def create_model(
         
         model = apply_gradient_checkpointing(model, config, rank) 
 
+        if config.meta_sgd.enabled and config.meta_sgd.recon_steps and not config.recon.copies:
+            raise ValueError("meta_sgd.recon_steps needs config.recon (recon.copies > 0): its steps reconstruct masked inputs on the shared row.")
         if config.recon.copies and (not isinstance(model, RowWeightMixin) or config.arch.puzzle_emb_ndim == 0):
             raise ValueError("recon.copies > 0 needs puzzle embeddings and a row-weighting loss head (arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight or LossHeadGRAMRowWeight).")
 
         if config.meta_sgd.enabled:
             cfg = config.meta_sgd
-            model.meta_sgd = MetaSGD(_meta_sgd_targets(model), cfg.inner_steps, cfg.inner_lr, cfg.inner_lr_rows, cfg.alpha_range)
+            model.meta_sgd = MetaSGD(_meta_sgd_targets(model), cfg.inner_steps, cfg.inner_lr, cfg.inner_lr_rows, cfg.alpha_range,
+                                     cfg.recon_steps, cfg.recon_scale0)
             model.meta_sgd.mask_token = train_metadata.vocab_size  # config.recon's
         
         # if "DISABLE_COMPILE" not in os.environ:
@@ -398,6 +411,8 @@ def create_model(
         )
         optimizer_lrs.append(config.muon_lr if config.muon_lr is not None else config.lr)
 
+    if config.meta_sgd.enabled and config.meta_sgd.recon_steps:  # stage 2: only the reconstruction step sizes learn
+        return model, [torch.optim.Adam([model.meta_sgd.recon_log_scale], lr=1e-8)], [config.meta_sgd.alpha_lr]
     if config.meta_sgd.enabled:
         optimizers.append(torch.optim.Adam(model.meta_sgd.rho.parameters(), lr=1e-8))  # placeholder lr; the scheduler sets it
         optimizer_lrs.append(config.meta_sgd.alpha_lr)
@@ -794,15 +809,35 @@ def _final_ce(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[
 
 def _inner_update(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], loss: torch.Tensor, step: int,
+    recon: bool = False,
 ) -> Dict[str, torch.Tensor]:
-    """theta - alpha * (gradient of loss / its RMS) for every tensor in `named`, alpha the step's per tensor. First order:
-    the gradient enters as a constant, so the outer loss reaches theta and alpha but not through the gradient."""
+    """theta - alpha * (gradient of loss / its RMS) for every tensor in `named`, alpha the step's per tensor (recon: the
+    reconstruction step's). First order: the gradient enters as a constant, so the outer loss reaches theta and alpha but
+    not through the gradient."""
     grads = torch.autograd.grad(loss, [p for _, p in named], allow_unused=True)
+    alpha = model.meta_sgd.recon_alpha if recon else model.meta_sgd.alpha
 
     theta = dict(overrides)
     for (name, p), g in zip(named, grads):
         if g is not None:
-            theta[name] = p - model.meta_sgd.alpha(name, step) * g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+            theta[name] = p - alpha(name, step) * g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+    return theta
+
+
+def _recon_steps(
+    model: nn.Module, named: List[Tuple[str, torch.Tensor]], theta: Dict[str, torch.Tensor], rows: Dict[str, torch.Tensor],
+    recon: Any, shared_id: int, segments: int, steps: int, step0: int = 0, trained: Optional[int] = None,
+) -> Dict[str, torch.Tensor]:
+    """meta_sgd.recon_steps' phase: `steps` steps on the final-prediction reconstruction CE of masked copies of rows' inputs
+    (fresh masks every step, on the shared row), at the learned reconstruction step sizes, step0 + k of them; trained (fewer
+    learned sizes than steps) stretches them over the loop."""
+    n = rows["inputs"].shape[0]
+    plain = {k: rows[k] for k in ("inputs", "labels", "puzzle_identifiers")}
+    for k in range(steps):
+        masked = {key: v[n:] for key, v in _with_recon_rows(plain, recon, model.meta_sgd.mask_token, shared_id).items() if key in plain}
+        loss = _final_ce(model, theta, masked, segments) / n
+        theta = _inner_update(model, named, theta, loss, step0 + (k * trained // steps if trained else k), recon=True)
+        named = [(name, theta.get(name, p)) for name, p in named]
     return theta
 
 
@@ -894,6 +929,9 @@ def _task_outer_backward(
         named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
 
         if w > 0:  # the last step's weight is always > 0
+            if cfg.recon_steps and k == len(msl_weights) - 1:  # stage 2: the reconstruction steps, on the query's masked inputs
+                local = int(torch.searchsorted(ids, shared))
+                theta = _recon_steps(model, named, theta, query, config.recon, local, config.arch.halt_max_steps, cfg.recon_steps)
             if cfg.segment_inner_steps:
                 loss_q = _final_ce(model, theta, query, config.arch.halt_max_steps)
             else:
@@ -953,6 +991,8 @@ def meta_sgd_batch(
         "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
         "meta/alpha_max": torch.tensor(alpha_max, device=device),
     }
+    if model.meta_sgd.recon_log_scale is not None:  # stage 2: the learned reconstruction scales
+        metrics["meta/recon_scale_mean"] = model.meta_sgd.recon_log_scale.detach().exp().mean()
 
     out = _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)
     model.meta_sgd.clamp_()

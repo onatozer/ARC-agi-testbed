@@ -282,3 +282,44 @@ def test_loading_a_checkpoint_without_the_mask_token_grows_the_vocabulary():
         loaded = recon.model.state_dict()[k]
         assert loaded.shape[0] == src[k].shape[0] + 1
         assert torch.equal(loaded[:-1], src[k].to(loaded.dtype)) and torch.equal(loaded[-1], init[k][-1])
+
+
+def test_stage_two_learns_only_the_reconstruction_step_sizes():
+    """meta_sgd.recon_steps: the episodes add reconstruction steps after the inner steps; only their per-step scales learn."""
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=3", "meta_sgd.recon_scale0=0.01", "lr=1e-3", "puzzle_emb_lr=1e-2")
+    model = train_state.model
+    scale = model.meta_sgd.recon_log_scale
+    assert scale.shape == (3,) and torch.allclose(scale.exp(), torch.full((3,), 0.01, device=scale.device))
+    assert len(train_state.optimizers) == 1  # nothing else is trained
+
+    name = next(n for n, _ in _meta_sgd_targets(model) if "L_level" in n)
+    assert float(model.meta_sgd.recon_alpha(name, 0)) == pytest.approx(0.01 * 1e-3, rel=1e-4)  # scale x the tensor's initial alpha
+
+    table, weights = model.model.puzzle_emb.weights.detach().clone(), _weights(model)
+    rho = {k: r.detach().clone() for k, r in model.meta_sgd.rho.items()}
+    before = scale.detach().clone()
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert not torch.equal(before, model.meta_sgd.recon_log_scale) and "train/meta/recon_scale_mean" in metrics
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+    assert all(torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+    assert all(torch.equal(r, model.meta_sgd.rho[k]) for k, r in rho.items())
+
+
+def test_stage_two_test_time_takes_the_learned_reconstruction_steps():
+    from evaluate_ttt import learned_recon_adapt
+
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=2")
+    model = train_state.model
+    with torch.no_grad():
+        model.meta_sgd.recon_log_scale.fill_(0.0)  # scale 1: a visible move
+    weights = _weights(model)
+    test = {k: batch[k][:3] for k in ("inputs", "labels", "puzzle_identifiers")}
+    learned_recon_adapt(model, test, 4, config.arch.halt_max_steps, config.recon, METADATA.num_puzzle_identifiers)
+    assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+
+
+def test_stage_two_needs_reconstruction_and_segment_steps():
+    with pytest.raises(Exception, match="segment_inner_steps"):
+        _config(*RECON, "meta_sgd.recon_steps=2")
+    with pytest.raises(ValueError, match="config.recon"):
+        _state(*SEGMENTS, "meta_sgd.recon_steps=2")
