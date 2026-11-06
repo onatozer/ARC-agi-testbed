@@ -27,7 +27,7 @@ TINY = ["arch.hidden_size=32", "arch.num_heads=2", "arch.expansion=2", "arch.L_l
         "arch.halt_max_steps=4", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true",
         "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1"]
 SEGMENTS = ["meta_sgd.segment_inner_steps=true"]
-RECON = ["recon.copies=1", "recon.cells=2", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
+RECON = ["recon.copies=1", "recon.fraction=0.25", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
 
 _g = torch.Generator().manual_seed(0)
 BATCH = {
@@ -181,19 +181,21 @@ def test_test_time_rows_frozen_adapts_only_the_weights():
 
 
 def test_recon_rows_mask_cells_and_weight_the_copies():
-    """Each row gets `copies` masked copies: `cells` random non-pad cells set to the mask token, labelled with the full
-    input, on the shared row, weighted 1 / copies; the row-weighting head then counts them together as one row."""
+    """Each row gets `copies` masked copies: `fraction` of its color cells (tokens 2-11; never pad 0 or end-of-grid 1) set
+    to the mask token, labelled with the full input, on the shared row, weighted 1 / copies; the row-weighting head then
+    counts them together as one row."""
     from models.losses.loss_heads import ACTLossHeadRowWeight
 
-    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 0, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
+    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 1, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
              "puzzle_identifiers": torch.tensor([3, 4])}
-    out = _with_recon_rows(batch, ReconConfig(copies=5, cells=2), pad_id=0, shared_id=9)
+    out = _with_recon_rows(batch, ReconConfig(copies=5, fraction=0.5), mask_token=12, shared_id=9)
     assert out["inputs"].shape == (12, 6) and out["puzzle_identifiers"].tolist() == [3, 4] + [9] * 10
     assert torch.equal(out["labels"][2:], batch["inputs"].repeat(5, 1)) and torch.equal(out["inputs"][:2], batch["inputs"])
     assert torch.allclose(out["row_weight"], torch.tensor([1.0, 1.0] + [0.2] * 10))
 
-    masked = out["inputs"][2:] == 1
-    assert (masked.sum(-1) == 2).all() and not masked[:, 4:][0::2].any()  # never a pad cell
+    masked = out["inputs"][2:] == 12
+    assert masked.sum(-1).tolist() == [2, 3] * 5  # half of 4 and of 6 color cells
+    assert not masked[0::2, 4:].any()  # never the end-of-grid or pad cell
     assert torch.equal(out["inputs"][2:][~masked], batch["inputs"].repeat(5, 1)[~masked])
 
     # The weighted loss: 5 copies at 1/5 count as one row
@@ -262,3 +264,62 @@ def test_weights_only_load_restarts_the_ema_from_the_loaded_weights(tmp_path):
     for name, p in train_state.model.named_parameters():
         if name in train_state.ema_helper.shadow:
             assert torch.equal(train_state.ema_helper.shadow[name], p.data), name
+
+
+def test_loading_a_checkpoint_without_the_mask_token_grows_the_vocabulary():
+    """A plain checkpoint (vocab V) into a config.recon model (vocab V + 1): its rows load, the mask token's row keeps its init."""
+    from utils.checkpoint import load_model_state_dict
+
+    _, plain, _ = _state("meta_sgd.enabled=false")
+    _, recon, _ = _state("meta_sgd.enabled=false", *RECON)
+    src = {k: v.detach().clone() for k, v in plain.model.state_dict().items()}
+    keys = [k for k in src if k.endswith(("embed_tokens.embedding_weight", "lm_head.weight"))]
+    assert len(keys) == 2
+
+    init = {k: recon.model.state_dict()[k].detach().clone() for k in keys}
+    load_model_state_dict(recon.model, dict(src), strict=False)
+    for k in keys:
+        loaded = recon.model.state_dict()[k]
+        assert loaded.shape[0] == src[k].shape[0] + 1
+        assert torch.equal(loaded[:-1], src[k].to(loaded.dtype)) and torch.equal(loaded[-1], init[k][-1])
+
+
+def test_stage_two_learns_only_the_reconstruction_step_sizes():
+    """meta_sgd.recon_steps: the episodes add reconstruction steps after the inner steps; only their per-step scales learn."""
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=3", "meta_sgd.recon_scale0=0.01", "lr=1e-3", "puzzle_emb_lr=1e-2")
+    model = train_state.model
+    scale = model.meta_sgd.recon_log_scale
+    assert scale.shape == (3,) and torch.allclose(scale.exp(), torch.full((3,), 0.01, device=scale.device))
+    assert len(train_state.optimizers) == 1  # nothing else is trained
+
+    name = next(n for n, _ in _meta_sgd_targets(model) if "L_level" in n)
+    assert float(model.meta_sgd.recon_alpha(name, 0)) == pytest.approx(0.01 * 1e-3, rel=1e-4)  # scale x the tensor's initial alpha
+
+    table, weights = model.model.puzzle_emb.weights.detach().clone(), _weights(model)
+    rho = {k: r.detach().clone() for k, r in model.meta_sgd.rho.items()}
+    before = scale.detach().clone()
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert not torch.equal(before, model.meta_sgd.recon_log_scale) and "train/meta/recon_scale_mean" in metrics
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+    assert all(torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+    assert all(torch.equal(r, model.meta_sgd.rho[k]) for k, r in rho.items())
+
+
+def test_stage_two_test_time_takes_the_learned_reconstruction_steps():
+    from evaluate_ttt import learned_recon_adapt
+
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=2")
+    model = train_state.model
+    with torch.no_grad():
+        model.meta_sgd.recon_log_scale.fill_(0.0)  # scale 1: a visible move
+    weights = _weights(model)
+    test = {k: batch[k][:3] for k in ("inputs", "labels", "puzzle_identifiers")}
+    learned_recon_adapt(model, test, 4, config.arch.halt_max_steps, config.recon, METADATA.num_puzzle_identifiers)
+    assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+
+
+def test_stage_two_needs_reconstruction_and_segment_steps():
+    with pytest.raises(Exception, match="segment_inner_steps"):
+        _config(*RECON, "meta_sgd.recon_steps=2")
+    with pytest.raises(ValueError, match="config.recon"):
+        _state(*SEGMENTS, "meta_sgd.recon_steps=2")

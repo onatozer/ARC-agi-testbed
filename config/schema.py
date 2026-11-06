@@ -62,9 +62,17 @@ class MetaSGDConfig(BaseModel):
     # Multi-step loss (arXiv 1810.09502): the query loss after every inner step, annealed from uniform to the last step only
     # over this fraction of training. None: the last step's only
     msl_anneal_fraction: Optional[float] = None
+    # Stage 2 (from a stage-1 checkpoint): > 0 learns only the sizes of that many reconstruction steps after the inner steps,
+    # everything else frozen. Each step adapts the weights and rows on the final-prediction reconstruction CE of freshly
+    # masked copies of the query inputs, at every tensor's initial step size times one learned scale per step (starting at
+    # recon_scale0); the query CE after them is the outer loss. Needs config.recon and segment_inner_steps
+    recon_steps: int = 0
+    recon_scale0: float = 0.01
 
     @pydantic.model_validator(mode="after")
     def _check(self):
+        if self.recon_steps < 0 or self.recon_scale0 <= 0 or (self.recon_steps and not self.segment_inner_steps):
+            raise ValueError("meta_sgd: recon_steps >= 0 (> 0 needs segment_inner_steps) and recon_scale0 > 0 are required.")
         if min(self.inner_lr, self.inner_lr_rows) <= 0 or self.alpha_range < 0 or self.inner_steps < 1 or self.copies_per_group < 1:
             raise ValueError("meta_sgd: inner_lr, inner_lr_rows > 0, alpha_range >= 0, inner_steps >= 1 and copies_per_group >= 1 are required.")
         if self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1:
@@ -75,20 +83,20 @@ class MetaSGDConfig(BaseModel):
 class ReconConfig(BaseModel):
     """Masked-input reconstruction as an extra task (after arXiv 1909.13231's test-time training). Each training row gets
     `copies` extra rows:
-      - input: the row's input with `cells` random non-pad cells set to mask_token (an id the grids never use);
+      - input: the row's input with `fraction` of its color cells, at random, set to a mask token (a new id, the
+        dataset's vocab_size: the model's vocabulary grows by one);
       - label: the full input;
       - weight: 1 / copies (batch["row_weight"], read by a *RowWeight loss head);
       - puzzle embedding: one extra learned row shared by every copy (id num_puzzle_identifiers), so a copy is
         reconstructed from its visible cells rather than recalled from its task's row.
     0 copies: off."""
     copies: int = 0
-    cells: int = 6
-    mask_token: int = 1
+    fraction: float = 0.24  # 6 of a 5x5 MiniARC grid's 25 cells
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.copies < 0 or self.cells < 1:
-            raise ValueError("recon: copies >= 0 and cells >= 1 are required.")
+        if self.copies < 0 or not 0 < self.fraction <= 1:
+            raise ValueError("recon: copies >= 0 and fraction in (0, 1] are required.")
         return self
 
 

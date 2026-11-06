@@ -52,8 +52,7 @@ freeze_alternation_epochs: null # If set to N, alternate every N epochs between 
 # Masked-input reconstruction rows (config/schema.py ReconConfig); copies 0 = off. Needs a *RowWeight loss head
 recon:
   copies: 0
-  cells: 6
-  mask_token: 1
+  fraction: 0.24 # of each grid's color cells
 
 # Meta-SGD instead of the ordinary training step (config/schema.py MetaSGDConfig); needs a build with heldout_tasks > 0
 meta_sgd:
@@ -66,3 +65,5 @@ meta_sgd:
   copies_per_group: 16
   segment_inner_steps: false # TRM / GRAM: one supervision segment per inner step, final-prediction CE query loss
   msl_anneal_fraction: null
+  recon_steps: 0 # stage 2: > 0 learns only the sizes of that many reconstruction steps after the inner steps
+  recon_scale0: 0.01
