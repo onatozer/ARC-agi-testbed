@@ -7,7 +7,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ckpt() { ls -t runs/$1/outputs/*/*/*/checkpoints/*.pth 2>/dev/null | head -1; }
 say() { echo "[queue] $* $(date -u)"; }
-export GPUS=${GPUS:-2} D_META=$PWD/data/arc2-new233-ho
+export GPUS=${GPUS:-2} D_META=$PWD/data/arc2-new233-ho V1=${V1:-/workspace/hf/arc_v1_public/step_518071}
 NOREC="recon.copies=0 meta_sgd.inner_lr=1e-5 puzzle_emb_lr=0"  # 1e-5: the first ARC-AGI-2 run's probe
 SCORE="score_steps=[0,25,50,100,250,500,1000]"
 
