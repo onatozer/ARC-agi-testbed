@@ -933,6 +933,7 @@ def _task_outer_backward(
     theta, carry, total, first_loss = overrides, None, 0.0, None
     if cfg.rows_steps and emb_name is not None:  # the embedding first: rows-only steps, then the backbone with the rows frozen
         rows_named = [(n, p) for n, p in named if n == emb_name]
+        second_order, model.meta_sgd.second_order = model.meta_sgd.second_order, False  # rows phase first order: its graph would not fit (H200)
         for r in range(cfg.rows_steps):
             if cfg.segment_inner_steps:
                 loss_r, theta, carry = _adapt_segment(model, rows_named, theta, support, carry, r)
@@ -941,6 +942,7 @@ def _task_outer_backward(
             first_loss = loss_r if first_loss is None else first_loss
             rows_named = [(n, theta[n]) for n, _ in rows_named]
         named, carry = [(n, p) for n, p in named if n != emb_name], None
+        model.meta_sgd.second_order = second_order
     for k, w in enumerate(msl_weights):
         if cfg.segment_inner_steps:
             loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, k)

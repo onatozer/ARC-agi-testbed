@@ -63,7 +63,8 @@ class MetaSGDConfig(BaseModel):
     accum_steps: int = 1
     # > 0: the embedding first. Each inner loop starts with this many steps on the task's puzzle-embedding rows alone
     # (the backbone frozen, the rows' per-step sizes 0..rows_steps-1), then the inner_steps on the backbone with the
-    # rows frozen. Test time: evaluate_ttt's meta_sgd_rows_steps, then meta_sgd_steps (rows frozen)
+    # rows frozen; the rows' steps are first order even with second_order. Test time: evaluate_ttt's meta_sgd_rows_steps,
+    # then meta_sgd_steps (rows frozen)
     rows_steps: int = 0
     # Multi-segment (ACT) models such as TRM and GRAM: each inner step is one supervision segment continuing the previous
     # step's carry, and the query loss is the final prediction's CE after halt_max_steps segments. Off (VARC): each inner
