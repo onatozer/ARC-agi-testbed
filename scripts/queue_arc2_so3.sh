@@ -19,7 +19,7 @@ say "build done"
 # The largest per-GPU batch that fits second order (B200: 16 rows; H200 has less memory), then enough accumulation for
 # ~768 rows (~48 tasks) per update
 B=
-for rows in 16 12 8 4; do
+for rows in 8 4; do  # 16 passed a 2-step smoke on H200 but ran out of memory on later batches
   rm -rf runs/arc2_so3smoke_meta
   if RUN=arc2_so3smoke META_STEPS=2 MODE=meta bash scripts/run_arc2.sh $V1 $NOREC meta_sgd.second_order=true global_batch_size=$((rows * GPUS)) > logs/arc2_so3smoke_$rows.log 2>&1 \
      && ls runs/arc2_so3smoke_meta/outputs/*/*/*/checkpoints/*.pth >/dev/null 2>&1; then B=$((rows * GPUS)); break; fi
