@@ -755,9 +755,7 @@ def _episodes_from_batch(batch: Dict[str, torch.Tensor]) -> List[Tuple[int, Dict
         if support.any() and query.any():
             episodes.append((key, {k: v[support] for k, v in batch.items()}, {k: v[query] for k, v in batch.items()}))
 
-    if not episodes:
-        raise RuntimeError(f"meta_sgd: no task in the batch has both demo and validation rows ({torch.unique(ids).numel()} ids, {int(is_query.sum())} validation rows).")
-    return episodes
+    return episodes  # may be empty: a small per-GPU slice can cut every task's query rows off (meta_sgd_batch skips it)
 
 
 def _segment(model: nn.Module, overrides: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor], carry: Any) -> Tuple[Any, torch.Tensor]:
@@ -990,6 +988,7 @@ def meta_sgd_batch(
     n_query = torch.tensor(float(sum(q["inputs"].shape[0] for _, _, q in episodes)), device=device)
     if world_size > 1:
         dist.all_reduce(n_query)  # the scale makes the all-reduced gradient the mean over every rank's query rows
+    n_query = n_query.clamp_min(1)
 
     emb_name = _puzzle_emb_name(model)
     targets = _meta_sgd_targets(model)
@@ -1011,8 +1010,8 @@ def meta_sgd_batch(
     metrics = {
         "count": tasks,
         "meta/tasks": tasks,
-        "meta/support_loss": torch.stack(support_losses).mean(),
-        "meta/query_loss": torch.stack(query_losses).mean(),
+        "meta/support_loss": torch.stack(support_losses).mean() if episodes else torch.zeros((), device=device),
+        "meta/query_loss": torch.stack(query_losses).mean() if episodes else torch.zeros((), device=device),
         "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
         "meta/alpha_max": torch.tensor(alpha_max, device=device),
     }

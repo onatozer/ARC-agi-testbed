@@ -71,8 +71,7 @@ def test_episodes_split_each_puzzle_by_the_validation_flag_and_skip_incomplete_o
 
     with pytest.raises(ValueError):
         _episodes_from_batch({k: v for k, v in batch.items() if k != "validation"})
-    with pytest.raises(RuntimeError):
-        _episodes_from_batch({**batch, "validation": torch.zeros(8, dtype=torch.int64)})
+    assert _episodes_from_batch({**batch, "validation": torch.zeros(8, dtype=torch.int64)}) == []  # skipped, not an error
 
     # Grouped copies: the validation row of a copy whose demos were cut off at the batch tail is dropped
     grouped = {"inputs": torch.arange(4).view(4, 1), "puzzle_identifiers": torch.tensor([1, 1, 2, 2]), "group_ids": torch.tensor([7, 7, 7, 7]), "validation": torch.tensor([0, 1, 1, 1])}
@@ -404,3 +403,12 @@ def test_rows_first_test_time_adapts_rows_then_weights():
     meta_sgd_adapt(model, support, 3, segment_steps=False, rows_frozen=True)
     assert torch.equal(table, model.model.puzzle_emb.weights)
     assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+
+
+def test_a_rank_without_complete_tasks_contributes_nothing_but_still_steps():
+    config, train_state, batch = _state("lr=1e-3")
+    weights = _weights(train_state.model)
+    no_query = {**batch, "validation": torch.zeros_like(batch["validation"])}
+    metrics = meta_sgd_batch(config, train_state, no_query, global_batch_size=9, rank=0, world_size=1)
+    assert metrics["train/meta/tasks"] == 0 and train_state.step == 1
+    assert all(torch.equal(w, dict(train_state.model.named_parameters())[n]) for n, w in weights.items())  # no gradient, no move
