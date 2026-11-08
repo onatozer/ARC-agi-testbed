@@ -22,7 +22,7 @@ GRID = [(0.0, 0.0), (0.0, 3e-2), (0.0, 1e-1), (1e-5, 3e-2), (1e-4, 3e-2), (3e-4,
 obj = torch.load(CKPT, map_location="cpu", weights_only=False)
 config = PretrainConfig(**obj["config"])
 config.dataset.data_path, config.global_batch_size, config.ema = DATA, ROWS, False
-config.meta_sgd.enabled, config.meta_sgd.segment_inner_steps = True, True
+config.meta_sgd.enabled, config.meta_sgd.segment_inner_steps = True, config.arch.halt_max_steps > 1  # one-pass models (VARC): whole-trajectory steps
 
 loader, meta = create_dataloader(config, "train", test_set_mode=False, epochs_per_iter=1, global_batch_size=ROWS, rank=0, world_size=1,
                                  copies_per_group=config.meta_sgd.copies_per_group, enable_shared_sampler_state=False)
