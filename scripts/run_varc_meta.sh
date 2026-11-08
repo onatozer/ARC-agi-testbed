@@ -36,7 +36,7 @@ say "probe: $(grep -c 'query CE' logs/${RUN}_probe.log) settings, weight step si
 
 # 3. The largest per-GPU batch that fits second order, then TARGET_ROWS rows per update
 B=
-for rows in 32 16 8 4; do
+for rows in ${FIT_ROWS:-32 16 8 4}; do  # FIT_ROWS: per-GPU sizes to try
   rm -rf $R/${RUN}_smoke
   if OUTPUT_ROOT=$R/${RUN}_smoke $LAUNCH pretrain.py $CONF +run_name=${RUN}_smoke +load_checkpoint=$R/${RUN}_official.pt +load_weights_only=true \
        meta_sgd.inner_lr=$LR global_batch_size=$((rows * GPUS)) max_steps=3 > logs/${RUN}_smoke_$rows.log 2>&1 && [ -n "$(ckpt ${RUN}_smoke)" ]; then B=$((rows * GPUS)); break; fi
