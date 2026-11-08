@@ -34,7 +34,7 @@ PY
 )
 say "probe: $(grep -c 'query CE' logs/${RUN}_probe.log) settings, weight step size $LR"
 
-# 3. The largest per-GPU batch that fits second order, then ~768 rows per update
+# 3. The largest per-GPU batch that fits second order, then TARGET_ROWS rows per update
 B=
 for rows in 32 16 8 4; do
   rm -rf $R/${RUN}_smoke
@@ -42,7 +42,7 @@ for rows in 32 16 8 4; do
        meta_sgd.inner_lr=$LR global_batch_size=$((rows * GPUS)) max_steps=3 > logs/${RUN}_smoke_$rows.log 2>&1 && [ -n "$(ckpt ${RUN}_smoke)" ]; then B=$((rows * GPUS)); break; fi
 done
 [ -n "$B" ] || { say "no batch fits second order"; exit 1; }
-A=$(( (768 + B / 2) / B ))
+A=$(( (${TARGET_ROWS:-768} + B / 2) / B ))  # rows per update: 768 (the ARC-AGI-2 runs'); MiniARC 256 (its TRM rounds 60-64)
 say "batch $B x accum_steps $A"
 
 # 4. Meta-training
