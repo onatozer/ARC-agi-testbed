@@ -114,6 +114,35 @@ def _resolve_run_root(hydra_config: Optional[DictConfig] = None) -> str:
     return os.getcwd()
 
 
+def _checkpoint_layer(layer: nn.Module) -> None:
+    """Recompute the layer's activations in the backward pass instead of storing them (training only). Its parameters go
+    into the checkpoint as explicit inputs, read at forward time: under Meta-SGD's functional_call they are the episode's
+    adapted tensors, which the recomputation (after functional_call returns) would otherwise replace by the originals.
+    Non-reentrant checkpointing, so second-order meta-gradients pass through."""
+    forward, names, inside = layer.forward, [n for n, _ in layer.named_parameters()], [False]
+
+    def current(name: str) -> torch.Tensor:
+        obj = layer
+        for part in name.split("."):
+            obj = getattr(obj, part)
+        return obj
+
+    def checkpointed(*args, **kwargs):
+        if inside[0] or not layer.training:
+            return forward(*args, **kwargs)
+
+        def run(*flat):
+            inside[0] = True
+            try:
+                return torch.func.functional_call(layer, dict(zip(names, flat[:len(names)])), flat[len(names):], kwargs)
+            finally:
+                inside[0] = False
+
+        return checkpoint(run, *[current(n) for n in names], *args, use_reentrant=False)
+
+    layer.forward = checkpointed
+
+
 def apply_gradient_checkpointing(model: nn.Module, config: PretrainConfig, rank: int):
     """
     Apply gradient checkpointing to model layers without modifying the original model class.
@@ -136,28 +165,14 @@ def apply_gradient_checkpointing(model: nn.Module, config: PretrainConfig, rank:
             "twice, and the solver/Jacobian calls are wrapped too. Use checkpoint_phantom alone."
         )
 
-    if hasattr(inner_model, 'L_level') and hasattr(inner_model.L_level, 'layers'):
-        original_layers = inner_model.L_level.layers
-
-        for i, layer in enumerate(original_layers):
-            original_forward = layer.forward
-
-            def create_checkpointed_forward(orig_forward):
-                def checkpointed_forward(*args, **kwargs):
-                    if layer.training:
-                        def forward_wrapper(*tensor_args):
-                            return orig_forward(*tensor_args, **kwargs)
-
-                        return checkpoint(forward_wrapper, *args, use_reentrant=False)
-                    else:
-                        return orig_forward(*args, **kwargs)
-                return checkpointed_forward
-            
-            layer.forward = create_checkpointed_forward(original_forward)
-        
+    # TRM's reasoning blocks, VARC's encoder layers
+    layers = inner_model.L_level.layers if hasattr(getattr(inner_model, "L_level", None), "layers") else getattr(inner_model, "layers", None)
+    if layers is not None:
+        for layer in layers:
+            _checkpoint_layer(layer)
         if rank == 0:
-            rank_zero_print_info(f"Applied gradient checkpointing to {len(original_layers)} layers in L_level")
-    
+            rank_zero_print_info(f"Applied gradient checkpointing to {len(layers)} layers")
+
     return model
 
 def create_dataloader(

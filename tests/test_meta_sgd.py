@@ -412,3 +412,29 @@ def test_a_rank_without_complete_tasks_contributes_nothing_but_still_steps():
     metrics = meta_sgd_batch(config, train_state, no_query, global_batch_size=9, rank=0, world_size=1)
     assert metrics["train/meta/tasks"] == 0 and train_state.step == 1
     assert all(torch.equal(w, dict(train_state.model.named_parameters())[n]) for n, w in weights.items())  # no gradient, no move
+
+
+def _varc_state(*overrides):
+    with initialize(config_path="../config", version_base=None):
+        cfg = compose(config_name="cfg_pretrain_miniarc_varc", overrides=[
+            "dataset.grid_size=4", "arch.hidden_size=32", "arch.num_layers=2", "arch.mlp_dim=32", "arch.num_heads=2", "arch.forward_dtype=float32",
+            "arch.dropout=0.0", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true",
+            "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1", *overrides])
+    config = PretrainConfig(**OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    train_state = init_train_state(config, METADATA.model_copy(update={"vocab_size": 12}), rank=0, world_size=1)
+    device = next(train_state.model.parameters()).device
+    return config, train_state, {k: v.to(device) for k, v in BATCH.items()}
+
+
+@pytest.mark.parametrize("model", ["varc", "trm"])
+def test_gradient_checkpointing_keeps_the_second_order_meta_update_exact(model):
+    """Checkpointed layers recompute with the episode's adapted weights: the meta-update is the unchecked one's."""
+    after = []
+    for ckpt in (False, True):
+        torch.manual_seed(0)
+        opts = ("lr=1e-3", "meta_sgd.inner_lr=1e-1", "meta_sgd.second_order=true", f"+gradient_checkpoint={ckpt}")
+        config, train_state, batch = _varc_state(*opts) if model == "varc" else _state(*opts, "arch.forward_dtype=float32")
+        torch.manual_seed(1)
+        meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
+    assert all(torch.allclose(after[0][n], after[1][n], atol=1e-6) for n in after[0])
