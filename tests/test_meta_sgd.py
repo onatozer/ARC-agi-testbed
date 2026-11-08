@@ -374,3 +374,33 @@ def test_a_list_of_batches_is_one_optimizer_step_over_all_their_episodes():
 def test_accum_steps_must_be_positive():
     with pytest.raises(Exception):
         _config("meta_sgd.accum_steps=0")
+
+
+def test_rows_first_inner_loop_moves_rows_then_only_the_backbone(monkeypatch):
+    """meta_sgd.rows_steps: the first steps adapt only the rows, the rest only the backbone."""
+    import pretrain
+    calls = []
+    real = pretrain._inner_update
+    def spy(model, named, overrides, loss, step, recon=False):
+        calls.append((step, sorted({n.split(".")[-1] for n, _ in named})))
+        return real(model, named, overrides, loss, step, recon)
+    monkeypatch.setattr(pretrain, "_inner_update", spy)
+    config, train_state, batch = _state("meta_sgd.rows_steps=2", "meta_sgd.inner_steps=3")
+    meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    first = calls[:5]  # one task: 2 rows-only steps, then 3 backbone steps
+    assert [c[1] == ["weights"] for c in first] == [True, True, False, False, False]
+    assert all("weights" not in c[1] for c in first[2:])
+
+
+def test_rows_first_test_time_adapts_rows_then_weights():
+    config, train_state, batch = _state("meta_sgd.rows_steps=2")
+    model = train_state.model
+    support, _ = _task(batch)
+    table, weights = model.model.puzzle_emb.weights.detach().clone(), _weights(model)
+    meta_sgd_adapt(model, support, 3, segment_steps=False, rows_only=2)
+    assert not torch.equal(table, model.model.puzzle_emb.weights)
+    assert all(torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())  # backbone untouched
+    table = model.model.puzzle_emb.weights.detach().clone()
+    meta_sgd_adapt(model, support, 3, segment_steps=False, rows_frozen=True)
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+    assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())

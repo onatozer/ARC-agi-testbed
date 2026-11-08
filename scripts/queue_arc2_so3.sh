@@ -4,14 +4,14 @@
 # accumulation = ~768 rows (~48 tasks) per update (the first-order run's), 400 updates; the step sizes kept within e^+-2 of
 # their start (take 1 went NaN when one ran 0.03 -> 22), a checkpoint every 50 updates, the newest finite one tested on
 # the 120 eval tasks with score_steps (then re-tested at a shorter length if the curve peaks early). The no-meta
-# baseline (official weights + normalised TTT) is done: 4.44% pass@2.
+# baseline (official weights + normalised TTT) is done: 4.44% pass@2. With the embedding first (meta_sgd.rows_steps=4, user).
 #   nohup bash scripts/queue_arc2_so3.sh > logs/queue_arc2_so3.log 2>&1 &
 set -uo pipefail
 cd "$(dirname "$0")/.."
 say() { echo "[queue3] $* $(date -u)"; }
 export GPUS=${GPUS:-2} D_META=$PWD/data/arc2-new233-ho V1=${V1:-/workspace/hf/arc_v1_public/step_518071}
-NOREC="recon.copies=0 meta_sgd.inner_lr=1e-5 puzzle_emb_lr=0"
-SCORE="score_steps=[0,25,50,100,250,500,1000]"
+NOREC="recon.copies=0 meta_sgd.inner_lr=1e-5 puzzle_emb_lr=0 meta_sgd.rows_steps=4"  # rows_steps 4: the embedding first (user), 4 + 8
+SCORE="score_steps=[0,25,50,100,250,500,1000] meta_sgd_rows_steps=200"  # 200 rows-only steps, then 1000 (MiniARC round 37/65)
 
 [ -f $D_META/train/dataset.json ] || REPLAY_FRACTION=0 PYTHONPATH=. python scripts/build_arc2_continue.py $D_META 1000 > logs/build_new233.log 2>&1 || { say "build failed"; exit 1; }
 say "build done"
@@ -58,6 +58,6 @@ PY
 say "best intermediate step: ${K:-none (1000 is best)}"
 if [ -n "$K" ]; then
   steps=$(python3 -c "print(sorted({0, *[s for s in (25, 50, 100, 250, 500) if s < $K]}))" | tr -d " ")
-  RUN=arc2_so3_k$K MODE=eval bash scripts/run_arc2.sh $CK meta_sgd_steps=$K score_steps=$steps > logs/arc2_so3_k${K}_eval.log 2>&1 || say "shorter re-test failed"
+  RUN=arc2_so3_k$K MODE=eval bash scripts/run_arc2.sh $CK meta_sgd_steps=$K score_steps=$steps meta_sgd_rows_steps=200 > logs/arc2_so3_k${K}_eval.log 2>&1 || say "shorter re-test failed"
 fi
 say "done"

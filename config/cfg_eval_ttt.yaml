@@ -32,6 +32,7 @@ train_overrides:
 meta_sgd_steps: 0
 recon_steps: 20
 recon_alpha_scale: 0.01
+meta_sgd_rows_steps: 0 # a meta_sgd.rows_steps checkpoint: this many rows-only steps first, then meta_sgd_steps with the rows frozen
 score_steps: [] # also score after these many TTT steps, in the same run (metrics step<N>/...)
 seed: 0
 

@@ -931,6 +931,16 @@ def _task_outer_backward(
         query = {**query, "puzzle_identifiers": torch.searchsorted(ids, query["puzzle_identifiers"]).to(query["puzzle_identifiers"].dtype)}
 
     theta, carry, total, first_loss = overrides, None, 0.0, None
+    if cfg.rows_steps and emb_name is not None:  # the embedding first: rows-only steps, then the backbone with the rows frozen
+        rows_named = [(n, p) for n, p in named if n == emb_name]
+        for r in range(cfg.rows_steps):
+            if cfg.segment_inner_steps:
+                loss_r, theta, carry = _adapt_segment(model, rows_named, theta, support, carry, r)
+            else:
+                loss_r, theta = _adapt(model, rows_named, theta, support, r)
+            first_loss = loss_r if first_loss is None else first_loss
+            rows_named = [(n, theta[n]) for n, _ in rows_named]
+        named, carry = [(n, p) for n, p in named if n != emb_name], None
     for k, w in enumerate(msl_weights):
         if cfg.segment_inner_steps:
             loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, k)

@@ -107,7 +107,7 @@ def _split_rows(config: PretrainConfig, split: str, metadata: Any, device: torch
 
 def meta_sgd_adapt(
     model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, segment_steps: bool,
-    rows_frozen: bool = False, on_step: Optional[Any] = None,
+    rows_frozen: bool = False, on_step: Optional[Any] = None, rows_only: int = 0,
 ) -> List[float]:
     """`steps` Meta-SGD inner steps on `support` with the checkpoint's learned alphas, written into the weights and (unless
     rows_frozen) the task's puzzle-embedding rows. The trained per-step alphas are stretched over the loop: the k-th of
@@ -115,13 +115,16 @@ def meta_sgd_adapt(
     targets, emb_name, carry, losses = _meta_sgd_targets(model), _puzzle_emb_name(model), None, []
     if rows_frozen:
         targets = [(n, p) for n, p in targets if n != emb_name]
+    if rows_only:  # meta_sgd.rows_steps' phase (rows_only = rows_steps): the rows alone, their learned sizes stretched
+        targets = [(n, p) for n, p in targets if n == emb_name]
+    trained = rows_only or model.meta_sgd.steps
 
     for k in range(steps):
         if on_step is not None:
             on_step(k)
 
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
-        alpha_step = k * model.meta_sgd.steps // steps
+        alpha_step = k * trained // steps
         if segment_steps:  # one supervision segment per step, the rows continuing their carry (TRM, GRAM)
             loss, theta, carry = _adapt_segment(model, named, overrides, batch, carry, alpha_step)
         else:
@@ -170,7 +173,11 @@ def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module,
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos
-    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps, on_step=on_step)
+    if config.meta_sgd.rows_steps and cfg.meta_sgd_rows_steps:  # the embedding first, as meta-trained
+        rows_losses = meta_sgd_adapt(model, support, cfg.meta_sgd_rows_steps, segment_steps, rows_only=config.meta_sgd.rows_steps)
+        print_info(f"TTT: {cfg.meta_sgd_rows_steps} rows-only steps, support loss {rows_losses[0]:.3f} -> {rows_losses[-1]:.3f}")
+    rows_frozen = bool(config.meta_sgd.rows_steps)
+    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps, on_step=on_step, rows_frozen=rows_frozen)
     print_info(f"TTT: {cfg.meta_sgd_steps} Meta-SGD steps on {demos['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
 
     if not (config.recon.copies and cfg.recon_steps):
