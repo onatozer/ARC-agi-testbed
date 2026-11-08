@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ARC-AGI-2 second-order meta-training, take 3 (queue_arc2_so.sh's run with a proper meta-batch): from the official
-# ARC-AGI-1 checkpoint on the 233 never-seen ARC-AGI-2 training tasks, global batch 32 (all that fits second order on a
-# B200) x accum_steps 24 = ~48 tasks per update (the first-order run's), 400 updates; the step sizes kept within e^+-2 of
+# ARC-AGI-1 checkpoint on the 233 never-seen ARC-AGI-2 training tasks, the largest per-GPU batch that fits second order x
+# accumulation = ~768 rows (~48 tasks) per update (the first-order run's), 400 updates; the step sizes kept within e^+-2 of
 # their start (take 1 went NaN when one ran 0.03 -> 22), a checkpoint every 50 updates, the newest finite one tested on
 # the 120 eval tasks with score_steps (then re-tested at a shorter length if the curve peaks early). The no-meta
 # baseline (official weights + normalised TTT) is done: 4.44% pass@2.
@@ -16,8 +16,20 @@ SCORE="score_steps=[0,25,50,100,250,500,1000]"
 [ -f $D_META/train/dataset.json ] || REPLAY_FRACTION=0 PYTHONPATH=. python scripts/build_arc2_continue.py $D_META 1000 > logs/build_new233.log 2>&1 || { say "build failed"; exit 1; }
 say "build done"
 
-RUN=arc2_so3 META_STEPS=400 MODE=meta bash scripts/run_arc2.sh $V1 $NOREC meta_sgd.second_order=true global_batch_size=32 \
-  meta_sgd.accum_steps=24 meta_sgd.alpha_range=2 checkpoint_interval_steps=50 > logs/arc2_so3_meta.log 2>&1 || say "meta-training exited non-zero"
+# The largest per-GPU batch that fits second order (B200: 16 rows; H200 has less memory), then enough accumulation for
+# ~768 rows (~48 tasks) per update
+B=
+for rows in 16 12 8; do
+  rm -rf runs/arc2_so3smoke_meta
+  if RUN=arc2_so3smoke META_STEPS=2 MODE=meta bash scripts/run_arc2.sh $V1 $NOREC meta_sgd.second_order=true global_batch_size=$((rows * GPUS)) > logs/arc2_so3smoke_$rows.log 2>&1 \
+     && ls runs/arc2_so3smoke_meta/outputs/*/*/*/checkpoints/*.pth >/dev/null 2>&1; then B=$((rows * GPUS)); break; fi
+done
+[ -n "$B" ] || { say "no batch fits second order"; exit 1; }
+A=$(( (768 + B / 2) / B ))
+say "second-order batch $B ($((B / GPUS)) rows per GPU) x accum_steps $A"
+
+RUN=arc2_so3 META_STEPS=400 MODE=meta bash scripts/run_arc2.sh $V1 $NOREC meta_sgd.second_order=true global_batch_size=$B \
+  meta_sgd.accum_steps=$A meta_sgd.alpha_range=2 checkpoint_interval_steps=50 > logs/arc2_so3_meta.log 2>&1 || say "meta-training exited non-zero"
 CK=$(python3 - <<PY
 import glob, os, torch
 for p in sorted(glob.glob("runs/arc2_so3_meta/outputs/*/*/*/checkpoints/*.pth"), key=os.path.getmtime, reverse=True):
