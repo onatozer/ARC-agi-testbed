@@ -55,6 +55,9 @@ class MetaSGDConfig(BaseModel):
     alpha_range: float = 10.0  # alpha stays within its initial value * exp(+-alpha_range)
     inner_steps: int = 8
     copies_per_group: int = 16
+    # True: second-order meta-gradients, through the inner steps' gradients (the inner-loop autograd graph is kept for the
+    # outer backward; memory grows ~10x on TRM); False: first order, the gradient enters each step as a constant
+    second_order: bool = False
     # Multi-segment (ACT) models such as TRM and GRAM: each inner step is one supervision segment continuing the previous
     # step's carry, and the query loss is the final prediction's CE after halt_max_steps segments. Off (VARC): each inner
     # step and the query loss run every row's whole trajectory through the loss head.

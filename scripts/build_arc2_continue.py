@@ -8,6 +8,7 @@ Same format as dataset.build_arc_dataset otherwise (1000 augmentations, no scale
     PYTHONPATH=. python scripts/build_arc2_continue.py <output_dir> [num_aug 1000]
 """
 import json
+import os
 import sys
 
 import numpy as np
@@ -15,7 +16,7 @@ import numpy as np
 from dataset.build_arc_dataset import DataProcessConfig, PuzzleIdSeparator, convert_dataset, load_puzzles_arcagi
 
 PREFIX = "kaggle/combined/arc-agi"
-REPLAY_FRACTION = 0.10
+REPLAY_FRACTION = float(os.environ.get("REPLAY_FRACTION", 0.10))  # 0: the new tasks only
 
 seen = set()
 for subset in ("training", "evaluation", "concept"):
@@ -32,6 +33,10 @@ def load_puzzles(config: DataProcessConfig):
     replay = [g for g in groups if base(g) in seen]
 
     n_groups = round(len(new) * REPLAY_FRACTION / (1 - REPLAY_FRACTION))
+    if n_groups == 0:
+        results["train"]["all"] = new
+        print(f"new tasks: {len(new)}, no replay")
+        return results, test_puzzles
     order = np.random.default_rng(0).permutation(len(replay))
     packed = [sum((replay[i] for i in part), []) for part in np.array_split(order, n_groups)]
     results["train"]["all"] = new + packed

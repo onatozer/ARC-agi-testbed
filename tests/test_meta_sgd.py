@@ -339,3 +339,18 @@ def test_stage_two_runs_on_a_one_pass_model():
     device = next(model.parameters()).device
     meta_sgd_batch(config, train_state, {k: v.to(device) for k, v in BATCH.items()}, global_batch_size=9, rank=0, world_size=1)
     assert not torch.equal(before, model.meta_sgd.recon_log_scale)
+
+
+@pytest.mark.parametrize("overrides", [[], SEGMENTS])
+def test_second_order_changes_the_meta_gradient_and_stays_off_at_test_time(overrides):
+    grads = {}
+    for second in (False, True):
+        torch.manual_seed(0)
+        config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", f"meta_sgd.second_order={second}", *overrides)
+        model = train_state.model
+        before = _weights(model)
+        meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        grads[second] = {n: dict(model.named_parameters())[n].detach() - w for n, w in before.items()}
+        assert model.meta_sgd.second_order is second
+    assert any(not torch.allclose(grads[False][n], grads[True][n]) for n in grads[False])
+    assert not getattr(_state(*overrides)[1].model.meta_sgd, "second_order", False)  # a fresh model (as evaluate_ttt builds): first order

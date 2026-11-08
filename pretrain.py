@@ -73,6 +73,7 @@ from utils.optimizer import compute_lr
 from utils.secrets import apply_wandb_secrets_to_training_config
 from config.schema import PretrainConfig
 from contextlib import nullcontext, suppress
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from models.losses import IGNORE_LABEL_ID
 from models.losses.loss_heads import RowWeightMixin
 
@@ -813,8 +814,9 @@ def _inner_update(
 ) -> Dict[str, torch.Tensor]:
     """theta - alpha * (gradient of loss / its RMS) for every tensor in `named`, alpha the step's per tensor (recon: the
     reconstruction step's). First order: the gradient enters as a constant, so the outer loss reaches theta and alpha but
-    not through the gradient."""
-    grads = torch.autograd.grad(loss, [p for _, p in named], allow_unused=True)
+    not through the gradient; model.meta_sgd.second_order (meta-training with meta_sgd.second_order) keeps its graph."""
+    second_order = getattr(model.meta_sgd, "second_order", False) and not recon
+    grads = torch.autograd.grad(loss, [p for _, p in named], allow_unused=True, create_graph=second_order)
     alpha = model.meta_sgd.recon_alpha if recon else model.meta_sgd.alpha
 
     theta = dict(overrides)
@@ -967,6 +969,7 @@ def meta_sgd_batch(
         return
 
     model, cfg = train_state.model, config.meta_sgd
+    model.meta_sgd.second_order = cfg.second_order  # meta-training only: test time (evaluate_ttt) keeps first-order steps
     device = next(model.parameters()).device
     batch = tree_to_device(batch, device)
     current_epoch = (train_state.step - 1) // max(train_state.steps_per_epoch, 1)
@@ -986,7 +989,8 @@ def meta_sgd_batch(
     support_losses, query_losses = [], []
     with flop_counter:
         for _key, support, query in episodes:
-            loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
+            with sdpa_kernel(SDPBackend.MATH) if cfg.second_order else nullcontext():  # only the math kernel has a double backward
+                loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
             support_losses.append(loss_s)
             query_losses.append(loss_q)
 
