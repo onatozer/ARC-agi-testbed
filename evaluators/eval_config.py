@@ -66,5 +66,9 @@ class TTTConfig(pydantic.BaseModel):
     meta_sgd_steps: int = 0
     recon_steps: int = 20
     recon_alpha_scale: float = 0.01
+    # Also score the test predictions after these many TTT steps (Meta-SGD steps, or the ordinary loop's optimizer steps;
+    # 0 = before any), in the same run (the first of ttt_runs_per_task), as metrics prefixed "step<N>/". Each is scored
+    # with fresh evaluators; the ordinary loop's are on the raw weights (its EMA is swapped in only at the end)
+    score_steps: List[int] = []
     seed: int = 0
     wandb_mode: Optional[str] = None  # "disabled" skips logging to the checkpoint's W&B run

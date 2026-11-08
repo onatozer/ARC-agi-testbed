@@ -154,7 +154,8 @@ def learned_recon_adapt(model: torch.nn.Module, test: Dict[str, torch.Tensor], s
         _write_back(model, targets, emb_name, ids, theta)
 
 
-def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module, train_metadata: Any, eval_metadata: Any) -> None:
+def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module, train_metadata: Any, eval_metadata: Any,
+                 on_step: Optional[Any] = None) -> None:
     """Test-time Meta-SGD on one task, as meta-trained (config/schema.py MetaSGDConfig):
       1. meta_sgd_steps steps on the demos (with config.recon, plus masked copies of their inputs);
       2. with config.recon, recon_steps reconstruction steps on masked copies of the demo and test inputs (labels: the
@@ -169,7 +170,7 @@ def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module,
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos
-    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps)
+    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps, on_step=on_step)
     print_info(f"TTT: {cfg.meta_sgd_steps} Meta-SGD steps on {demos['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
 
     if not (config.recon.copies and cfg.recon_steps):
@@ -226,6 +227,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             evaluator.aggregated_voting = True
 
     metrics: Optional[Dict[str, Any]] = None
+    curve: Dict[str, float] = {}
     for run in range(cfg.ttt_runs_per_task):
         _seed(seed + run, 0)
         train_state = init_train_state(config, train_metadata, rank=0, world_size=1)
@@ -239,13 +241,29 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             train_state.ema_helper.register(train_state.model)
         config.lr_warmup_steps = cfg.warmup_epochs * train_state.steps_per_epoch
 
+        def score(at: int) -> None:  # cfg.score_steps: the test predictions now, with fresh evaluators (no vote pooling)
+            if run or at not in cfg.score_steps:
+                return
+            fresh = create_evaluators(config, eval_metadata)
+            for evaluator in fresh:
+                if hasattr(evaluator, "aggregated_voting"):
+                    evaluator.aggregated_voting = True
+            head = load_model_class(config.arch.loss.inference_name)(train_state.model.model, **config.arch.loss.__pydantic_extra__)
+            head.eval()
+            for _ in range(cfg.num_views):
+                at_metrics, _ = evaluate(config, replace(train_state, model=head), eval_loader, eval_metadata, fresh, rank=0, world_size=1, cpu_group=None)
+            curve.update({f"step{at}/{k}": v for k, v in _summarize(at_metrics or {})[1].items()})
+            train_state.model.train()
+
         train_state.model.train()
         if config.meta_sgd.enabled:
             train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
-            meta_sgd_ttt(cfg, config, train_state.model, train_metadata, eval_metadata)
+            meta_sgd_ttt(cfg, config, train_state.model, train_metadata, eval_metadata, on_step=score)
         else:
+            score(0)
             for _set_name, batch, global_batch_size in train_loader:
                 train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
+                score(train_state.step)
                 if train_state.ema_helper is not None:
                     train_state.ema_helper.update(train_state.model)
                 if train_state.step >= train_state.total_steps:
@@ -261,7 +279,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         del train_state, train_state_eval
         torch.cuda.empty_cache()
 
-    return _summarize(metrics or {})[1]
+    return {**_summarize(metrics or {})[1], **curve}
 
 
 def aggregate(names: List[str], out_dir: Path) -> Optional[Dict[str, float]]:

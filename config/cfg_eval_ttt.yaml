@@ -32,6 +32,7 @@ train_overrides:
 meta_sgd_steps: 0
 recon_steps: 20
 recon_alpha_scale: 0.01
+score_steps: [] # also score after these many TTT steps, in the same run (metrics step<N>/...)
 seed: 0
 
 # Results are logged under eval/ in the checkpoint's own W&B run when the checkpoint names one that exists; disabled skips it
