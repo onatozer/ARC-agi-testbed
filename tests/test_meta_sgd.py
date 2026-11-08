@@ -354,3 +354,23 @@ def test_second_order_changes_the_meta_gradient_and_stays_off_at_test_time(overr
         assert model.meta_sgd.second_order is second
     assert any(not torch.allclose(grads[False][n], grads[True][n]) for n in grads[False])
     assert not getattr(_state(*overrides)[1].model.meta_sgd, "second_order", False)  # a fresh model (as evaluate_ttt builds): first order
+
+
+def test_a_list_of_batches_is_one_optimizer_step_over_all_their_episodes():
+    """accum_steps: meta_sgd_batch on [batch of tasks 1-2, batch of task 3] updates exactly as on the whole batch."""
+    split = [{k: v[:6] for k, v in BATCH.items()}, {k: v[6:] for k, v in BATCH.items()}]
+    after = []
+    for b in (BATCH, split):
+        torch.manual_seed(0)
+        config, train_state, _ = _state("lr=1e-3")
+        device = next(train_state.model.parameters()).device
+        b = [{k: v.to(device) for k, v in part.items()} for part in b] if isinstance(b, list) else {k: v.to(device) for k, v in b.items()}
+        metrics = meta_sgd_batch(config, train_state, b, global_batch_size=9, rank=0, world_size=1)
+        assert metrics["train/meta/tasks"] == 3 and train_state.step == 1
+        after.append(_weights(train_state.model))
+    assert all(torch.allclose(after[0][n], after[1][n], atol=1e-6) for n in after[0])
+
+
+def test_accum_steps_must_be_positive():
+    with pytest.raises(Exception):
+        _config("meta_sgd.accum_steps=0")

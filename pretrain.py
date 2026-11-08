@@ -963,7 +963,8 @@ def meta_sgd_batch(
 ):
     """train_batch's counterpart with config.meta_sgd.enabled: every task in the batch (_episodes_from_batch) gets
     _task_outer_backward, the query loss averaged over every rank's query rows, then the shared optimizer step. No
-    persistent carry: every loss starts its rows afresh. The puzzle-embedding table is not trained (fresh rows)."""
+    persistent carry: every loss starts its rows afresh. The puzzle-embedding table is not trained (fresh rows).
+    `batch` may be a list (meta_sgd.accum_steps loader batches): all their episodes go into the one optimizer step."""
     train_state.step += 1
     if train_state.step >= train_state.total_steps:
         return
@@ -971,10 +972,9 @@ def meta_sgd_batch(
     model, cfg = train_state.model, config.meta_sgd
     model.meta_sgd.second_order = cfg.second_order  # meta-training only: test time (evaluate_ttt) keeps first-order steps
     device = next(model.parameters()).device
-    batch = tree_to_device(batch, device)
     current_epoch = (train_state.step - 1) // max(train_state.steps_per_epoch, 1)
 
-    episodes = _episodes_from_batch(batch)
+    episodes = [e for b in (batch if isinstance(batch, list) else [batch]) for e in _episodes_from_batch(tree_to_device(b, device))]
     n_query = torch.tensor(float(sum(q["inputs"].shape[0] for _, _, q in episodes)), device=device)
     if world_size > 1:
         dist.all_reduce(n_query)  # the scale makes the all-reduced gradient the mean over every rank's query rows
@@ -1276,10 +1276,17 @@ def launch(hydra_config: DictConfig):
 
         train_state.model.train()
         step_fn = meta_sgd_batch if config.meta_sgd.enabled else train_batch
+        pending: List[Any] = []  # meta_sgd.accum_steps: the loader batches gathered for the next optimizer step
         for i, (set_name, batch, global_batch_size) in enumerate(train_loader):
             # global_batch_size stays the ordinary rows': the masked copies add to their loss
             if config.recon.copies and not config.meta_sgd.enabled:
                 batch = _with_recon_rows(batch, config.recon, train_metadata.vocab_size, train_metadata.num_puzzle_identifiers)
+
+            if config.meta_sgd.enabled and config.meta_sgd.accum_steps > 1:  # gather the batches of one optimizer step
+                pending.append(batch)
+                if len(pending) < config.meta_sgd.accum_steps:
+                    continue
+                batch, pending = pending, []
 
             metrics = step_fn(
                 config,

@@ -58,6 +58,9 @@ class MetaSGDConfig(BaseModel):
     # True: second-order meta-gradients, through the inner steps' gradients (the inner-loop autograd graph is kept for the
     # outer backward; memory grows ~10x on TRM); False: first order, the gradient enters each step as a constant
     second_order: bool = False
+    # Meta-gradient accumulation: this many loader batches' episodes go into one optimizer step (the meta-gradient is
+    # the mean over all their query rows), so a memory-limited batch still gives a large effective meta-batch
+    accum_steps: int = 1
     # Multi-segment (ACT) models such as TRM and GRAM: each inner step is one supervision segment continuing the previous
     # step's carry, and the query loss is the final prediction's CE after halt_max_steps segments. Off (VARC): each inner
     # step and the query loss run every row's whole trajectory through the loss head.
@@ -76,6 +79,8 @@ class MetaSGDConfig(BaseModel):
     def _check(self):
         if self.recon_steps < 0 or self.recon_scale0 <= 0:
             raise ValueError("meta_sgd: recon_steps >= 0 and recon_scale0 > 0 are required.")
+        if self.accum_steps < 1:
+            raise ValueError("meta_sgd.accum_steps must be >= 1.")
         if min(self.inner_lr, self.inner_lr_rows) <= 0 or self.alpha_range < 0 or self.inner_steps < 1 or self.copies_per_group < 1:
             raise ValueError("meta_sgd: inner_lr, inner_lr_rows > 0, alpha_range >= 0, inner_steps >= 1 and copies_per_group >= 1 are required.")
         if self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1:
