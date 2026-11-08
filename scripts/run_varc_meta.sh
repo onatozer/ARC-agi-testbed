@@ -17,7 +17,7 @@ ARCH="arch=varc arch.image_size=64 arch.hidden_size=512 arch.num_layers=10 arch.
   arch.board_height=$GRID arch.board_width=$GRID dataset.grid_size=$GRID"
 META="meta_sgd.enabled=true meta_sgd.second_order=true meta_sgd.rows_steps=4 meta_sgd.inner_steps=8 meta_sgd.inner_lr_rows=3e-2 \
   meta_sgd.alpha_range=2 recon.copies=0 puzzle_emb_lr=0 ema=false lr=1e-4 lr_warmup_steps=50 epochs=1000000 eval_interval_steps=null +wandb_mode=offline"
-CONF="--config-name ${CFG:-cfg_pretrain_miniarc_varc} dataset.data_path=$PWD/$DATA $ARCH $META"
+CONF="--config-name ${CFG:-cfg_pretrain_miniarc_varc} dataset.data_path=$PWD/$DATA $ARCH $META ${EXTRA:-}"  # EXTRA: e.g. meta_sgd.alpha_lr=3e-3
 
 # 1. The official weights in our VARC's layout, then as one of our checkpoints (one meta-step at lr 0) for the probe
 [ -f $R/${RUN}_official.pt ] || PYTHONPATH=. python scripts/convert_varc_checkpoint.py $OFFICIAL $R/${RUN}_official.pt || { say "conversion failed"; exit 1; }
