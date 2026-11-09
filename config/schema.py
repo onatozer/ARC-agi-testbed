@@ -63,6 +63,15 @@ class MetaSGDConfig(BaseModel):
     accum_steps: int = 1
     second_order_steps: Optional[int] = None  # with second_order: only the last this many backbone inner steps second order, the earlier ones first order (None: all)
     noise_scale: bool = False  # log meta/noise_trace and meta/noise_grad_sq (_noise_scale_terms) from each update's per-episode gradients
+    # iMAML (Rajeswaran et al. 2019, arXiv 1909.04630): inner_steps steps on the support loss + lam / 2 ||phi - theta||^2
+    # without a graph, then theta's implicit meta-gradient by conjugate gradient (_imaml_task_backward); the step sizes are
+    # not learned; memory does not grow with inner_steps, so the inner loop can be as long as test time's
+    imaml: bool = False
+    imaml_lambda: float = 0.01  # the proximal strength (watch meta/imaml_stationarity and meta/imaml_cg_residual)
+    imaml_cg_steps: int = 5
+    # > 0: hypergradient descent (Baydin et al. 2018, arXiv 1703.04782, multiplicative rule) on every inner step's
+    # per-tensor step size (_hd_alpha); evaluate_ttt's hd_beta overrides it at test time
+    hd_beta: float = 0.0
     # > 0: the embedding first. Each inner loop starts with this many steps on the task's puzzle-embedding rows alone
     # (the backbone frozen, the rows' per-step sizes 0..rows_steps-1), then the inner_steps on the backbone with the
     # rows frozen; the rows' steps are first order even with second_order. Test time: evaluate_ttt's meta_sgd_rows_steps,

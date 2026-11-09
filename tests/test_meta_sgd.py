@@ -492,3 +492,40 @@ def test_truncated_second_order_spans_first_order_to_full_second_order():
     close = lambda a, b: a.keys() == b.keys() and all(float((a[n] - b[n]).abs().max()) <= 1e-2 * float(b[n].abs().max()) + 1e-9 for n in a)  # second order is float-noisy (~1e-3)
     assert close(every, full) and close(zero, none)
     assert not close(one, full) and not close(one, none)
+
+
+@pytest.mark.parametrize("opts", [(), ("meta_sgd.segment_inner_steps=true",), ("meta_sgd.rows_steps=2",)])
+def test_imaml_gives_theta_a_finite_implicit_meta_gradient_and_logs_its_convergence(opts):
+    """meta_sgd.imaml: theta gets (A^-1 grad L_query) with no graph through the inner steps (also with segment steps and the
+    embedding first); the step sizes get no gradient; the stationarity and CG residual are logged."""
+    import pretrain
+    grads = _meta_gradient("meta_sgd.imaml=true", "meta_sgd.imaml_lambda=0.01", "recon.copies=0", *opts)
+    theta = {n: g for n, g in grads.items() if not n.startswith("meta_sgd.")}
+    assert theta and all(torch.isfinite(g).all() for g in theta.values()) and any(g.abs().sum() > 0 for g in theta.values())
+    assert not any(n.startswith("meta_sgd.rho") for n in grads)
+
+
+def test_imaml_logs_stationarity_and_cg_residual():
+    config, train_state, batch = _state("meta_sgd.imaml=true", "meta_sgd.inner_steps=3", "recon.copies=0", "arch.forward_dtype=float32")
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert math.isfinite(metrics["train/meta/imaml_stationarity"]) and math.isfinite(metrics["train/meta/imaml_cg_residual"])
+
+
+def test_imaml_on_varc():
+    config, train_state, batch = _varc_state("meta_sgd.imaml=true", "meta_sgd.inner_steps=3", "recon.copies=0")
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert math.isfinite(metrics["train/meta/query_loss"])
+
+
+def test_hypergradient_descent_grows_the_step_while_gradients_agree_and_shrinks_it_when_they_flip():
+    from pretrain import _hd_alpha
+    config, train_state, batch = _state()
+    model = train_state.model
+    model.meta_sgd.hd_beta, model.meta_sgd.hd_state = 0.5, {}
+    g, a = torch.randn(10), torch.tensor(0.01)
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.01)
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.015)
+    assert float(_hd_alpha(model, "w", -g, a)) == pytest.approx(0.0075)
+    model.meta_sgd.hd_beta = 0.0
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.01)
+    assert _config().meta_sgd.hd_beta == 0.0 and _config().meta_sgd.imaml is False

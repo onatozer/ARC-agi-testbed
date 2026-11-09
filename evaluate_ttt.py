@@ -173,12 +173,17 @@ def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module,
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos
+    model.meta_sgd.hd_beta = config.meta_sgd.hd_beta if cfg.hd_beta is None else cfg.hd_beta
+    model.meta_sgd.hd_state = {}  # hypergradient descent restarts with each task
     if config.meta_sgd.rows_steps and cfg.meta_sgd_rows_steps:  # the embedding first, as meta-trained
         rows_losses = meta_sgd_adapt(model, support, cfg.meta_sgd_rows_steps, segment_steps, rows_only=config.meta_sgd.rows_steps)
         print_info(f"TTT: {cfg.meta_sgd_rows_steps} rows-only steps, support loss {rows_losses[0]:.3f} -> {rows_losses[-1]:.3f}")
     rows_frozen = bool(config.meta_sgd.rows_steps)
     losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps, on_step=on_step, rows_frozen=rows_frozen)
     print_info(f"TTT: {cfg.meta_sgd_steps} Meta-SGD steps on {demos['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+    if model.meta_sgd.hd_beta and model.meta_sgd.hd_state:  # how far hypergradient descent moved the step sizes
+        mults = torch.tensor([m for _, m in model.meta_sgd.hd_state.values()])
+        print_info(f"TTT hypergradient step-size multipliers: mean {mults.mean():.3g}, min {mults.min():.3g}, max {mults.max():.3g}")
 
     if not (config.recon.copies and cfg.recon_steps):
         return

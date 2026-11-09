@@ -338,6 +338,9 @@ def create_model(
             model.meta_sgd = MetaSGD(_meta_sgd_targets(model), cfg.inner_steps, cfg.inner_lr, cfg.inner_lr_rows, cfg.alpha_range,
                                      cfg.recon_steps, cfg.recon_scale0)
             model.meta_sgd.mask_token = train_metadata.vocab_size  # config.recon's
+            model.meta_sgd.hd_beta, model.meta_sgd.hd_state, model.meta_sgd.imaml_diag = cfg.hd_beta, {}, []
+            if cfg.imaml and config.recon.copies:
+                raise ValueError("meta_sgd.imaml does not take config.recon's masked copies: set recon.copies=0.")
         
         # if "DISABLE_COMPILE" not in os.environ:
         #     model = torch.compile(model)  # type: ignore
@@ -835,8 +838,23 @@ def _inner_update(
     theta = dict(overrides)
     for (name, p), g in zip(named, grads):
         if g is not None:
-            theta[name] = p - alpha(name, step) * g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+            g = g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+            theta[name] = p - (alpha(name, step) if recon else _hd_alpha(model, name, g, alpha(name, step))) * g
     return theta
+
+
+def _hd_alpha(model: nn.Module, name: str, g: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """meta_sgd.hd_beta > 0 (multiplicative hypergradient descent, arXiv 1703.04782): each tensor's step size is scaled online
+    by a running multiplier, x (1 + hd_beta * cos(g_t, g_{t-1})), growing while consecutive gradients agree and shrinking
+    when they flip; the state (model.meta_sgd.hd_state: previous gradient and multiplier per tensor) restarts per task."""
+    beta = getattr(model.meta_sgd, "hd_beta", 0.0)
+    if not beta:
+        return alpha
+    g = g.detach()
+    prev = model.meta_sgd.hd_state.get(name)
+    mult = 1.0 if prev is None else prev[1] * (1 + beta * float((g * prev[0]).sum() / (g.norm() * prev[0].norm() + 1e-12)))
+    model.meta_sgd.hd_state[name] = (g, mult)
+    return alpha * mult
 
 
 def _recon_loss(model: nn.Module, overrides: Dict[str, torch.Tensor], rows: Dict[str, torch.Tensor], segments: int) -> torch.Tensor:
@@ -992,6 +1010,112 @@ def _task_outer_backward(
     return first_loss.detach(), loss_q.detach() / query["inputs"].shape[0]
 
 
+def _imaml_task_backward(
+    config: PretrainConfig, model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
+    support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor,
+    regu_coef: float = 1.0, lam_damping: float = 10.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """meta_sgd.imaml (iMAML, arXiv 1909.04630; reference aravindr93/imaml_dev) on one task. The rows start fresh (the table
+    mean) and, with rows_steps, take that many rows-only steps first and are then frozen (part of the task's data). Then
+    inner_steps normalised steps (each tensor's alpha, hypergradient descent with hd_beta; one supervision segment per step
+    with segment_inner_steps, the rows continuing their carry) on the per-row support loss + lam / 2 ||phi - theta||^2, no
+    graph, so phi approaches the proximal problem's minimiser that the implicit gradient assumes. theta's meta-gradient
+    A^-1 grad L_query(phi), A = (1 + regu_coef) I + H / (lam + lam_damping) (the reference's damped matrix_evaluator), H the
+    full-trajectory support loss's Hessian at phi, by cg_steps conjugate-gradient iterations on Hessian-vector products
+    (truncated at negative curvature), is added (times loss_scale) to theta's .grad. Logs meta/imaml_stationarity (the
+    proximal objective's gradient norm at phi over the support gradient's at theta) and meta/imaml_cg_residual. Returns
+    (support loss per row at theta, query loss per row at phi)."""
+    cfg = config.meta_sgd
+    lam = cfg.imaml_lambda
+    named, overrides, support, ids = _episode_overrides(model, targets, emb_name, support)
+    if emb_name is not None:
+        table = model.get_buffer(emb_name)
+        overrides[emb_name] = table.mean(0, keepdim=True).expand(ids.numel(), -1).clone()
+        named = [(n, overrides[emb_name] if n == emb_name else p) for n, p in named]
+        query = {**query, "puzzle_identifiers": torch.searchsorted(ids, query["puzzle_identifiers"]).to(query["puzzle_identifiers"].dtype)}
+    names = [n for n, _ in named]
+    anchor = {n: p.detach() for n, p in named}
+    phi = dict(anchor)
+    n_support, n_query = support["inputs"].shape[0], query["inputs"].shape[0]
+    model.meta_sgd.hd_state = {}  # hypergradient descent restarts with each task, as at test time
+
+    def support_loss(leaves):
+        return _supervised_loss(model, {**overrides, **leaves}, support) / n_support
+
+    def step(grads):  # the normalised inner step at each tensor's alpha (its first: iMAML does not learn them), as test time's
+        with torch.no_grad():
+            for n, g in zip(names, grads):
+                if g is not None:
+                    g = g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+                    phi[n] = phi[n] - _hd_alpha(model, n, g, model.meta_sgd.alpha(n, 0)) * g
+
+    if cfg.rows_steps and emb_name is not None:  # the embedding first: rows-only steps on the fresh rows, then frozen
+        for _ in range(cfg.rows_steps):
+            rows = phi[emb_name].clone().requires_grad_()
+            g = torch.autograd.grad(support_loss({**phi, emb_name: rows}), [rows])[0]
+            g = g * torch.rsqrt(g.pow(2).mean() + 1e-16)
+            phi[emb_name] = (rows - _hd_alpha(model, emb_name, g, model.meta_sgd.alpha(emb_name, 0)) * g).detach()
+        overrides[emb_name] = phi.pop(emb_name)
+        anchor.pop(emb_name)
+        names = [n for n in names if n != emb_name]
+
+    loss_s0, grad0, carry = None, None, None
+    for _ in range(cfg.inner_steps):
+        leaves = {n: phi[n].clone().requires_grad_() for n in names}
+        with _step_kernel(model):
+            if cfg.segment_inner_steps:  # TRM / GRAM: one supervision segment per step, as their test-time steps
+                carry, loss = _segment(model, {**overrides, **leaves}, support, carry)
+                carry, loss = apply_to_tensors(carry, lambda t: t.detach().clone()), loss / n_support
+            else:
+                loss = support_loss(leaves)
+        loss_s0 = loss.detach() if loss_s0 is None else loss_s0
+        grads = torch.autograd.grad(loss, [leaves[n] for n in names], allow_unused=True)
+        grad0 = torch.sqrt(sum(g.pow(2).sum() for g in grads if g is not None)) if grad0 is None else grad0
+        step([None if g is None else g + lam * (phi[n] - anchor[n]) for n, g in zip(names, grads)])
+
+    leaves = {n: phi[n].clone().requires_grad_() for n in names}
+    with sdpa_kernel(SDPBackend.MATH):  # Hessian-vector products need a double backward
+        loss_q = _supervised_loss(model, {**overrides, **leaves}, query)
+        g_query = [torch.zeros_like(leaves[n]) if g is None else g
+                   for n, g in zip(names, torch.autograd.grad(loss_q, [leaves[n] for n in names], allow_unused=True))]
+        g_support = torch.autograd.grad(support_loss(leaves), [leaves[n] for n in names], create_graph=True, allow_unused=True)
+        live = [i for i, g in enumerate(g_support) if g is not None]
+
+        def apply(v):
+            hv = torch.autograd.grad([g_support[i] for i in live], [leaves[names[i]] for i in live], grad_outputs=[v[i] for i in live], retain_graph=True)
+            out = [(1 + regu_coef) * x for x in v]
+            for j, i in enumerate(live):
+                out[i] = out[i] + hv[j] / (lam + lam_damping)
+            return out
+
+        dot = lambda a, b: sum((x * y).sum() for x, y in zip(a, b))
+        x = [torch.zeros_like(g) for g in g_query]
+        r = [g.clone() for g in g_query]
+        p_dir = [g.clone() for g in r]
+        rs = dot(r, r)
+        for it in range(cfg.imaml_cg_steps):
+            ap = apply(p_dir)
+            curvature = dot(p_dir, ap)
+            if not torch.isfinite(curvature) or curvature <= 0:  # truncated CG: A is not positive definite along p
+                if it == 0:
+                    x = [g.clone() for g in g_query]
+                break
+            a = rs / curvature
+            x = [xi + a * pi for xi, pi in zip(x, p_dir)]
+            r = [ri - a * api for ri, api in zip(r, ap)]
+            rs_new = dot(r, r)
+            p_dir = [ri + (rs_new / rs.clamp_min(1e-20)) * pi for ri, pi in zip(r, p_dir)]
+            rs = rs_new
+    with torch.no_grad():
+        stationary = torch.sqrt(sum((g_support[i].detach() + lam * (phi[names[i]] - anchor[names[i]])).pow(2).sum() for i in live))
+        model.meta_sgd.imaml_diag.append(torch.stack([stationary / grad0.clamp_min(1e-12), torch.sqrt(rs) / torch.sqrt(dot(g_query, g_query)).clamp_min(1e-12)]))
+        params = dict(model.named_parameters())
+        for n, g in zip(names, x):
+            if n in params and params[n].requires_grad:
+                params[n].grad = g * loss_scale if params[n].grad is None else params[n].grad + g * loss_scale
+    return loss_s0, loss_q.detach() / n_query
+
+
 def _noise_scale_terms(local_grad: torch.Tensor, episode_sq: List[torch.Tensor], inv_rows: List[float], n_query: torch.Tensor, world_size: int) -> Dict[str, torch.Tensor]:
     """The gradient noise scale's two terms (McCandlish et al. 2018, app. A) from one meta-update: each episode's mean
     gradient over its q query rows has E|g|^2 = |G|^2 + S/q, the update's over all N rows |G|^2 + S/N; solved for |G|^2
@@ -1049,8 +1173,11 @@ def meta_sgd_batch(
     with flop_counter:
         for _key, support, query in episodes:
             before = flat_grad() if cfg.noise_scale else None
-            with sdpa_kernel(SDPBackend.MATH) if cfg.second_order else nullcontext():  # only the math kernel has a double backward
-                loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
+            if cfg.imaml:
+                loss_s, loss_q = _imaml_task_backward(config, model, targets, emb_name, support, query, 1.0 / n_query)
+            else:
+                with sdpa_kernel(SDPBackend.MATH) if cfg.second_order else nullcontext():  # only the math kernel has a double backward
+                    loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
             support_losses.append(loss_s)
             query_losses.append(loss_q)
             if cfg.noise_scale:
@@ -1068,6 +1195,10 @@ def meta_sgd_batch(
         "meta/alpha_mean": torch.tensor(alpha_mean, device=device),
         "meta/alpha_max": torch.tensor(alpha_max, device=device),
     }
+    if model.meta_sgd.imaml_diag:  # iMAML: the inner loop's stationarity and the CG residual (the implicit gradient's two assumptions)
+        diag = torch.stack(model.meta_sgd.imaml_diag).mean(0)
+        metrics["meta/imaml_stationarity"], metrics["meta/imaml_cg_residual"] = diag[0], diag[1]
+        model.meta_sgd.imaml_diag = []
     if model.meta_sgd.recon_log_scale is not None:  # stage 2: the learned reconstruction scales
         metrics["meta/recon_scale_mean"] = model.meta_sgd.recon_log_scale.detach().exp().mean()
     if cfg.noise_scale:
