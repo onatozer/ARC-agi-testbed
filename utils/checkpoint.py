@@ -130,6 +130,17 @@ def load_model_state_dict(
             print(f"Resetting puzzle embedding as shape is different. Found {tensor.shape}, Expected {expected_shape}")
             state_dict[key] = torch.mean(tensor, dim=0, keepdim=True).expand(expected_shape).contiguous()
 
+    # config.recon grows the vocabulary by its mask token: a checkpoint without it keeps its rows, the new one its init
+    model_state = model.state_dict()
+    for key, tensor in list(state_dict.items()):
+        target = model_state.get(key)
+        if key.endswith(("embed_tokens.embedding_weight", "lm_head.weight")) and target is not None \
+                and tensor.shape[1:] == target.shape[1:] and tensor.shape[0] < target.shape[0]:
+            print(f"Growing {key} from {tuple(tensor.shape)} to {tuple(target.shape)}")
+            grown = target.detach().clone().to(tensor.dtype)
+            grown[: tensor.shape[0]] = tensor
+            state_dict[key] = grown
+
     try:
         ret = model.load_state_dict(state_dict, assign=assign, strict=strict)
         if not strict and (ret.missing_keys or ret.unexpected_keys):

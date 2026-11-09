@@ -1,5 +1,6 @@
 """Meta-SGD (arXiv 1707.09835) as pretrain.py's training step (config.meta_sgd), config.recon's masked-input
 reconstruction rows, and evaluate_ttt.py's test-time steps with the learned step sizes."""
+import math
 import pathlib
 import sys
 
@@ -27,7 +28,7 @@ TINY = ["arch.hidden_size=32", "arch.num_heads=2", "arch.expansion=2", "arch.L_l
         "arch.halt_max_steps=4", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true",
         "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1"]
 SEGMENTS = ["meta_sgd.segment_inner_steps=true"]
-RECON = ["recon.copies=1", "recon.cells=2", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
+RECON = ["recon.copies=1", "recon.fraction=0.25", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight"]
 
 _g = torch.Generator().manual_seed(0)
 BATCH = {
@@ -71,8 +72,7 @@ def test_episodes_split_each_puzzle_by_the_validation_flag_and_skip_incomplete_o
 
     with pytest.raises(ValueError):
         _episodes_from_batch({k: v for k, v in batch.items() if k != "validation"})
-    with pytest.raises(RuntimeError):
-        _episodes_from_batch({**batch, "validation": torch.zeros(8, dtype=torch.int64)})
+    assert _episodes_from_batch({**batch, "validation": torch.zeros(8, dtype=torch.int64)}) == []  # skipped, not an error
 
     # Grouped copies: the validation row of a copy whose demos were cut off at the batch tail is dropped
     grouped = {"inputs": torch.arange(4).view(4, 1), "puzzle_identifiers": torch.tensor([1, 1, 2, 2]), "group_ids": torch.tensor([7, 7, 7, 7]), "validation": torch.tensor([0, 1, 1, 1])}
@@ -181,19 +181,21 @@ def test_test_time_rows_frozen_adapts_only_the_weights():
 
 
 def test_recon_rows_mask_cells_and_weight_the_copies():
-    """Each row gets `copies` masked copies: `cells` random non-pad cells set to the mask token, labelled with the full
-    input, on the shared row, weighted 1 / copies; the row-weighting head then counts them together as one row."""
+    """Each row gets `copies` masked copies: `fraction` of its color cells (tokens 2-11; never pad 0 or end-of-grid 1) set
+    to the mask token, labelled with the full input, on the shared row, weighted 1 / copies; the row-weighting head then
+    counts them together as one row."""
     from models.losses.loss_heads import ACTLossHeadRowWeight
 
-    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 0, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
+    batch = {"inputs": torch.tensor([[2, 3, 4, 5, 1, 0], [6, 7, 8, 9, 10, 11]]), "labels": torch.tensor([[5, 5, 5, 5, 0, 0], [2, 2, 2, 2, 2, 2]]),
              "puzzle_identifiers": torch.tensor([3, 4])}
-    out = _with_recon_rows(batch, ReconConfig(copies=5, cells=2), pad_id=0, shared_id=9)
+    out = _with_recon_rows(batch, ReconConfig(copies=5, fraction=0.5), mask_token=12, shared_id=9)
     assert out["inputs"].shape == (12, 6) and out["puzzle_identifiers"].tolist() == [3, 4] + [9] * 10
     assert torch.equal(out["labels"][2:], batch["inputs"].repeat(5, 1)) and torch.equal(out["inputs"][:2], batch["inputs"])
     assert torch.allclose(out["row_weight"], torch.tensor([1.0, 1.0] + [0.2] * 10))
 
-    masked = out["inputs"][2:] == 1
-    assert (masked.sum(-1) == 2).all() and not masked[:, 4:][0::2].any()  # never a pad cell
+    masked = out["inputs"][2:] == 12
+    assert masked.sum(-1).tolist() == [2, 3] * 5  # half of 4 and of 6 color cells
+    assert not masked[0::2, 4:].any()  # never the end-of-grid or pad cell
     assert torch.equal(out["inputs"][2:][~masked], batch["inputs"].repeat(5, 1)[~masked])
 
     # The weighted loss: 5 copies at 1/5 count as one row
@@ -262,3 +264,268 @@ def test_weights_only_load_restarts_the_ema_from_the_loaded_weights(tmp_path):
     for name, p in train_state.model.named_parameters():
         if name in train_state.ema_helper.shadow:
             assert torch.equal(train_state.ema_helper.shadow[name], p.data), name
+
+
+def test_loading_a_checkpoint_without_the_mask_token_grows_the_vocabulary():
+    """A plain checkpoint (vocab V) into a config.recon model (vocab V + 1): its rows load, the mask token's row keeps its init."""
+    from utils.checkpoint import load_model_state_dict
+
+    _, plain, _ = _state("meta_sgd.enabled=false")
+    _, recon, _ = _state("meta_sgd.enabled=false", *RECON)
+    src = {k: v.detach().clone() for k, v in plain.model.state_dict().items()}
+    keys = [k for k in src if k.endswith(("embed_tokens.embedding_weight", "lm_head.weight"))]
+    assert len(keys) == 2
+
+    init = {k: recon.model.state_dict()[k].detach().clone() for k in keys}
+    load_model_state_dict(recon.model, dict(src), strict=False)
+    for k in keys:
+        loaded = recon.model.state_dict()[k]
+        assert loaded.shape[0] == src[k].shape[0] + 1
+        assert torch.equal(loaded[:-1], src[k].to(loaded.dtype)) and torch.equal(loaded[-1], init[k][-1])
+
+
+def test_stage_two_learns_only_the_reconstruction_step_sizes():
+    """meta_sgd.recon_steps: the episodes add reconstruction steps after the inner steps; only their per-step scales learn."""
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=3", "meta_sgd.recon_scale0=0.01", "lr=1e-3", "puzzle_emb_lr=1e-2")
+    model = train_state.model
+    scale = model.meta_sgd.recon_log_scale
+    assert scale.shape == (3,) and torch.allclose(scale.exp(), torch.full((3,), 0.01, device=scale.device))
+    assert len(train_state.optimizers) == 1  # nothing else is trained
+
+    name = next(n for n, _ in _meta_sgd_targets(model) if "L_level" in n)
+    assert float(model.meta_sgd.recon_alpha(name, 0)) == pytest.approx(0.01 * 1e-3, rel=1e-4)  # scale x the tensor's initial alpha
+
+    table, weights = model.model.puzzle_emb.weights.detach().clone(), _weights(model)
+    rho = {k: r.detach().clone() for k, r in model.meta_sgd.rho.items()}
+    before = scale.detach().clone()
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert not torch.equal(before, model.meta_sgd.recon_log_scale) and "train/meta/recon_scale_mean" in metrics
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+    assert all(torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+    assert all(torch.equal(r, model.meta_sgd.rho[k]) for k, r in rho.items())
+
+
+def test_stage_two_test_time_takes_the_learned_reconstruction_steps():
+    from evaluate_ttt import learned_recon_adapt
+
+    config, train_state, batch = _state(*SEGMENTS, *RECON, "meta_sgd.recon_steps=2")
+    model = train_state.model
+    with torch.no_grad():
+        model.meta_sgd.recon_log_scale.fill_(0.0)  # scale 1: a visible move
+    weights = _weights(model)
+    test = {k: batch[k][:3] for k in ("inputs", "labels", "puzzle_identifiers")}
+    learned_recon_adapt(model, test, 4, config.arch.halt_max_steps, config.recon, METADATA.num_puzzle_identifiers)
+    assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+
+
+def test_stage_two_needs_reconstruction():
+    with pytest.raises(ValueError, match="config.recon"):
+        _state(*SEGMENTS, "meta_sgd.recon_steps=2")
+
+
+def test_stage_two_runs_on_a_one_pass_model():
+    """VARC has no latent carry to roll out: its reconstruction steps take the loss head's CE of its single forward pass."""
+    with initialize(config_path="../config", version_base=None):
+        cfg = compose(config_name="cfg_pretrain_miniarc_varc", overrides=[
+            "dataset.grid_size=4", "arch.hidden_size=32", "arch.num_layers=1", "arch.mlp_dim=32", "arch.num_heads=2", "global_batch_size=9",
+            "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true", "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1",
+            "recon.copies=1", "recon.fraction=0.25", "arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight", "meta_sgd.recon_steps=2"])
+    config = PretrainConfig(**OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    train_state = init_train_state(config, METADATA.model_copy(update={"vocab_size": 12}), rank=0, world_size=1)  # VARC: ARC's tokens (+ the mask)
+    model = train_state.model
+    assert not hasattr(model.model.inner, "reset_carry")
+
+    before = model.meta_sgd.recon_log_scale.detach().clone()
+    device = next(model.parameters()).device
+    meta_sgd_batch(config, train_state, {k: v.to(device) for k, v in BATCH.items()}, global_batch_size=9, rank=0, world_size=1)
+    assert not torch.equal(before, model.meta_sgd.recon_log_scale)
+
+
+@pytest.mark.parametrize("overrides", [[], SEGMENTS])
+def test_second_order_changes_the_meta_gradient_and_stays_off_at_test_time(overrides):
+    grads = {}
+    for second in (False, True):
+        torch.manual_seed(0)
+        config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", f"meta_sgd.second_order={second}", *overrides)
+        model = train_state.model
+        before = _weights(model)
+        meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        grads[second] = {n: dict(model.named_parameters())[n].detach() - w for n, w in before.items()}
+        assert model.meta_sgd.second_order is second
+    assert any(not torch.allclose(grads[False][n], grads[True][n]) for n in grads[False])
+    assert not getattr(_state(*overrides)[1].model.meta_sgd, "second_order", False)  # a fresh model (as evaluate_ttt builds): first order
+
+
+def test_a_list_of_batches_is_one_optimizer_step_over_all_their_episodes():
+    """accum_steps: meta_sgd_batch on [batch of tasks 1-2, batch of task 3] updates exactly as on the whole batch."""
+    split = [{k: v[:6] for k, v in BATCH.items()}, {k: v[6:] for k, v in BATCH.items()}]
+    after = []
+    for b in (BATCH, split):
+        torch.manual_seed(0)
+        config, train_state, _ = _state("lr=1e-3")
+        device = next(train_state.model.parameters()).device
+        b = [{k: v.to(device) for k, v in part.items()} for part in b] if isinstance(b, list) else {k: v.to(device) for k, v in b.items()}
+        metrics = meta_sgd_batch(config, train_state, b, global_batch_size=9, rank=0, world_size=1)
+        assert metrics["train/meta/tasks"] == 3 and train_state.step == 1
+        after.append(_weights(train_state.model))
+    assert all(torch.allclose(after[0][n], after[1][n], atol=1e-6) for n in after[0])
+
+
+def test_accum_steps_must_be_positive():
+    with pytest.raises(Exception):
+        _config("meta_sgd.accum_steps=0")
+
+
+def test_rows_first_inner_loop_moves_rows_then_only_the_backbone(monkeypatch):
+    """meta_sgd.rows_steps: the first steps adapt only the rows, the rest only the backbone."""
+    import pretrain
+    calls = []
+    real = pretrain._inner_update
+    def spy(model, named, overrides, loss, step, recon=False):
+        calls.append((step, sorted({n.split(".")[-1] for n, _ in named})))
+        return real(model, named, overrides, loss, step, recon)
+    monkeypatch.setattr(pretrain, "_inner_update", spy)
+    config, train_state, batch = _state("meta_sgd.rows_steps=2", "meta_sgd.inner_steps=3")
+    meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    first = calls[:5]  # one task: 2 rows-only steps, then 3 backbone steps
+    assert [c[1] == ["weights"] for c in first] == [True, True, False, False, False]
+    assert all("weights" not in c[1] for c in first[2:])
+
+
+def test_rows_first_test_time_adapts_rows_then_weights():
+    config, train_state, batch = _state("meta_sgd.rows_steps=2")
+    model = train_state.model
+    support, _ = _task(batch)
+    table, weights = model.model.puzzle_emb.weights.detach().clone(), _weights(model)
+    meta_sgd_adapt(model, support, 3, segment_steps=False, rows_only=2)
+    assert not torch.equal(table, model.model.puzzle_emb.weights)
+    assert all(torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())  # backbone untouched
+    table = model.model.puzzle_emb.weights.detach().clone()
+    meta_sgd_adapt(model, support, 3, segment_steps=False, rows_frozen=True)
+    assert torch.equal(table, model.model.puzzle_emb.weights)
+    assert any(not torch.equal(w, dict(model.named_parameters())[n]) for n, w in weights.items())
+
+
+def test_a_rank_without_complete_tasks_contributes_nothing_but_still_steps():
+    config, train_state, batch = _state("lr=1e-3")
+    weights = _weights(train_state.model)
+    no_query = {**batch, "validation": torch.zeros_like(batch["validation"])}
+    metrics = meta_sgd_batch(config, train_state, no_query, global_batch_size=9, rank=0, world_size=1)
+    assert metrics["train/meta/tasks"] == 0 and train_state.step == 1
+    assert all(torch.equal(w, dict(train_state.model.named_parameters())[n]) for n, w in weights.items())  # no gradient, no move
+
+
+def _varc_state(*overrides):
+    with initialize(config_path="../config", version_base=None):
+        cfg = compose(config_name="cfg_pretrain_miniarc_varc", overrides=[
+            "dataset.grid_size=4", "arch.hidden_size=32", "arch.num_layers=2", "arch.mlp_dim=32", "arch.num_heads=2", "arch.forward_dtype=float32",
+            "arch.dropout=0.0", "global_batch_size=9", "epochs=10", "lr_warmup_steps=0", "ema=False", "seed=0", "meta_sgd.enabled=true",
+            "meta_sgd.inner_steps=2", "meta_sgd.copies_per_group=1", *overrides])
+    config = PretrainConfig(**OmegaConf.to_container(cfg, resolve=True))  # type: ignore[arg-type]
+    train_state = init_train_state(config, METADATA.model_copy(update={"vocab_size": 12}), rank=0, world_size=1)
+    device = next(train_state.model.parameters()).device
+    return config, train_state, {k: v.to(device) for k, v in BATCH.items()}
+
+
+@pytest.mark.parametrize("model", ["varc", "trm"])
+def test_gradient_checkpointing_keeps_the_second_order_meta_update_exact(model):
+    """Checkpointed layers recompute with the episode's adapted weights: the meta-update is the unchecked one's."""
+    after = []
+    for ckpt in (False, True):
+        torch.manual_seed(0)
+        opts = ("lr=1e-3", "meta_sgd.inner_lr=1e-1", "meta_sgd.second_order=true", f"+gradient_checkpoint={ckpt}")
+        config, train_state, batch = _varc_state(*opts) if model == "varc" else _state(*opts, "arch.forward_dtype=float32")
+        torch.manual_seed(1)
+        meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
+    assert all(torch.allclose(after[0][n], after[1][n], atol=1e-6) for n in after[0])
+
+
+def test_noise_scale_terms_recover_a_known_gradient_and_trace():
+    """Episodes of q rows, each row's gradient G + noise of trace S: the terms come back near |G|^2 and S."""
+    from pretrain import _noise_scale_terms
+    torch.manual_seed(0)
+    dim, rows, n_episodes, trace = 200, 4, 2000, 50.0
+    G = torch.randn(dim)
+    row_grads = G + torch.randn(n_episodes, rows, dim) * (trace / dim) ** 0.5
+    episode_means = row_grads.mean(1)
+    n = torch.tensor(float(n_episodes * rows))
+    out = _noise_scale_terms(episode_means.sum(0) * rows / n, [g.square().sum() for g in episode_means], [1.0 / rows] * n_episodes, n, 1)
+    assert abs(float(out["meta/noise_trace"]) / trace - 1) < 0.05
+    assert abs(float(out["meta/noise_grad_sq"]) / float(G.square().sum()) - 1) < 0.05
+
+
+def test_noise_scale_logging_leaves_the_meta_update_unchanged():
+    after, logged = [], None
+    for flag in (False, True):
+        torch.manual_seed(0)
+        config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", f"meta_sgd.noise_scale={flag}", "arch.forward_dtype=float32")
+        torch.manual_seed(1)
+        logged = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
+    assert all(torch.equal(after[0][n], after[1][n]) for n in after[0])
+    assert all(math.isfinite(logged[f"train/meta/{k}"]) for k in ("noise_trace", "noise_grad_sq"))
+
+
+def _meta_gradient(*opts):
+    """The meta-gradient one meta_sgd_batch accumulates (read before the optimizer step: Adam's first step is a sign, so
+    float noise in near-zero second-order gradients would flip it)."""
+    import pretrain
+    torch.manual_seed(0)
+    config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", "meta_sgd.inner_steps=3", "arch.forward_dtype=float32", *opts)
+    grads = {}
+    original = pretrain._step_optimizers_and_log
+    pretrain._step_optimizers_and_log = lambda config, train_state, *a: grads.update(
+        {n: p.grad.clone() for n, p in train_state.model.named_parameters() if p.grad is not None})
+    try:
+        torch.manual_seed(1)
+        pretrain.meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    finally:
+        pretrain._step_optimizers_and_log = original
+    return grads
+
+
+def test_truncated_second_order_spans_first_order_to_full_second_order():
+    """second_order_steps = every step is full second order, 0 is first order, and 1 lies in between."""
+    full, none = _meta_gradient("meta_sgd.second_order=true"), _meta_gradient("meta_sgd.second_order=false")
+    every, zero, one = (_meta_gradient("meta_sgd.second_order=true", f"meta_sgd.second_order_steps={n}") for n in (3, 0, 1))
+    close = lambda a, b: a.keys() == b.keys() and all(float((a[n] - b[n]).abs().max()) <= 1e-2 * float(b[n].abs().max()) + 1e-9 for n in a)  # second order is float-noisy (~1e-3)
+    assert close(every, full) and close(zero, none)
+    assert not close(one, full) and not close(one, none)
+
+
+@pytest.mark.parametrize("opts", [(), ("meta_sgd.segment_inner_steps=true",), ("meta_sgd.rows_steps=2",)])
+def test_imaml_gives_theta_a_finite_implicit_meta_gradient_and_logs_its_convergence(opts):
+    """meta_sgd.imaml: theta gets (A^-1 grad L_query) with no graph through the inner steps (also with segment steps and the
+    embedding first); the step sizes get no gradient; the stationarity and CG residual are logged."""
+    import pretrain
+    grads = _meta_gradient("meta_sgd.imaml=true", "meta_sgd.imaml_lambda=0.01", "recon.copies=0", *opts)
+    theta = {n: g for n, g in grads.items() if not n.startswith("meta_sgd.")}
+    assert theta and all(torch.isfinite(g).all() for g in theta.values()) and any(g.abs().sum() > 0 for g in theta.values())
+    assert not any(n.startswith("meta_sgd.rho") for n in grads)
+
+
+def test_imaml_logs_stationarity_and_cg_residual():
+    config, train_state, batch = _state("meta_sgd.imaml=true", "meta_sgd.inner_steps=3", "recon.copies=0", "arch.forward_dtype=float32")
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert math.isfinite(metrics["train/meta/imaml_stationarity"]) and math.isfinite(metrics["train/meta/imaml_cg_residual"])
+
+
+def test_imaml_on_varc():
+    config, train_state, batch = _varc_state("meta_sgd.imaml=true", "meta_sgd.inner_steps=3", "recon.copies=0")
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert math.isfinite(metrics["train/meta/query_loss"])
+
+
+def test_hypergradient_descent_grows_the_step_while_gradients_agree_and_shrinks_it_when_they_flip():
+    from pretrain import _hd_alpha
+    config, train_state, batch = _state()
+    model = train_state.model
+    model.meta_sgd.hd_beta, model.meta_sgd.hd_state = 0.5, {}
+    g, a = torch.randn(10), torch.tensor(0.01)
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.01)
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.015)
+    assert float(_hd_alpha(model, "w", -g, a)) == pytest.approx(0.0075)
+    model.meta_sgd.hd_beta = 0.0
+    assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.01)
+    assert _config().meta_sgd.hd_beta == 0.0 and _config().meta_sgd.imaml is False

@@ -28,6 +28,7 @@ class MiniARCDataProcessConfig(BaseModel):
     heldout_tasks: int = 0
     heldout_seed: int = 0
     heldout_demos_in_train: bool = False # transductive held-out protocol: the held-out tasks' demos also join training (their test pairs stay the test split)
+    val_tasks: int = 0 # this many more tasks held out the same way, listed in val_tasks.json (checkpoint selection); the heldout_tasks draw is unchanged
 
 
 def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
@@ -42,6 +43,11 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
     heldout = set()
     if config.heldout_tasks > 0:
         heldout = set(np.random.default_rng(config.heldout_seed).choice(names, size=config.heldout_tasks, replace=False).tolist())
+    assert config.val_tasks == 0 or config.heldout_tasks > 0, "val_tasks needs the held-out protocol (heldout_tasks > 0)"
+    val = set()
+    if config.val_tasks > 0:
+        rest = [n for n in names if n not in heldout]
+        val = set(np.random.default_rng(config.heldout_seed + 1).choice(rest, size=config.val_tasks, replace=False).tolist())
 
     # Shuffle puzzles
     np.random.shuffle(puzzles)
@@ -52,7 +58,7 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
         if config.heldout_tasks == 0:
             test_puzzles[name] = puzzle
             convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": ("train", "all"), "test": ("test", "all")}, test_aug=config.test_aug)
-        elif name in heldout:
+        elif name in heldout or name in val:
             test_puzzles[name] = puzzle
             splits = {"train": ("train", "all"), "test": ("test", "all")} if config.heldout_demos_in_train else {"test": ("test", "all")}
             convert_single_arc_puzzle(results, name, puzzle, config.num_aug, splits, test_aug=config.test_aug)
@@ -63,6 +69,9 @@ def load_puzzles_miniarc(config: MiniARCDataProcessConfig):
         os.makedirs(config.output_dir, exist_ok=True)
         with open(os.path.join(config.output_dir, "heldout_tasks.json"), "w") as f:
             json.dump(sorted(heldout), f, indent=2)
+    if val:
+        with open(os.path.join(config.output_dir, "val_tasks.json"), "w") as f:
+            json.dump(sorted(val), f, indent=2)
     print (f"Total puzzles: {len(puzzles)}, held out: {len(heldout)}")
     return results, test_puzzles
 

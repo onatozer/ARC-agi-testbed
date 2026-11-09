@@ -89,3 +89,8 @@ def test_aggregate_waits_for_every_task_then_averages_and_merges(tmp_path):
     assert aggregate(["a", "b", "c"], tmp_path) is None
     assert aggregate(["a", "b"], tmp_path) == {"ARC/pass@2": 0.5}
     assert set(json.loads((tmp_path / "submission.json").read_text())) == {"a", "b"}
+
+
+def test_score_steps_is_a_cli_option():
+    assert _ttt_cfg("checkpoint=ckpt.pth").score_steps == []
+    assert _ttt_cfg("checkpoint=ckpt.pth", "score_steps=[0,50,250]").score_steps == [0, 50, 250]

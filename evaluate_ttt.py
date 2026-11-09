@@ -41,7 +41,7 @@ from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_c
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
 from pretrain import (
-    _adapt, _adapt_segment, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, _with_recon_rows,
+    _adapt, _adapt_segment, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, _recon_steps, _with_recon_rows,
     create_dataloader, create_evaluators, init_train_state, train_batch,
 )
 from utils.checkpoint import load_model_state_dict
@@ -107,7 +107,7 @@ def _split_rows(config: PretrainConfig, split: str, metadata: Any, device: torch
 
 def meta_sgd_adapt(
     model: torch.nn.Module, support: Dict[str, torch.Tensor], steps: int, segment_steps: bool,
-    rows_frozen: bool = False, on_step: Optional[Any] = None,
+    rows_frozen: bool = False, on_step: Optional[Any] = None, rows_only: int = 0,
 ) -> List[float]:
     """`steps` Meta-SGD inner steps on `support` with the checkpoint's learned alphas, written into the weights and (unless
     rows_frozen) the task's puzzle-embedding rows. The trained per-step alphas are stretched over the loop: the k-th of
@@ -115,49 +115,85 @@ def meta_sgd_adapt(
     targets, emb_name, carry, losses = _meta_sgd_targets(model), _puzzle_emb_name(model), None, []
     if rows_frozen:
         targets = [(n, p) for n, p in targets if n != emb_name]
+    if rows_only:  # meta_sgd.rows_steps' phase (rows_only = rows_steps): the rows alone, their learned sizes stretched
+        targets = [(n, p) for n, p in targets if n == emb_name]
+    trained = rows_only or model.meta_sgd.steps
 
     for k in range(steps):
         if on_step is not None:
             on_step(k)
 
         named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, support)
-        alpha_step = k * model.meta_sgd.steps // steps
+        alpha_step = k * trained // steps
         if segment_steps:  # one supervision segment per step, the rows continuing their carry (TRM, GRAM)
             loss, theta, carry = _adapt_segment(model, named, overrides, batch, carry, alpha_step)
         else:
             loss, theta = _adapt(model, named, overrides, batch, alpha_step)
         losses.append(float(loss))
-
-        with torch.no_grad():
-            for name, p in targets:
-                if name == emb_name:
-                    model.get_buffer(emb_name)[ids] = theta[name]
-                elif name in theta:
-                    p.copy_(theta[name])
+        _write_back(model, targets, emb_name, ids, theta)
     return losses
 
 
-def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module, train_metadata: Any, eval_metadata: Any) -> None:
+@torch.no_grad()
+def _write_back(model: torch.nn.Module, targets: List[Any], emb_name: Optional[str], ids: Optional[torch.Tensor], theta: Dict[str, torch.Tensor]) -> None:
+    """The adapted tensors into the model: the weights in place, the episode's rows into the embedding table."""
+    for name, p in targets:
+        if name == emb_name:
+            model.get_buffer(emb_name)[ids] = theta[name]
+        elif name in theta:
+            p.copy_(theta[name])
+
+
+def learned_recon_adapt(model: torch.nn.Module, test: Dict[str, torch.Tensor], steps: int, segments: int, recon: Any, shared_id: int) -> None:
+    """A stage-2 checkpoint's reconstruction phase (meta_sgd.recon_steps), as meta-trained: `steps` steps on freshly masked
+    copies of the test inputs (labels: the inputs), the weights and rows, at the learned sizes (stretched over more steps)."""
+    targets, emb_name = _meta_sgd_targets(model), _puzzle_emb_name(model)
+    trained = model.meta_sgd.recon_log_scale.shape[0]
+    shared = torch.tensor([shared_id], device=test["inputs"].device)
+    for k in range(steps):
+        named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, test, extra_ids=shared)
+        local = int(torch.searchsorted(ids, shared))
+        theta = _recon_steps(model, named, overrides, batch, recon, local, segments, 1, step0=k * trained // steps)
+        _write_back(model, targets, emb_name, ids, theta)
+
+
+def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module, train_metadata: Any, eval_metadata: Any,
+                 on_step: Optional[Any] = None) -> None:
     """Test-time Meta-SGD on one task, as meta-trained (config/schema.py MetaSGDConfig):
       1. meta_sgd_steps steps on the demos (with config.recon, plus masked copies of their inputs);
       2. with config.recon, recon_steps reconstruction steps on masked copies of the demo and test inputs (labels: the
-         inputs, never the test outputs), the weights only, at the step sizes of 1. times recon_alpha_scale."""
+         inputs, never the test outputs), the weights only, at the step sizes of 1. times recon_alpha_scale; a stage-2
+         checkpoint (meta_sgd.recon_steps) instead takes its learned steps, as meta-trained (learned_recon_adapt)."""
     if getattr(model, "meta_sgd", None) is None:
         raise ValueError("meta_sgd_steps needs a checkpoint meta-trained with meta_sgd.enabled.")
 
     device = next(model.parameters()).device
     segment_steps, segments = config.meta_sgd.segment_inner_steps, config.arch.halt_max_steps
-    recon_args = (config.recon, train_metadata.pad_id, train_metadata.num_puzzle_identifiers)
+    recon_args = (config.recon, train_metadata.vocab_size, train_metadata.num_puzzle_identifiers)
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos
-    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps)
+    model.meta_sgd.hd_beta = config.meta_sgd.hd_beta if cfg.hd_beta is None else cfg.hd_beta
+    model.meta_sgd.hd_state = {}  # hypergradient descent restarts with each task
+    if config.meta_sgd.rows_steps and cfg.meta_sgd_rows_steps:  # the embedding first, as meta-trained
+        rows_losses = meta_sgd_adapt(model, support, cfg.meta_sgd_rows_steps, segment_steps, rows_only=config.meta_sgd.rows_steps)
+        print_info(f"TTT: {cfg.meta_sgd_rows_steps} rows-only steps, support loss {rows_losses[0]:.3f} -> {rows_losses[-1]:.3f}")
+    rows_frozen = bool(config.meta_sgd.rows_steps)
+    losses = meta_sgd_adapt(model, support, cfg.meta_sgd_steps, segment_steps, on_step=on_step, rows_frozen=rows_frozen)
     print_info(f"TTT: {cfg.meta_sgd_steps} Meta-SGD steps on {demos['inputs'].shape[0]} demos, support loss {losses[0]:.3f} -> {losses[-1]:.3f}")
+    if model.meta_sgd.hd_beta and model.meta_sgd.hd_state:  # how far hypergradient descent moved the step sizes
+        mults = torch.tensor([m for _, m in model.meta_sgd.hd_state.values()])
+        print_info(f"TTT hypergradient step-size multipliers: mean {mults.mean():.3g}, min {mults.min():.3g}, max {mults.max():.3g}")
 
     if not (config.recon.copies and cfg.recon_steps):
         return
 
     test = _split_rows(config, "test", eval_metadata, device)
+    if model.meta_sgd.recon_log_scale is not None:
+        learned_recon_adapt(model, test, cfg.recon_steps, segments, config.recon, train_metadata.num_puzzle_identifiers)
+        print_info(f"TTT: {cfg.recon_steps} learned reconstruction steps on {test['inputs'].shape[0]} masked test inputs")
+        return
+
     rows = {k: torch.cat([demos[k], test[k]]) for k in ("inputs", "puzzle_identifiers")}
     rows["labels"] = rows["inputs"]
     n = rows["inputs"].shape[0]
@@ -203,6 +239,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             evaluator.aggregated_voting = True
 
     metrics: Optional[Dict[str, Any]] = None
+    curve: Dict[str, float] = {}
     for run in range(cfg.ttt_runs_per_task):
         _seed(seed + run, 0)
         train_state = init_train_state(config, train_metadata, rank=0, world_size=1)
@@ -216,13 +253,29 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
             train_state.ema_helper.register(train_state.model)
         config.lr_warmup_steps = cfg.warmup_epochs * train_state.steps_per_epoch
 
+        def score(at: int) -> None:  # cfg.score_steps: the test predictions now, with fresh evaluators (no vote pooling)
+            if run or at not in cfg.score_steps:
+                return
+            fresh = create_evaluators(config, eval_metadata)
+            for evaluator in fresh:
+                if hasattr(evaluator, "aggregated_voting"):
+                    evaluator.aggregated_voting = True
+            head = load_model_class(config.arch.loss.inference_name)(train_state.model.model, **config.arch.loss.__pydantic_extra__)
+            head.eval()
+            for _ in range(cfg.num_views):
+                at_metrics, _ = evaluate(config, replace(train_state, model=head), eval_loader, eval_metadata, fresh, rank=0, world_size=1, cpu_group=None)
+            curve.update({f"step{at}/{k}": v for k, v in _summarize(at_metrics or {})[1].items()})
+            train_state.model.train()
+
         train_state.model.train()
         if config.meta_sgd.enabled:
             train_state.ema_helper = None  # the EMA weights are already in state; a swap after would undo the adaptation
-            meta_sgd_ttt(cfg, config, train_state.model, train_metadata, eval_metadata)
+            meta_sgd_ttt(cfg, config, train_state.model, train_metadata, eval_metadata, on_step=score)
         else:
+            score(0)
             for _set_name, batch, global_batch_size in train_loader:
                 train_batch(config, train_state, batch, global_batch_size, rank=0, world_size=1)
+                score(train_state.step)
                 if train_state.ema_helper is not None:
                     train_state.ema_helper.update(train_state.model)
                 if train_state.step >= train_state.total_steps:
@@ -238,7 +291,7 @@ def ttt_task(cfg: TTTConfig, train_cfg: PretrainConfig, state: Dict[str, torch.T
         del train_state, train_state_eval
         torch.cuda.empty_cache()
 
-    return _summarize(metrics or {})[1]
+    return {**_summarize(metrics or {})[1], **curve}
 
 
 def aggregate(names: List[str], out_dir: Path) -> Optional[Dict[str, float]]:

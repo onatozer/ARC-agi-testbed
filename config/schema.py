@@ -55,6 +55,28 @@ class MetaSGDConfig(BaseModel):
     alpha_range: float = 10.0  # alpha stays within its initial value * exp(+-alpha_range)
     inner_steps: int = 8
     copies_per_group: int = 16
+    # True: second-order meta-gradients, through the inner steps' gradients (the inner-loop autograd graph is kept for the
+    # outer backward; memory grows ~10x on TRM); False: first order, the gradient enters each step as a constant
+    second_order: bool = False
+    # Meta-gradient accumulation: this many loader batches' episodes go into one optimizer step (the meta-gradient is
+    # the mean over all their query rows), so a memory-limited batch still gives a large effective meta-batch
+    accum_steps: int = 1
+    second_order_steps: Optional[int] = None  # with second_order: only the last this many backbone inner steps second order, the earlier ones first order (None: all)
+    noise_scale: bool = False  # log meta/noise_trace and meta/noise_grad_sq (_noise_scale_terms) from each update's per-episode gradients
+    # iMAML (Rajeswaran et al. 2019, arXiv 1909.04630): inner_steps steps on the support loss + lam / 2 ||phi - theta||^2
+    # without a graph, then theta's implicit meta-gradient by conjugate gradient (_imaml_task_backward); the step sizes are
+    # not learned; memory does not grow with inner_steps, so the inner loop can be as long as test time's
+    imaml: bool = False
+    imaml_lambda: float = 0.01  # the proximal strength (watch meta/imaml_stationarity and meta/imaml_cg_residual)
+    imaml_cg_steps: int = 5
+    # > 0: hypergradient descent (Baydin et al. 2018, arXiv 1703.04782, multiplicative rule) on every inner step's
+    # per-tensor step size (_hd_alpha); evaluate_ttt's hd_beta overrides it at test time
+    hd_beta: float = 0.0
+    # > 0: the embedding first. Each inner loop starts with this many steps on the task's puzzle-embedding rows alone
+    # (the backbone frozen, the rows' per-step sizes 0..rows_steps-1), then the inner_steps on the backbone with the
+    # rows frozen; the rows' steps are first order even with second_order. Test time: evaluate_ttt's meta_sgd_rows_steps,
+    # then meta_sgd_steps (rows frozen)
+    rows_steps: int = 0
     # Multi-segment (ACT) models such as TRM and GRAM: each inner step is one supervision segment continuing the previous
     # step's carry, and the query loss is the final prediction's CE after halt_max_steps segments. Off (VARC): each inner
     # step and the query loss run every row's whole trajectory through the loss head.
@@ -62,9 +84,21 @@ class MetaSGDConfig(BaseModel):
     # Multi-step loss (arXiv 1810.09502): the query loss after every inner step, annealed from uniform to the last step only
     # over this fraction of training. None: the last step's only
     msl_anneal_fraction: Optional[float] = None
+    # Stage 2 (from a stage-1 checkpoint): > 0 learns only the sizes of that many reconstruction steps after the inner steps,
+    # everything else frozen. Each step adapts the weights and rows on the final-prediction reconstruction CE of freshly
+    # masked copies of the query inputs, at every tensor's initial step size times one learned scale per step (starting at
+    # recon_scale0); the query CE after them is the outer loss. Needs config.recon
+    recon_steps: int = 0
+    recon_scale0: float = 0.01
 
     @pydantic.model_validator(mode="after")
     def _check(self):
+        if self.recon_steps < 0 or self.recon_scale0 <= 0:
+            raise ValueError("meta_sgd: recon_steps >= 0 and recon_scale0 > 0 are required.")
+        if self.accum_steps < 1:
+            raise ValueError("meta_sgd.accum_steps must be >= 1.")
+        if not 0 <= self.rows_steps <= self.inner_steps:
+            raise ValueError("meta_sgd.rows_steps must be in [0, inner_steps] (the rows' phase reuses their per-step sizes).")
         if min(self.inner_lr, self.inner_lr_rows) <= 0 or self.alpha_range < 0 or self.inner_steps < 1 or self.copies_per_group < 1:
             raise ValueError("meta_sgd: inner_lr, inner_lr_rows > 0, alpha_range >= 0, inner_steps >= 1 and copies_per_group >= 1 are required.")
         if self.msl_anneal_fraction is not None and not 0 < self.msl_anneal_fraction <= 1:
@@ -75,20 +109,20 @@ class MetaSGDConfig(BaseModel):
 class ReconConfig(BaseModel):
     """Masked-input reconstruction as an extra task (after arXiv 1909.13231's test-time training). Each training row gets
     `copies` extra rows:
-      - input: the row's input with `cells` random non-pad cells set to mask_token (an id the grids never use);
+      - input: the row's input with `fraction` of its color cells, at random, set to a mask token (a new id, the
+        dataset's vocab_size: the model's vocabulary grows by one);
       - label: the full input;
       - weight: 1 / copies (batch["row_weight"], read by a *RowWeight loss head);
       - puzzle embedding: one extra learned row shared by every copy (id num_puzzle_identifiers), so a copy is
         reconstructed from its visible cells rather than recalled from its task's row.
     0 copies: off."""
     copies: int = 0
-    cells: int = 6
-    mask_token: int = 1
+    fraction: float = 0.24  # 6 of a 5x5 MiniARC grid's 25 cells
 
     @pydantic.model_validator(mode="after")
     def _check(self):
-        if self.copies < 0 or self.cells < 1:
-            raise ValueError("recon: copies >= 0 and cells >= 1 are required.")
+        if self.copies < 0 or not 0 < self.fraction <= 1:
+            raise ValueError("recon: copies >= 0 and fraction in (0, 1] are required.")
         return self
 
 
