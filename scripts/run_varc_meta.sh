@@ -60,6 +60,14 @@ PY
 )
 [ -n "$FINITE" ] || { say "no finite checkpoint"; exit 1; }
 CK=$(echo "$FINITE" | head -1)
+# LOWEST_QUERY: the newest finite checkpoint at or before the end of the lowest 25-update mean query loss (the query loss
+# turned upward partway in every ARC-scale run; this automates testing the best earlier checkpoint)
+if [ -n "${LOWEST_QUERY:-}" ]; then
+  END=$(python3 scripts/wandb_trend.py $R/${RUN}_meta | python3 -c "import sys, re; w = [(float(re.search(r'query_loss=([0-9.e+-]+)', l).group(1)), int(l.split()[3])) for l in sys.stdin if 'query_loss=' in l]; print(min(w)[1])")
+  say "lowest 25-update query loss ends at update $END"
+  CK=$(for c in $FINITE; do n=$(basename $c .pth | cut -d_ -f2); [ "$n" -le "$END" ] && echo "$n $c"; done | sort -n | tail -1 | cut -d" " -f2)
+  [ -n "$CK" ] || CK=$(echo "$FINITE" | tail -1)
+fi
 # VAL (a build's val_tasks.json): test time on those tasks for the un-meta-trained base and every finite checkpoint; the
 # best pass@2 (then token accuracy) is the one tested. The base winning means meta-training did not help on them
 if [ -n "${VAL:-}" ]; then
@@ -77,6 +85,6 @@ fi
 say "testing $CK"
 
 # 5. Test time on the held-out tasks
-$LAUNCH evaluate_ttt.py checkpoint=$CK eval=ttt_mini output_dir=$R/${RUN}_eval task_ids_file=$PWD/$HO meta_sgd_steps=1000 meta_sgd_rows_steps=200 \
-  score_steps=[0,25,50,100,250,500,1000] wandb_mode=disabled > logs/${RUN}_eval.log 2>&1 || { say "eval failed"; exit 1; }
+$LAUNCH evaluate_ttt.py checkpoint=$CK eval=ttt_mini output_dir=$R/${RUN}_eval task_ids_file=$PWD/$HO meta_sgd_steps=${TTT_STEPS:-1000} meta_sgd_rows_steps=${TTT_ROWS:-200} \
+  score_steps=$(python3 -c "print(str([k for k in (0, 25, 50, 100, 250, 500) if k < ${TTT_STEPS:-1000}]).replace(' ', ''))") wandb_mode=disabled > logs/${RUN}_eval.log 2>&1 || { say "eval failed"; exit 1; }
 say "done"
