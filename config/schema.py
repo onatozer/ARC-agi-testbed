@@ -69,6 +69,9 @@ class MetaSGDConfig(BaseModel):
     imaml: bool = False
     imaml_lambda: float = 0.01  # the proximal strength (watch meta/imaml_stationarity and meta/imaml_cg_residual)
     imaml_cg_steps: int = 5
+    # The curvature in CG's matrix: "hessian" (the support loss's, indefinite on deep nets: CG can stall at negative curvature)
+    # or "gauss_newton" (J^T H_z J, softmax CE's Hessian in the logits: positive semi-definite; one-pass models such as VARC)
+    imaml_curvature: Literal["hessian", "gauss_newton"] = "hessian"
     # > 0: hypergradient descent (Baydin et al. 2018, arXiv 1703.04782, multiplicative rule) on every inner step's
     # per-tensor step size (_hd_alpha); evaluate_ttt's hd_beta overrides it at test time
     hd_beta: float = 0.0

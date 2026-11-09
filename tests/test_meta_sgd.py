@@ -529,3 +529,23 @@ def test_hypergradient_descent_grows_the_step_while_gradients_agree_and_shrinks_
     model.meta_sgd.hd_beta = 0.0
     assert float(_hd_alpha(model, "w", g, a)) == pytest.approx(0.01)
     assert _config().meta_sgd.hd_beta == 0.0 and _config().meta_sgd.imaml is False
+
+
+def test_gauss_newton_product_is_symmetric_positive_semidefinite_and_lets_cg_converge():
+    from pretrain import _gauss_newton_product, _episode_overrides, _episodes_from_batch, _meta_sgd_targets, _puzzle_emb_name
+    config, train_state, batch = _varc_state("meta_sgd.imaml=true", "meta_sgd.imaml_curvature=gauss_newton", "meta_sgd.inner_steps=3", "recon.copies=0")
+    model = train_state.model
+    _, support, _ = _episodes_from_batch(batch)[0]
+    named, overrides, support, _ = _episode_overrides(model, _meta_sgd_targets(model), _puzzle_emb_name(model), support)
+    leaves = {n: p.detach().clone().requires_grad_() for n, p in named}
+    names = [n for n in leaves if not n.endswith("puzzle_emb.weights")]
+    with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+        product = _gauss_newton_product(model, overrides, leaves, names, support, support["inputs"].shape[0])
+        torch.manual_seed(0)
+        u, v = [torch.randn_like(leaves[n]) for n in names], [torch.randn_like(leaves[n]) for n in names]
+        gu, gv = product(u), product(v)
+    dot = lambda a, b: float(sum((x * y).sum() for x, y in zip(a, b)))
+    assert dot(v, gv) >= -1e-6 and dot(u, gu) >= -1e-6
+    assert dot(u, gv) == pytest.approx(dot(v, gu), rel=1e-3, abs=1e-6)
+    metrics = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    assert metrics["train/meta/imaml_cg_residual"] < 0.5

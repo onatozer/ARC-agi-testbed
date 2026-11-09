@@ -1010,6 +1010,32 @@ def _task_outer_backward(
     return first_loss.detach(), loss_q.detach() / query["inputs"].shape[0]
 
 
+def _gauss_newton_product(model: nn.Module, overrides: Dict[str, torch.Tensor], leaves: Dict[str, torch.Tensor], names: List[str],
+                          batch: Dict[str, torch.Tensor], n_rows: int):
+    """meta_sgd.imaml_curvature=gauss_newton: v -> G v, G = J^T H_z J the Gauss-Newton matrix of the per-row support loss (the
+    loss head's softmax CE, mean over each row's labelled tokens, summed over rows, / n_rows) in the tensors `names`, z the
+    logits, H_z softmax CE's Hessian in them (positive semi-definite, so CG converges). J v by the double-backward trick,
+    J^T u by a vector-Jacobian product. One-pass models (VARC): a multi-segment model's carry would need its trajectory."""
+    if hasattr(model.model.inner, "reset_carry"):
+        raise ValueError("meta_sgd.imaml_curvature=gauss_newton supports one-pass models (VARC); TRM / GRAM use hessian.")
+    inner = {k[len("model."):]: v for k, v in {**overrides, **leaves}.items()}
+    logits = torch.func.functional_call(model.model, inner, args=(None, batch))[1]["logits"].float()
+    mask = batch["labels"] != IGNORE_LABEL_ID
+    weight = (mask / mask.sum(-1, keepdim=True).clamp_min(1) / n_rows).unsqueeze(-1)
+    prob = torch.softmax(logits.detach(), -1)
+    params = [leaves[n] for n in names]
+    dummy = torch.zeros_like(logits, requires_grad=True)
+    jt_dummy = torch.autograd.grad(logits, params, grad_outputs=dummy, create_graph=True, allow_unused=True)
+    used = [i for i, g in enumerate(jt_dummy) if g is not None]
+
+    def product(vs: List[torch.Tensor]) -> List[torch.Tensor]:
+        jv = torch.autograd.grad([jt_dummy[i] for i in used], dummy, grad_outputs=[vs[i] for i in used], retain_graph=True)[0]
+        hz = weight * (prob * jv - prob * (prob * jv).sum(-1, keepdim=True))
+        gv = torch.autograd.grad(logits, params, grad_outputs=hz, retain_graph=True, allow_unused=True)
+        return [torch.zeros_like(p) if g is None else g for p, g in zip(params, gv)]
+    return product
+
+
 def _imaml_task_backward(
     config: PretrainConfig, model: nn.Module, targets: List[Tuple[str, torch.Tensor]], emb_name: Optional[str],
     support: Dict[str, torch.Tensor], query: Dict[str, torch.Tensor], loss_scale: torch.Tensor,
@@ -1080,9 +1106,12 @@ def _imaml_task_backward(
                    for n, g in zip(names, torch.autograd.grad(loss_q, [leaves[n] for n in names], allow_unused=True))]
         g_support = torch.autograd.grad(support_loss(leaves), [leaves[n] for n in names], create_graph=True, allow_unused=True)
         live = [i for i, g in enumerate(g_support) if g is not None]
+        curvature_product = _gauss_newton_product(model, overrides, leaves, [names[i] for i in live], support, n_support) \
+            if cfg.imaml_curvature == "gauss_newton" else \
+            (lambda vs: torch.autograd.grad([g_support[i] for i in live], [leaves[names[i]] for i in live], grad_outputs=vs, retain_graph=True))
 
         def apply(v):
-            hv = torch.autograd.grad([g_support[i] for i in live], [leaves[names[i]] for i in live], grad_outputs=[v[i] for i in live], retain_graph=True)
+            hv = curvature_product([v[i] for i in live])
             out = [(1 + regu_coef) * x for x in v]
             for j, i in enumerate(live):
                 out[i] = out[i] + hv[j] / (lam + lam_damping)

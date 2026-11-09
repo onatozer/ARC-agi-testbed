@@ -70,6 +70,7 @@ meta_sgd:
   imaml: false # iMAML: proximal inner steps without a graph, implicit meta-gradient (conjugate gradient)
   imaml_lambda: 0.01 # iMAML proximal strength
   imaml_cg_steps: 5 # iMAML conjugate-gradient iterations
+  imaml_curvature: hessian # hessian | gauss_newton (positive semi-definite; one-pass models such as VARC)
   hd_beta: 0.0 # > 0: hypergradient descent on each inner step's per-tensor step size (multiplicative)
   rows_steps: 0 # > 0: that many rows-only inner steps first (backbone frozen), then the backbone steps (rows frozen)
   segment_inner_steps: false # TRM / GRAM: one supervision segment per inner step, final-prediction CE query loss
