@@ -47,17 +47,33 @@ say "batch $B x accum_steps $A"
 
 # 4. Meta-training
 OUTPUT_ROOT=$R/${RUN}_meta $LAUNCH pretrain.py $CONF +run_name=${RUN}_meta +load_checkpoint=$R/${RUN}_official.pt +load_weights_only=true \
-  meta_sgd.inner_lr=$LR global_batch_size=$B meta_sgd.accum_steps=$A max_steps=400 checkpoint_interval_steps=50 > logs/${RUN}_meta.log 2>&1 || say "meta-training exited non-zero"
-CK=$(python3 - <<PY
+  meta_sgd.inner_lr=$LR global_batch_size=$B meta_sgd.accum_steps=$A max_steps=${META_STEPS:-400} checkpoint_interval_steps=${CKPT_EVERY:-50} \
+  > logs/${RUN}_meta.log 2>&1 || say "meta-training exited non-zero"
+FINITE=$(python3 - <<PY
 import glob, os, torch
 for p in sorted(glob.glob("$R/${RUN}_meta/outputs/*/*/*/checkpoints/*.pth"), key=os.path.getmtime, reverse=True):
     sd = torch.load(p, map_location="cpu", weights_only=False)
     sd = sd.get("model", sd)
     if all(torch.isfinite(v).all() for v in sd.values() if torch.is_tensor(v) and v.is_floating_point()):
-        print(p); break
+        print(p)
 PY
 )
-[ -n "$CK" ] || { say "no finite checkpoint"; exit 1; }
+[ -n "$FINITE" ] || { say "no finite checkpoint"; exit 1; }
+CK=$(echo "$FINITE" | head -1)
+# VAL (a build's val_tasks.json): test time on those tasks for the un-meta-trained base and every finite checkpoint; the
+# best pass@2 (then token accuracy) is the one tested. The base winning means meta-training did not help on them
+if [ -n "${VAL:-}" ]; then
+  BASE=$(ckpt ${RUN}_base); rm -f logs/${RUN}_val_table.txt
+  for c in $BASE $FINITE; do
+    n=$(basename $c .pth | cut -d_ -f2); [ "$c" = "$BASE" ] && n=base
+    [ -f $R/${RUN}_val_$n/ttt_metrics.json ] || $LAUNCH evaluate_ttt.py checkpoint=$c eval=ttt_mini output_dir=$R/${RUN}_val_$n task_ids_file=$PWD/$VAL \
+      meta_sgd_steps=${VAL_STEPS:-250} meta_sgd_rows_steps=200 score_steps=[0,25,50,100] wandb_mode=disabled > logs/${RUN}_val_$n.log 2>&1 || say "validation of $n failed"
+    [ -f $R/${RUN}_val_$n/ttt_metrics.json ] && python3 -c "import json; m = json.load(open('$R/${RUN}_val_$n/ttt_metrics.json'))['metrics']; print(m['ARC/pass@2'], m['all/accuracy'], '$n', '$c')" >> logs/${RUN}_val_table.txt
+  done
+  cat logs/${RUN}_val_table.txt
+  CK=$(sort -k1,1g -k2,2g logs/${RUN}_val_table.txt | tail -1 | cut -d" " -f4)
+  [ -n "$CK" ] || { say "no validation result"; exit 1; }
+fi
 say "testing $CK"
 
 # 5. Test time on the held-out tasks

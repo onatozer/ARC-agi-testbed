@@ -65,6 +65,7 @@ meta_sgd:
   copies_per_group: 16
   second_order: false # second-order meta-gradients through the inner steps (MetaSGDConfig)
   accum_steps: 1 # loader batches per optimizer step (meta-gradient accumulation)
+  noise_scale: false # log the gradient noise scale's terms (per-episode gradients; one extra all-reduce per update)
   rows_steps: 0 # > 0: that many rows-only inner steps first (backbone frozen), then the backbone steps (rows frozen)
   segment_inner_steps: false # TRM / GRAM: one supervision segment per inner step, final-prediction CE query loss
   msl_anneal_fraction: null

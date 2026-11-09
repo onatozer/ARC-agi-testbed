@@ -1,5 +1,6 @@
 """Meta-SGD (arXiv 1707.09835) as pretrain.py's training step (config.meta_sgd), config.recon's masked-input
 reconstruction rows, and evaluate_ttt.py's test-time steps with the learned step sizes."""
+import math
 import pathlib
 import sys
 
@@ -438,3 +439,29 @@ def test_gradient_checkpointing_keeps_the_second_order_meta_update_exact(model):
         meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
         after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
     assert all(torch.allclose(after[0][n], after[1][n], atol=1e-6) for n in after[0])
+
+
+def test_noise_scale_terms_recover_a_known_gradient_and_trace():
+    """Episodes of q rows, each row's gradient G + noise of trace S: the terms come back near |G|^2 and S."""
+    from pretrain import _noise_scale_terms
+    torch.manual_seed(0)
+    dim, rows, n_episodes, trace = 200, 4, 2000, 50.0
+    G = torch.randn(dim)
+    row_grads = G + torch.randn(n_episodes, rows, dim) * (trace / dim) ** 0.5
+    episode_means = row_grads.mean(1)
+    n = torch.tensor(float(n_episodes * rows))
+    out = _noise_scale_terms(episode_means.sum(0) * rows / n, [g.square().sum() for g in episode_means], [1.0 / rows] * n_episodes, n, 1)
+    assert abs(float(out["meta/noise_trace"]) / trace - 1) < 0.05
+    assert abs(float(out["meta/noise_grad_sq"]) / float(G.square().sum()) - 1) < 0.05
+
+
+def test_noise_scale_logging_leaves_the_meta_update_unchanged():
+    after, logged = [], None
+    for flag in (False, True):
+        torch.manual_seed(0)
+        config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", f"meta_sgd.noise_scale={flag}", "arch.forward_dtype=float32")
+        torch.manual_seed(1)
+        logged = meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+        after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
+    assert all(torch.equal(after[0][n], after[1][n]) for n in after[0])
+    assert all(math.isfinite(logged[f"train/meta/{k}"]) for k in ("noise_trace", "noise_grad_sq"))

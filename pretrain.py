@@ -978,6 +978,22 @@ def _task_outer_backward(
     return first_loss.detach(), loss_q.detach() / query["inputs"].shape[0]
 
 
+def _noise_scale_terms(local_grad: torch.Tensor, episode_sq: List[torch.Tensor], inv_rows: List[float], n_query: torch.Tensor, world_size: int) -> Dict[str, torch.Tensor]:
+    """The gradient noise scale's two terms (McCandlish et al. 2018, app. A) from one meta-update: each episode's mean
+    gradient over its q query rows has E|g|^2 = |G|^2 + S/q, the update's over all N rows |G|^2 + S/N; solved for |G|^2
+    and S = tr(Sigma). B_noise = S / |G|^2 query rows: average both over updates before dividing (each is noisy)."""
+    device = local_grad.device
+    stats = torch.stack([torch.stack(episode_sq).sum() if episode_sq else torch.zeros((), device=device),
+                         torch.tensor(float(sum(inv_rows)), device=device), torch.tensor(float(len(inv_rows)), device=device)])
+    if world_size > 1:
+        dist.all_reduce(local_grad)
+        dist.all_reduce(stats)
+    big_sq = local_grad.square().sum()
+    small_sq, inv_small = stats[0] / stats[2].clamp_min(1), stats[1] / stats[2].clamp_min(1)
+    trace = (small_sq - big_sq) / (inv_small - 1.0 / n_query)
+    return {"meta/noise_trace": trace, "meta/noise_grad_sq": big_sq - trace / n_query}
+
+
 def meta_sgd_batch(
     config: PretrainConfig,
     train_state: TrainState,
@@ -1013,12 +1029,20 @@ def meta_sgd_batch(
     measure_flops = _should_log_flops(config, train_state.step)
     flop_counter = TotalFlopCounter(display=False) if measure_flops else nullcontext()
     support_losses, query_losses = [], []
+    params = [p for p in model.parameters() if p.requires_grad]
+    flat_grad = lambda: torch.cat([(p.grad if p.grad is not None else torch.zeros_like(p)).detach().float().flatten() for p in params])
+    episode_sq, inv_rows = [], []  # cfg.noise_scale: each episode's |mean query-row gradient|^2 and 1 / its query rows
     with flop_counter:
         for _key, support, query in episodes:
+            before = flat_grad() if cfg.noise_scale else None
             with sdpa_kernel(SDPBackend.MATH) if cfg.second_order else nullcontext():  # only the math kernel has a double backward
                 loss_s, loss_q = _task_outer_backward(config, model, targets, emb_name, support, query, 1.0 / n_query, msl_weights)
             support_losses.append(loss_s)
             query_losses.append(loss_q)
+            if cfg.noise_scale:
+                rows = query["inputs"].shape[0]
+                episode_sq.append(((flat_grad() - before) * (n_query / rows)).square().sum())
+                inv_rows.append(1.0 / rows)
 
     alpha_mean, alpha_max = model.meta_sgd.summary()
     tasks = torch.tensor(float(len(episodes)), device=device)
@@ -1032,6 +1056,8 @@ def meta_sgd_batch(
     }
     if model.meta_sgd.recon_log_scale is not None:  # stage 2: the learned reconstruction scales
         metrics["meta/recon_scale_mean"] = model.meta_sgd.recon_log_scale.detach().exp().mean()
+    if cfg.noise_scale:
+        metrics.update(_noise_scale_terms(flat_grad(), episode_sq, inv_rows, n_query, world_size))
 
     out = _step_optimizers_and_log(config, train_state, metrics, global_batch_size, rank, world_size, current_epoch, measure_flops, flop_counter)
     model.meta_sgd.clamp_()

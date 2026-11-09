@@ -21,6 +21,7 @@ object_ids: true # also save per-cell object indices of the inputs, for arch.pos
 heldout_tasks: 0 # > 0: that many tasks never seen in training (only their test pairs in the test split), see build_miniarc_dataset.py
 heldout_seed: 0
 heldout_demos_in_train: false # transductive held-out protocol: the held-out tasks' demos also join training (their test pairs stay the test split)
+val_tasks: 0 # > 0: that many more tasks held out the same way, listed in val_tasks.json (checkpoint selection); heldout_tasks draw unchanged
 
 
 seed: null
