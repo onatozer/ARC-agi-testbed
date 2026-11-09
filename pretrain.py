@@ -865,6 +865,14 @@ def _recon_steps(
     return theta
 
 
+def _step_kernel(model: nn.Module):
+    """A first-order inner step's graph is not differentiated again, so it may use the fast attention kernels; a
+    second-order one needs the math kernel (the only one with a double backward)."""
+    if getattr(model.meta_sgd, "second_order", False):
+        return sdpa_kernel(SDPBackend.MATH)
+    return sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
+
+
 def _adapt(
     model: nn.Module, named: List[Tuple[str, torch.Tensor]], overrides: Dict[str, torch.Tensor], support: Dict[str, torch.Tensor], step: int,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -948,19 +956,24 @@ def _task_outer_backward(
         rows_named = [(n, p) for n, p in named if n == emb_name]
         second_order, model.meta_sgd.second_order = getattr(model.meta_sgd, "second_order", False), False  # rows phase first order: its graph would not fit (H200)
         for r in range(cfg.rows_steps):
-            if cfg.segment_inner_steps:
-                loss_r, theta, carry = _adapt_segment(model, rows_named, theta, support, carry, r)
-            else:
-                loss_r, theta = _adapt(model, rows_named, theta, support, r)
+            with _step_kernel(model):
+                if cfg.segment_inner_steps:
+                    loss_r, theta, carry = _adapt_segment(model, rows_named, theta, support, carry, r)
+                else:
+                    loss_r, theta = _adapt(model, rows_named, theta, support, r)
             first_loss = loss_r if first_loss is None else first_loss
             rows_named = [(n, theta[n]) for n, _ in rows_named]
         named, carry = [(n, p) for n, p in named if n != emb_name], None
         model.meta_sgd.second_order = second_order
+    second_order = getattr(model.meta_sgd, "second_order", False)
+    first_second_order = 0 if cfg.second_order_steps is None else len(msl_weights) - cfg.second_order_steps
     for k, w in enumerate(msl_weights):
-        if cfg.segment_inner_steps:
-            loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, k)
-        else:
-            loss_s, theta = _adapt(model, named, theta, support, k)
+        model.meta_sgd.second_order = second_order and k >= first_second_order  # truncated: only the last steps second order
+        with _step_kernel(model):
+            if cfg.segment_inner_steps:
+                loss_s, theta, carry = _adapt_segment(model, named, theta, support, carry, k)
+            else:
+                loss_s, theta = _adapt(model, named, theta, support, k)
         first_loss = loss_s if first_loss is None else first_loss
         named = [(n, theta.get(n, p)) for n, p in named]  # the next step differentiates the adapted tensors
 
@@ -974,6 +987,7 @@ def _task_outer_backward(
                 loss_q = _supervised_loss(model, theta, query)
             total = total + w * loss_q
 
+    model.meta_sgd.second_order = second_order
     (total * loss_scale).backward()
     return first_loss.detach(), loss_q.detach() / query["inputs"].shape[0]
 

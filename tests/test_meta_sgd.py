@@ -465,3 +465,30 @@ def test_noise_scale_logging_leaves_the_meta_update_unchanged():
         after.append({n: p.detach().clone() for n, p in train_state.model.named_parameters()})
     assert all(torch.equal(after[0][n], after[1][n]) for n in after[0])
     assert all(math.isfinite(logged[f"train/meta/{k}"]) for k in ("noise_trace", "noise_grad_sq"))
+
+
+def _meta_gradient(*opts):
+    """The meta-gradient one meta_sgd_batch accumulates (read before the optimizer step: Adam's first step is a sign, so
+    float noise in near-zero second-order gradients would flip it)."""
+    import pretrain
+    torch.manual_seed(0)
+    config, train_state, batch = _state("lr=1e-3", "meta_sgd.inner_lr=1e-1", "meta_sgd.inner_steps=3", "arch.forward_dtype=float32", *opts)
+    grads = {}
+    original = pretrain._step_optimizers_and_log
+    pretrain._step_optimizers_and_log = lambda config, train_state, *a: grads.update(
+        {n: p.grad.clone() for n, p in train_state.model.named_parameters() if p.grad is not None})
+    try:
+        torch.manual_seed(1)
+        pretrain.meta_sgd_batch(config, train_state, batch, global_batch_size=9, rank=0, world_size=1)
+    finally:
+        pretrain._step_optimizers_and_log = original
+    return grads
+
+
+def test_truncated_second_order_spans_first_order_to_full_second_order():
+    """second_order_steps = every step is full second order, 0 is first order, and 1 lies in between."""
+    full, none = _meta_gradient("meta_sgd.second_order=true"), _meta_gradient("meta_sgd.second_order=false")
+    every, zero, one = (_meta_gradient("meta_sgd.second_order=true", f"meta_sgd.second_order_steps={n}") for n in (3, 0, 1))
+    close = lambda a, b: a.keys() == b.keys() and all(float((a[n] - b[n]).abs().max()) <= 1e-2 * float(b[n].abs().max()) + 1e-9 for n in a)  # second order is float-noisy (~1e-3)
+    assert close(every, full) and close(zero, none)
+    assert not close(one, full) and not close(one, none)

@@ -61,6 +61,7 @@ class MetaSGDConfig(BaseModel):
     # Meta-gradient accumulation: this many loader batches' episodes go into one optimizer step (the meta-gradient is
     # the mean over all their query rows), so a memory-limited batch still gives a large effective meta-batch
     accum_steps: int = 1
+    second_order_steps: Optional[int] = None  # with second_order: only the last this many backbone inner steps second order, the earlier ones first order (None: all)
     noise_scale: bool = False  # log meta/noise_trace and meta/noise_grad_sq (_noise_scale_terms) from each update's per-episode gradients
     # > 0: the embedding first. Each inner loop starts with this many steps on the task's puzzle-embedding rows alone
     # (the backbone frozen, the rows' per-step sizes 0..rows_steps-1), then the inner_steps on the backbone with the
