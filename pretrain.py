@@ -75,7 +75,7 @@ from config.schema import PretrainConfig
 from contextlib import nullcontext, suppress
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from models.losses import IGNORE_LABEL_ID
-from models.losses.loss_heads import RowWeightMixin
+from models.losses.loss_heads import RowWeightMixin, stablemax_cross_entropy
 
 WANDB_RUN_ID: Optional[str] = None
 WANDB_RUN_DIR: Optional[str] = None
@@ -1012,26 +1012,43 @@ def _task_outer_backward(
 
 def _gauss_newton_product(model: nn.Module, overrides: Dict[str, torch.Tensor], leaves: Dict[str, torch.Tensor], names: List[str],
                           batch: Dict[str, torch.Tensor], n_rows: int):
-    """meta_sgd.imaml_curvature=gauss_newton: v -> G v, G = J^T H_z J the Gauss-Newton matrix of the per-row support loss (the
-    loss head's softmax CE, mean over each row's labelled tokens, summed over rows, / n_rows) in the tensors `names`, z the
-    logits, H_z softmax CE's Hessian in them (positive semi-definite, so CG converges). J v by the double-backward trick,
-    J^T u by a vector-Jacobian product. One-pass models (VARC): a multi-segment model's carry would need its trajectory."""
-    if hasattr(model.model.inner, "reset_carry"):
-        raise ValueError("meta_sgd.imaml_curvature=gauss_newton supports one-pass models (VARC); TRM / GRAM use hessian.")
+    """meta_sgd.imaml_curvature=gauss_newton: v -> G v, G = sum over the support rows' segments of J^T H_z J, in the tensors
+    `names`, z each segment's logits (the whole ACT trajectory, as _supervised_loss: rows run until they halt, the carry
+    detached between segments), H_z = w (diag(p) - p p^T) per labelled token, w the loss head's weight (1 / the row's
+    labelled tokens / n_rows), p the probabilities: positive semi-definite, so CG converges. With softmax CE (VARC) this is
+    the exact Gauss-Newton matrix of the LM loss; with stablemax CE (TRM, GRAM) p is stablemax's and H_z its softmax-form,
+    Fisher-style curvature. The loss head's other terms (q_halt, GRAM's KL / LPRM) are left out of G. J v by the double-
+    backward trick, J^T u by a vector-Jacobian product."""
     inner = {k[len("model."):]: v for k, v in {**overrides, **leaves}.items()}
-    logits = torch.func.functional_call(model.model, inner, args=(None, batch))[1]["logits"].float()
-    mask = batch["labels"] != IGNORE_LABEL_ID
-    weight = (mask / mask.sum(-1, keepdim=True).clamp_min(1) / n_rows).unsqueeze(-1)
-    prob = torch.softmax(logits.detach(), -1)
+    stablemax = getattr(model, "loss_fn", None) is stablemax_cross_entropy
     params = [leaves[n] for n in names]
-    dummy = torch.zeros_like(logits, requires_grad=True)
-    jt_dummy = torch.autograd.grad(logits, params, grad_outputs=dummy, create_graph=True, allow_unused=True)
+    segs, carry = [], None
+    while batch["inputs"].shape[0] > 0:
+        carry, out = torch.func.functional_call(model.model, inner, args=(), kwargs=dict(carry=carry, batch=batch))
+        logits = out["logits"].float()
+        labels = carry.current_data["labels"] if hasattr(carry, "current_data") else batch["labels"]
+        mask = labels != IGNORE_LABEL_ID
+        weight = (mask / mask.sum(-1, keepdim=True).clamp_min(1) / n_rows).unsqueeze(-1)
+        if stablemax:
+            s = torch.where(logits.detach() < 0, 1 / (1 - logits.detach()), logits.detach() + 1)
+            prob = s / s.sum(-1, keepdim=True)
+        else:
+            prob = torch.softmax(logits.detach(), -1)
+        segs.append((logits, weight, prob))
+        halted = getattr(carry, "halted", None)
+        if halted is None or bool(halted.all()):  # one-pass model, or every row halted
+            break
+        keep = ~halted
+        carry = apply_to_tensors(carry, lambda t: t[keep].detach().clone())
+        batch = {k: v[keep] for k, v in batch.items()}
+    dummies = [torch.zeros_like(z, requires_grad=True) for z, _, _ in segs]
+    jt_dummy = torch.autograd.grad([z for z, _, _ in segs], params, grad_outputs=dummies, create_graph=True, allow_unused=True)
     used = [i for i, g in enumerate(jt_dummy) if g is not None]
 
     def product(vs: List[torch.Tensor]) -> List[torch.Tensor]:
-        jv = torch.autograd.grad([jt_dummy[i] for i in used], dummy, grad_outputs=[vs[i] for i in used], retain_graph=True)[0]
-        hz = weight * (prob * jv - prob * (prob * jv).sum(-1, keepdim=True))
-        gv = torch.autograd.grad(logits, params, grad_outputs=hz, retain_graph=True, allow_unused=True)
+        jvs = torch.autograd.grad([jt_dummy[i] for i in used], dummies, grad_outputs=[vs[i] for i in used], retain_graph=True)
+        hz = [w * (p * jv - p * (p * jv).sum(-1, keepdim=True)) for (_, w, p), jv in zip(segs, jvs)]
+        gv = torch.autograd.grad([z for z, _, _ in segs], params, grad_outputs=hz, retain_graph=True, allow_unused=True)
         return [torch.zeros_like(p) if g is None else g for p, g in zip(params, gv)]
     return product
 
@@ -1086,6 +1103,9 @@ def _imaml_task_backward(
         names = [n for n in names if n != emb_name]
 
     loss_s0, grad0, carry = None, None, None
+    if cfg.segment_inner_steps:  # the stationarity's reference: the full-trajectory support gradient at theta (a segment step's is one segment's)
+        at_theta = {n: phi[n].clone().requires_grad_() for n in names}
+        grad0 = torch.sqrt(sum(g.pow(2).sum() for g in torch.autograd.grad(support_loss(at_theta), list(at_theta.values()), allow_unused=True) if g is not None))
     for _ in range(cfg.inner_steps):
         leaves = {n: phi[n].clone().requires_grad_() for n in names}
         with _step_kernel(model):
