@@ -1,0 +1,3 @@
+# Plain GRAM with the current gram.yaml (the paper's posterior-KL recipe as the repo has it); eval_prior_mean is read by
+# gram.py but defined in no yaml, so it is supplied here (mean guidance at eval = deterministic inference)
+gram_base  arch=gram +arch.eval_prior_mean=true

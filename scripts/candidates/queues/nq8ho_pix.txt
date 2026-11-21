@@ -1,0 +1,6 @@
+# pixeli99/GRAM-style controls on held-out N-Queens (REPORTS_GRAM_TTS.md section 15): plain CE + KL (no LPRM loss, no
+# prior-sample fraction, no bootstrap), sampled guidance at eval; then the same in fp32 (their comment: bf16 rounds the
+# zero-init Gaussian heads' gradients to zero); then the same with the raw carry (they norm only in the decode)
+gram_plain   arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0
+gram_fp32    arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.forward_dtype=float32
+gram_raw     arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.carry_norm=false

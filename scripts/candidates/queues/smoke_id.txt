@@ -1,0 +1,3 @@
+# 60-step smokes of the identity-candidate lines (run with CANDIDATES_RUNS pointing outside the results tree)
+smoke_k1  arch=treerm arch.num_candidates=1 arch.mcts_simulations=2 arch.eval_mcts_simulations=1 max_steps=60 eval_interval_steps=60 max_eval_steps=2 +wandb_mode=disabled
+smoke_k8  arch=treerm arch.num_candidates=8 arch.mcts_simulations=16 arch.eval_mcts_simulations=16 max_steps=60 eval_interval_steps=60 max_eval_steps=2 +wandb_mode=disabled

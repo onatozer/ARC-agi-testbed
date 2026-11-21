@@ -1,0 +1,2 @@
+# 150-step smoke of TreeGRAM with the prior target (the first forms went NaN by step 90); run with CANDIDATES_RUNS outside the results tree
+smoke_tgv  arch=treegram max_steps=150 eval_interval_steps=150 max_eval_steps=2 +wandb_mode=disabled

@@ -1,0 +1,4 @@
+# Held-out 8x8 N-Queens with 1-3 givens (the paper's benchmark shape): TRM, and GRAM with the pooled LPRM head, the
+# final-correctness target, prior sample fraction 0.25 and the draw bootstrap; sampled guidance at eval (the paper's N=1)
+trm_ho      arch=trm
+gram_ho_pf  arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean arch.lprm_target=final

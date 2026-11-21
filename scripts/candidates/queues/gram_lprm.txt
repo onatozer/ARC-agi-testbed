@@ -1,0 +1,6 @@
+# The three LPRM-head changes of REPORTS_GRAM_TTS.md section 9 on the unique 4x4 build, each on top of the section 8 run
+# (frac 0.25, bootstrap K=4): the pooled read-out, the bootstrap on every cycle, the paper's final-correctness target, all three
+gram_u_pool       arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean
+gram_u_pool_all   arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean arch.lprm_rollout_cycles=all
+gram_u_pool_fin   arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean arch.lprm_target=final
+gram_u_pool_all_fin arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4 arch.lprm_pool=mean arch.lprm_rollout_cycles=all arch.lprm_target=final

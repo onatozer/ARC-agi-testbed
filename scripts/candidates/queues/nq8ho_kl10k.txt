@@ -1,0 +1,2 @@
+# The official KL strength at 10k steps on held-out N-Queens (TRM 68.9 at 10k; at 3k the prior path had just taken off: 2.6%)
+gram_kl56   arch=gram +arch.eval_prior_mean=false arch.lprm_weight=0 arch.kl_strength=5.6

@@ -17,8 +17,17 @@ num_test: 1000
 grid_size: ${.board_size}
 num_aug: 8
 
-# Number of queens revealed in the input; null -> random per puzzle
+# Number of queens revealed in the input; null -> random per puzzle, uniform over [min_given_queens, max_given_queens]
+# (null -> 0 and N - 1; the GRAM paper's 8x8 benchmark uses 1 to 3). Generated test inputs are held out from the
+# training inputs.
 num_given_queens: null
+min_given_queens: null
+max_given_queens: null
+# The GRAM paper's construction instead of random draws: every solution x every subset of min..max_given_queens of its
+# queens is an input, every consistent solution a row, heldout_frac of the unique inputs the test split (num_train /
+# num_test are then ignored)
+enumerate_all: false
+heldout_frac: 0.15
 
 # Random seed for reproducibility (null -> nondeterministic)
 seed: null

@@ -1,0 +1,4 @@
+# The gram-posterior-fixes anchor on held-out 4x4 Sudoku (unaugmented, 5000 steps; that branch: TRM 15.4%, GRAM with
+# prior_sample_frac 0.25 52.9% single-sample prior valid). Sampled guidance at eval, as the paper's N=1.
+trm_anchor   arch=trm
+gram_anchor  arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25

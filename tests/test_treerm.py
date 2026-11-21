@@ -18,7 +18,7 @@ def _treerm_head(**overrides):
     cfg = _cfg(**{
         "kl_grad_prior": 0.8, "kl_strength": 0.07, "grad_cycles": 1, "posterior_nograd_cycles": False, "prior_sample_frac": 0.0, "prior_sample_per_puzzle": False, "num_candidates": 3, "mcts_simulations": 6,
         "mcts_c_puct": 1.25, "mcts_impl": "python", "search_compile": False, "candidate_loss": "none", "candidate_loss_eps": 0.05,
-        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, **overrides,
+        "value_bootstrap_weight": 0.0, "eval_mcts_simulations": None, "eval_pick": "argmax", "mcts_horizon": "step", "lprm_pool": "first", "lprm_target": "step", "lprm_prior_rollouts": 0, "posterior_y_pool": "position", "lprm_weight": 0.5, "carry_norm": True, "kl_reduction": "mean", "lprm_rollout_cycles": "grad", **overrides,
     })
     with torch.device("cuda"):
         model = LossHeadTreeRM(TreeRM(cfg), loss_type="stablemax_cross_entropy")
@@ -192,11 +192,15 @@ def test_flag_candidates_are_u_t_plus_orthonormal_directions():
     model, batch = _treerm_head()
     inner = model.model.inner
     directions = inner.candidate_generator.directions.float()
-    torch.testing.assert_close(directions @ directions.T, torch.eye(directions.shape[0], device=directions.device), atol=1e-5, rtol=0)
+    # Slot 0 is the identity; the other slots' directions are orthonormal
+    assert not directions[0].any()
+    flags = directions[1:]
+    torch.testing.assert_close(flags @ flags.T, torch.eye(flags.shape[0], device=flags.device), atol=1e-5, rtol=0)
     shape = (batch["inputs"].shape[0], inner.config.seq_len, inner.config.hidden_size)
     z_L, u_t = (torch.randn(shape, device="cuda", dtype=inner.forward_dtype) for _ in range(2))
     with torch.no_grad():
         cand = inner._candidates(z_L, u_t)
+    torch.testing.assert_close(cand[:, 0], u_t, atol=0, rtol=0)  # bit-exact: K=1 is plain TRM
     delta = (cand.float() - u_t.float().unsqueeze(1))  # [B, K, S, H]
     # At init the gate is 1, so each slot's offset is sqrt(H) * e_k at every token
     expected = (math.sqrt(inner.config.hidden_size) * directions)[None, :, None, :].expand_as(delta)
@@ -218,11 +222,61 @@ def test_treerm_eval_can_search_with_more_simulations():
     assert seen[0] == 6 and seen[-1] == 16
 
 
+@needs_cuda
+@pytest.mark.parametrize("pick", ["argmax", "sample"])
+def test_eval_pick_is_one_hot_and_argmax_takes_the_most_visited(pick):
+    model, batch = _treerm_head(eval_pick=pick)
+    inner = model.model.inner
+    seen = []
+    original = inner._search
+    inner._search = lambda *args, **kwargs: seen.append(original(*args, **kwargs)) or seen[-1]
+    picks = []
+    einsum = torch.einsum
+    torch.einsum = lambda eq, w, c: picks.append(w) or einsum(eq, w, c)
+    try:
+        model.eval()
+        with torch.inference_mode():
+            _, info = model.model(carry=model.initial_carry(batch), batch=batch)
+    finally:
+        torch.einsum = einsum
+    assert picks and all(((w == 0) | (w == 1)).all() and (w.sum(-1) == 1).all() for w in picks)
+    if pick == "argmax":
+        assert all((w.argmax(-1) == post.argmax(-1)).all() for w, post in zip(picks, seen))
+    for key in ("search/pick_ce_regret", "search/pick_is_best", "search/cand_ce_gap", "search/value_rank_corr"):
+        assert key in info and torch.isfinite(info[key]).all()
+    assert (info["search/pick_ce_regret"] >= 0).all() and (info["search/value_rank_corr"].abs() <= 1 + 1e-5).all()
+
+
+@needs_cuda
+@pytest.mark.parametrize("horizon", ["step", "full"])
+def test_full_horizon_search_rolls_through_the_steps_left(horizon):
+    """With mcts_horizon=full the eval search's allowed depth grows by H_cycles per supervision step left (the outer
+    model passes steps_left); training and the step horizon keep the depth within the step."""
+    model, batch = _treerm_head(mcts_horizon=horizon)
+    inner = model.model.inner
+    seen = []
+    original = inner._search
+    inner._search = lambda cand, prior, z_L, x, y, remaining: seen.append(remaining[0]) or original(cand, prior, z_L, x, y, remaining)
+    model.eval()
+    with torch.inference_mode():
+        carry = model.initial_carry(batch)
+        for _ in range(2):  # steps 0 and 1 of halt_max_steps 4: 3 and 2 steps left
+            carry, _ = model.model(carry=carry, batch=batch)
+    H = inner.config.H_cycles
+    extra = [3 * H, 3 * H, 2 * H, 2 * H] if horizon == "full" else [0, 0, 0, 0]  # H_cycles 2: two searches per step
+    assert seen == [H + extra[0], H - 1 + extra[1], H + extra[2], H - 1 + extra[3]]
+    model.train()
+    seen.clear()
+    model(return_keys=[], carry=model.initial_carry(batch), batch=batch)
+    assert seen == [1]  # training searches on the grad cycle only (the last one) and never rolls past the step
+
+
 # Candidate training (REPORTS_CANDIDATES.md): without a candidate loss only the picked candidate gets a gradient
 
 def _slot_grad_norms(model):
-    """Gradient norm of each slot's gate (the flag gate is a [K, 2H] linear: one row per candidate)."""
-    return model.model.inner.candidate_generator.gate.weight.grad.norm(dim=-1)
+    """Gradient norm of each flag slot's gate (the gate is a [K, 2H] linear: one row per candidate; row 0 is the
+    identity slot, whose flag is zero, so it never gets a gradient and is left out)."""
+    return model.model.inner.candidate_generator.gate.weight.grad.norm(dim=-1)[1:]
 
 
 def _train_backward(**overrides):
@@ -243,7 +297,7 @@ def _train_backward(**overrides):
 @needs_cuda
 def test_without_candidate_loss_only_the_picked_candidate_gets_a_gradient():
     model, metrics = _train_backward(batch_size=1)
-    assert (_slot_grad_norms(model) > 0).sum() == 1
+    assert (_slot_grad_norms(model) > 0).sum() <= 1  # 0 when the pick was the identity slot
     assert "search/cand_loss" not in metrics
 
 

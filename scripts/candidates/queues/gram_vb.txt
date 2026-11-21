@@ -1,0 +1,3 @@
+# GRAM with value bootstrapping of the LPRM head on prior draws (REPORTS_GRAM_TTS.md section 8): the section 5 recipe
+# plus lprm_prior_rollouts=4 (4 prior draws per grad cycle decoded without gradient, the head trained on their token accuracy)
+gram_u_vb  arch=gram +arch.eval_prior_mean=false arch.prior_sample_frac=0.25 arch.lprm_prior_rollouts=4

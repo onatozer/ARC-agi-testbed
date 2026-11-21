@@ -458,10 +458,12 @@ class LossHeadGRAM(MaxStepsLossHead):
         lm_loss = (self.loss_fn(outputs["logits"], labels, valid_mask=mask) / loss_divisor).sum()
         # Already beta-weighted: GRAM computes the KL in its forward, on the grad cycles' posterior samples
         kl_loss = outputs["kl_loss"]
-        # LPRM (paper App. A.2): regress the value head onto this step's exact-match accuracy, as in ad3002/gram
-        lprm_loss = F.mse_loss(outputs["lprm_value"], seq_is_correct.to(outputs["lprm_value"].dtype), reduction="sum")
+        # LPRM (paper App. A.4): regress the value head onto this step's exact-match accuracy, as in ad3002/gram, or
+        # onto the trajectory's final correctness when the model provides it (arch.lprm_target=final)
+        target = outputs["lprm_target"] if "lprm_target" in outputs else seq_is_correct
+        lprm_loss = F.mse_loss(outputs["lprm_value"], target.to(outputs["lprm_value"].dtype), reduction="sum")
 
-        total_loss = lm_loss + kl_loss + 0.5 * lprm_loss
+        total_loss = lm_loss + kl_loss + self.model.config.lprm_weight * lprm_loss
         return total_loss, {"lm_loss": lm_loss, "kl_loss": kl_loss, "lprm_loss": lprm_loss}
 
 
@@ -479,7 +481,12 @@ class LossHeadTreeRM(LossHeadGRAM):
 
 
 class MaxStepsInferenceLossHeadTreeRM(MaxStepsInferenceLossHead):
-    """MaxStepsInferenceLossHead plus TreeRM's search diagnostics (the eval search is valued by the LPRM head)."""
+    """MaxStepsInferenceLossHead plus TreeRM's search diagnostics (the eval search is valued by the LPRM head; the
+    pick diagnostics roll every candidate out and score it with this head's loss_fn)."""
+
+    def __init__(self, model: nn.Module, **kwargs: Any) -> None:
+        super().__init__(model, **kwargs)
+        self.model.inner.rollout_loss_fn = self.loss_fn
 
     def _build_eval_metrics(self, *, outputs: Dict[str, torch.Tensor], valid_metrics: torch.Tensor, **kwargs: Any) -> Dict[str, torch.Tensor]:
         metrics = super()._build_eval_metrics(outputs=outputs, valid_metrics=valid_metrics, **kwargs)

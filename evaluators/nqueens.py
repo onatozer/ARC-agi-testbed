@@ -124,6 +124,16 @@ class NQueens:
             self._local_stats['satisfied_constraints'] += num_satisfied
             self._local_stats['total_constraints'] += num_total
     
+    def valid_rows(self, inputs: torch.Tensor, preds: torch.Tensor) -> torch.Tensor:
+        """[B] bool: each prediction is a valid board that keeps every queen given in its input (the paper's accuracy),
+        for the N-copy vote / best-of-N of evaluators.eval_fn on puzzles with several solutions."""
+        out = []
+        for inp, pred in zip(inputs.cpu().numpy(), preds.cpu().numpy()):
+            board = np.clip(pred - 1, 0, 1).reshape(self.board_size, self.board_size)
+            given = inp.reshape(self.board_size, self.board_size) == 2
+            out.append(bool(self._check_solution_validity(board)[0]) and bool(np.all(board[given] == 1)))
+        return torch.tensor(out, dtype=torch.bool, device=preds.device)
+
     def _check_solution_validity(self, board: np.ndarray):
         """
         Check if a board represents a valid N-Queens solution

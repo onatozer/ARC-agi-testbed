@@ -1,0 +1,2 @@
+# The official objective at our size for 30k steps on the paper's enumerated held-out build (the crossover with budget)
+gram_off30k  arch=gram +arch.eval_prior_mean=false arch.kl_reduction=sum arch.kl_strength=0.07 arch.posterior_nograd_cycles=true arch.lprm_weight=0
