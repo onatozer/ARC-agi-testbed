@@ -1,199 +1,146 @@
-# Installing and running the code
-Before you can train or run the model, first you must build the dataset using the corresponding builder from the [dataset directory](#building-the-dataset). As an example, in order to build the ARC-AGI datasets, run:
-```bash
-# ARC-AGI-1 (build settings live in config/dataset/arc.yaml)
-python3 -m dataset.build_arc_dataset
+# Meta-training recursive reasoning models for test-time training on ARC
 
-# ARC-AGI-2
-python3 -m dataset.build_arc_dataset \
-  data_path=data/arc2concept-aug-1000 \
-  'subsets=[training2,evaluation2,concept]' \
-  test_set_name=evaluation2
+Code for the meta-training + test-time training (TTT) experiments on ARC-style visual reasoning tasks. It trains small
+recursive reasoning models (TRM, GRAM, HRM) and a ViT baseline (VARC), meta-trains them with Meta-SGD so they adapt
+quickly to a new task's demo pairs, and evaluates them on held-out tasks after per-task test-time training.
 
-# Mini-ARC (5x5 tasks from data/MiniARC; settings in config/dataset/miniarc.yaml; add max_grid_size=5 for a seq_len=25 variant)
-python3 -m dataset.build_miniarc_dataset
-```
-Like the sudoku builder, both ARC builders are configured through hydra: they read the same dataset yaml used for training, and any field can be overridden on the command line (e.g. `num_aug=100`). The dataset is written to `data_path`, so training picks it up without extra flags.
+Every run is a call to `pretrain.py` (training and meta-training), `evaluate_ttt.py` (test-time training + scoring) or
+`evaluate.py` (plain evaluation). All settings live in [Hydra](https://hydra.cc) configs under `config/` and any field can
+be overridden on the command line.
 
-Train on Mini-ARC with `python3 pretrain.py --config-name cfg_pretrain_miniarc`.
-
-Both ARC builders accept `scale_aug=true`, which randomly upscales train examples by an integer factor (each cell becomes an s×s block, shared by input and output, capped so the grid fits the canvas), following [ARC Is a Vision Problem!](https://arxiv.org/abs/2511.14761). The test split is never scaled.
-
-The entire codebase is designed so that a training run can be initiated through a simple call of pretrain.py from main. 
-```python
-python3 pretrain.py --config-name cfg_pretrain
-```
-All of the numerous hyperparameter, architectural configurations, or dataset changes are managed through config files stored in the config directory and managed through the hydra package. It is recommended that you control these values by altering and managing which config file you pass into pretain.py. More details on how the config directory is setup can be found [here](#config-directory). 
-
-
-The configs are nested so that you can specify configs for each section of the 
 ## Requirements
 
-Running the code requires the following python and Cuda versions. If any version error occurs during installation, specific_requirements.txt is also provided. 
-
-- Python 3.10 (or similar)
-- Cuda 12.6.0 (or similar)
-
-Run the following commands after setting up your python virtual environment:
+- Python 3.10, CUDA 12.6 (or similar)
+- One GPU is enough for the MiniARC experiments.
 
 ```bash
 pip install --upgrade pip wheel setuptools
-pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126 # install torch based on your cuda version
-pip install -r requirements.txt # install requirements
-wandb login YOUR-LOGIN # login if you want the logger to sync results to your Weights & Biases (https://wandb.ai/)
+pip install --pre --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu126  # match your CUDA version
+pip install -r requirements.txt   # specific_requirements.txt pins the exact versions we used
 ```
 
-## Building the dataset
-### Build Dataset args:
-| Argument | Default | What it does |
-|---|---|---|
-| `--grid-size` | `9` | Grid dimensions: 4 (4×4), 6 (6×6), or 9 (9×9). Controls puzzle size, seq_len, and vocab_size. |
-| `--output-dir` | `data/sudoku-extreme-full` | Where the built dataset is saved. Point data_paths here when training. |
-| `--source-repo` | `sapientinc/sudoku-extreme` | HuggingFace repo to pull from. Only used when grid-size=9. |
-| `--subsample-size` | `None` | For 9×9 only: randomly keep this many training puzzles instead of the full dataset. |
-| `--min-difficulty` | `None` | For 9×9 only: skip puzzles with a difficulty rating below this threshold. |
-| `--num-train` | `10000` | For 4×4 / 6×6: how many puzzles to generate for the train split. |
-| `--num-test` | `1000` | For 4×4 / 6×6: how many puzzles to generate for the test split. |
-| `--clue-ratio` | `None` | For 4×4 / 6×6: how many filled cells to leave in each puzzle. None defaults to ~30% of cells (e.g. ~4-5 clues for 4×4, ~10-11 for 6×6). Lower = harder. |
-| `--num-aug` | `0` | Number of extra shuffled copies to generate per training puzzle (digit permutation + row/band/column shuffling). Augments the training set without new solves. |
+Logging uses Weights & Biases. To run without an account, add `+wandb_mode=disabled` to `pretrain.py` and
+`wandb_mode=disabled` to `evaluate.py` / `evaluate_ttt.py`.
 
-### Secret Command for Building the datatset:
-```bash
-# For simple 4x4 sudoku problem
-python3 TRM/dataset/build_sudoku_dataset.py --output-dir data/4x4-sudoku  --num-train 100 --num-test 10 --num-aug 0
-```
+## Repository layout
 
-## Running the dataset
+| Path | Contents |
+|---|---|
+| `pretrain.py` | Training loop; also the Meta-SGD meta-training step (`meta_sgd_batch`, enabled by `meta_sgd.enabled=true`) and masked-reconstruction rows (`recon.*`) |
+| `evaluate_ttt.py` | Per-task test-time training from a checkpoint (ordinary Adam TTT, or Meta-SGD steps with the learned step sizes), then scoring |
+| `evaluate.py` | Evaluation of a checkpoint without TTT |
+| `config/` | Hydra configs: `cfg_pretrain*.yaml` (training entry points), `arch/` (one file per model), `dataset/` (build + load settings), `eval/` (TTT and eval recipes), `schema.py` (typed config, incl. `MetaSGDConfig` and `ReconConfig`) |
+| `models/recursive_reasoning/` | TRM / HRM (`merged_arch.py`), GRAM (`gram.py`), TreeRM, TRM-root |
+| `models/varc.py` | ViT baseline (VARC) |
+| `models/losses/` | Loss heads wrapping each model (ACT, GRAM, and the `*RowWeight` heads used with reconstruction rows) |
+| `dataset/` | Dataset builders (`build_miniarc_dataset.py`, `build_arc_dataset.py`, Sudoku, N-Queens, Maze) and the `PuzzleDataset` loader |
+| `evaluators/` | Task-specific scoring (ARC pass@k with augmentation voting, Sudoku, N-Queens) |
+| `data/MiniARC/` | The MiniARC tasks (5x5 grids) |
+| `kaggle/combined/` | ARC-AGI-1, ARC-AGI-2 and ConceptARC task files |
+| `scripts/` | Launchers for the ARC-AGI runs (`run_arc2.sh`, `run_arc1.sh` and their queues) |
+| `tests/` | Unit tests (`pytest tests/`) |
 
-### Magic command for running the dataset:
-```bash
-# Simple sudoku
-run_name="pretrain_mlp_t_sudoku"
-python TRM/pretrain.py \
-arch=trm \
-data_paths="[data/4x4-sudoku]" \
-evaluators="[]" \
-epochs=50000 eval_interval=5000 \
-lr=1e-4 puzzle_emb_lr=1e-4 weight_decay=1.0 puzzle_emb_weight_decay=1.0 \
-arch.mlp_t=True arch.pos_encodings=none \
-arch.L_layers=2 \
-arch.H_cycles=3 arch.L_cycles=6 \
-+run_name=${run_name} ema=True
-```
+## Main experiment: held-out MiniARC
 
-## Training the Model
+The pipeline has three stages: (1) pretraining with masked-input reconstruction, (2) Meta-SGD meta-training, (3)
+test-time training on each held-out task with the learned step sizes. Commands below are for TRM; see the end of the
+section for VARC and GRAM.
 
-
-# Notes on codebase
-
-Models is structured so that the base architecture is wrapped around by the loss head. This allows for us to experiment with different types of loss functions on the same architecture. The loss head also defines the metrics that are output for logging. General configs, ie for the dataset and training are defined in the config directory, whereas the model specific configs are defined in their respective files. Specific model configs can still be set my the yaml files in the config directory
-
-
-A PuzzleDataset can be initialized with 'shared_sampler_state', which is just a dictionary (created by instantiating a 'Manager' from the mp library and calling .dict() ), that contains the following entries:
-```python
-# From the PuzzleDataset class in puzzle_dataset.py
-def _build_state_snapshot(self) -> Dict[str, Any]:
-    return {
-        "split": self.split,
-        "_iters": self._iters,
-        "train_state": self._normalize_train_state(self._train_state),
-    }
-```
-This gives the necessary information for distributed training to be resumed from any state.
-
-## Directory structure
-ATM, the directory structure looks like this. 
-```bash
-├── DIS
-├── assets
-├── config # Hydra configs for any possible setting you would want to tweak in the model run
-│   ├── arch
-│   ├── dataset
-│   ├── eval
-│   └── train
-├── data
-│   ├── 4x4-sudoku
-│   ├── MiniARC
-│   ├── MiniARC_traces
-│   ├── arc1concept-aug-1000
-│   ├── nqueens
-│   └── sudoku-extreme-1k-aug-0
-├── dataset
-├── evaluators
-├── kaggle
-│   └── combined
-# This is where the actual model architecture itself gets defined. recursive_reasoning contains the recursive architectures, which are wrapped around by the various loss heads defined in losses, and outside the directory are the other miscellaneous stuff used throughout, ie the layers
-├── models
-│   ├── losses
-│   └── recursive_reasoning
-├── outputs
-│   └── 2026-06-21
-├── queens
-├── runs
-├── scripts
-├── train
-├── utils
-├── venv
-│   ├── bin
-│   ├── lib
-│   └── share
-├── visualization
-└── wandb
-    ├── latest-run -> run-20260617_134706-cpaz0iss
-    └── run-20260617_134706-cpaz0iss
-├── pretrain.py
-├── evaluate.py
-```
-## Config Directory
-
-
-
-
-
-## Scripts Directory
-Basically just wrappers that make it more convinient to train, eval and setup the dataset/model weights of the model. 
-
-Basic usage for 'train.sh' is:
-```bash
-train.sh <pretrain_cfg> any_additional_cfg_params=1
-```
-The train.sh is written so that pretrain cfg can be passed in as the exact path, or just the config file name itself, and the script will still work. If you want to alter any of the config arguments, you can simply pass them in through the terminal, and hydra manages them so that they properly override the cfg value. You can also specify the torchrun kwargs, such as:
+### 0. Build the dataset
 
 ```bash
-train.sh <pretrain_cfg> --standalone # Use to tell Pytorch that you're running the code on single device 
---nproc-per-node=1 # Use to tell pytorch how many GPUs you're using per device  
+python -m dataset.build_miniarc_dataset grid_size=5 num_aug=31 heldout_tasks=30 data_path=data/miniarc5-aug-31-ho30
 ```
 
-Similar design process goes into the usage of eval.sh. evaluate.py is a hydra script (config/cfg_eval.yaml); pick the eval config with `eval=<name>` (a file in config/eval, depth_breadth by default) and override any field the same way
-```bash
-scripts/eval.sh <checkpoint-path> [eval=<eval_cfg>] [evaluate.py overrides...]
-``` 
-If the checkpoint was trained with W&B on, the eval metrics are also logged to that same run under `eval/<suffix>/...`, at the checkpoint's step (pass `wandb_mode=disabled` to skip). That run has to have ended (finished, crashed or killed): resuming it while training is still logging to it would clobber its history, so for a still-running run, and for checkpoints without a W&B run, the metrics are only saved to `<run_dir>/eval_preds/`.
+`heldout_tasks=30` keeps 30 tasks out of training entirely (only their test pairs are in the test split; their names are
+written to `heldout_tasks.json`). The training tasks' test pairs become `validation` rows, which Meta-SGD uses as query
+examples. `heldout_demos_in_train=true` gives the transductive variant where the held-out demos also join pretraining.
 
-evaluate_ttt.py does per-task test-time training before evaluating, for any architecture trained on an ARC-AGI build. It is a hydra script too (config/cfg_eval_ttt.yaml); pick the TTT recipe with `eval=<name>` (a file in config/eval, ttt_varc by default). Each eval task is turned into its own small dataset (the task plus `num_aux_tasks - 1` augmentations), trained on from the checkpoint with pretrain.py's training step (`train_overrides` sets PretrainConfig fields such as `lr`), and scored with the checkpoint's evaluators, which vote across the augmentations, `num_views` eval passes and `ttt_runs_per_task` runs
+### 1. Pretraining with reconstruction rows
+
 ```bash
-python evaluate_ttt.py checkpoint=<checkpoint-path> [eval=<ttt_cfg>] [epochs=50 train_overrides.lr=1e-4 ...]
-torchrun --nproc_per_node=<gpus> evaluate_ttt.py checkpoint=<checkpoint-path>  # tasks are split across GPUs
+DATA=$PWD/data/miniarc5-aug-31-ho30
+TRM="dataset.grid_size=5 arch.halt_max_steps=8 arch.L_cycles=4 arch.num_heads=4 arch.activation_function=conv_swiglu arch.puzzle_emb_len=1"
+HEAD=arch.loss.name=losses.loss_heads@ACTLossHeadRowWeight
+
+python pretrain.py --config-name cfg_pretrain_miniarc dataset.data_path=$DATA $TRM $HEAD \
+  recon.copies=5 global_batch_size=128 max_steps=4000 +run_name=trm_pretrain
 ```
-Results go to `<run_dir>/eval_preds/step_<N>_<suffix>/` (one file per task, so an interrupted run resumes) and, like evaluate.py, to the checkpoint's W&B run under `eval/<suffix>/...`.
 
-downlaod_arifacts.sh downloads the model & dataset paths from hugging-face, containing the following args:
-| Flag                  | Effect                                            |
-| --------------------- | ------------------------------------------------- |
-| `--with-ckpts`        | Download checkpoints **in addition to** data      |
-| `--ckpts-only`        | Download **only** checkpoints                     |
-| `--skip-data`         | Skip data download                                |
-| `--ckpt-pattern GLOB` | Regex that allows you to specify which checkpoints to accept |
-| `--data-repo REPO`    | Override HF dataset repo                          |
-| `--ckpt-repo REPO`    | Override HF model repo                            |
-| `--cache-dir DIR`     | Override cache location                           |
-| `--data-dir DIR`      | Override data destination                         |
-| `--ckpt-dir DIR`      | Override checkpoint destination                   |
+`recon.copies=5` adds 5 masked copies of every training input (`recon.fraction`, 24% of its color cells, set to a new
+mask token; labelled with the full input, weighted 1/5) on one shared puzzle-embedding row. Checkpoints are written under the run's output directory
+(`.../checkpoints/*.pth`).
 
+### 2. Meta-SGD meta-training
 
-## Things to clean up:
-Not all of the files in the utils directory are being used atm. Train directory, I'm pretty sure doesn't need to be used at all, some of the scripts are likely no longer relevant, maybe we want to move the ARC and mini-ARC datasets into the same directory. 
+```bash
+python pretrain.py --config-name cfg_pretrain_miniarc dataset.data_path=$DATA $TRM $HEAD \
+  +load_checkpoint=<stage-1 checkpoint> +load_weights_only=true \
+  global_batch_size=256 lr=1e-4 lr_warmup_steps=50 max_steps=500 ema=false \
+  recon.copies=1 meta_sgd.enabled=true meta_sgd.segment_inner_steps=true +run_name=trm_meta
+```
 
-Losses directory can likely just be consolidated into a single file, don't clearly see a reason atm for why it should be structured the way it is rn. I also think that we can streamline the model-running process even further by putting some type of catch in pretrain.py that builds the dataset according to the hydra config rather rather than forcing the user to have to manually call the build_dataset function and track what they named it to. 
+Each task in a batch (16 augmented copies, `meta_sgd.copies_per_group`) is one episode: its puzzle-embedding row starts
+from the table mean, it takes `meta_sgd.inner_steps` RMS-normalised inner steps on its demos (plus one masked copy of each
+demo input) with a learned step size per tensor and per step, and the query loss on its validation pair updates the
+weights and step sizes (first order). Optionally, `meta_sgd.recon_steps=K` in a second meta-training run from this
+checkpoint learns the sizes of K reconstruction steps (used at test time in place of the fixed 0.01x phase below). Defaults of `MetaSGDConfig` in `config/schema.py` are the values we used.
+`segment_inner_steps=true` is for the multi-segment models (TRM, GRAM): one supervision segment per inner step.
 
-Resuming from a checkpoint (`+load_checkpoint=...`) crashes on newer wandb versions (seen on 0.30.0): `pretrain.py` sets `wandb.run._step = train_state.step` so the logged step continues from the checkpoint, and newer wandb raises `Exception: Attribute _step is not supported on Run object.` Fresh runs are unaffected since the line only runs when the step is > 0. Workaround until this is fixed: `pip install wandb==0.27.2` (the version pinned in specific_requirements.txt).
+### 3. Test-time training on the held-out tasks
+
+```bash
+python evaluate_ttt.py checkpoint=<stage-2 checkpoint> eval=ttt_mini \
+  task_ids_file=data/miniarc5-aug-31-ho30/heldout_tasks.json meta_sgd_steps=1000 recon_steps=20
+```
+
+`meta_sgd_steps=1000` takes 1000 TTT steps with the learned step sizes stretched over the loop (step size `k` of `K` is
+used for steps `k*1000/K` to `(k+1)*1000/K`), followed by 20 reconstruction steps on the masked demo and test inputs at
+0.01x those step sizes (`recon_alpha_scale`). Results (pass@k, per-task predictions) are written to
+`<run_dir>/eval_preds/step_<N>_<suffix>/`, one file per task, so an interrupted run resumes.
+
+### Baselines
+
+- **Pretraining only**: stage 1 without `recon.*`/`$HEAD`, scored with `evaluate.py checkpoint=<ckpt>`.
+- **Ordinary fine-tuning TTT** (Adam, as in VARC): `evaluate_ttt.py checkpoint=<stage-1 checkpoint> eval=ttt_mini task_ids_file=...`
+  (`meta_sgd_steps=0`, the default). `eval=ttt_varc` is the full VARC recipe (51 augmentations, 100 epochs, 2 runs, 10 views).
+
+### Other architectures
+
+- **VARC (ViT)**: `--config-name cfg_pretrain_miniarc_varc` with
+  `dataset.grid_size=5 arch.image_size=10 arch.hidden_size=128 arch.num_layers=4 arch.mlp_dim=256 arch.num_heads=8`,
+  the same `$HEAD`, and in stage 2 `meta_sgd.inner_steps=5 meta_sgd.msl_anneal_fraction=0.3` instead of
+  `meta_sgd.segment_inner_steps=true`.
+- **GRAM**: `--config-name cfg_pretrain_miniarc arch=gram` with
+  `arch.loss.name=losses.loss_heads@LossHeadGRAMRowWeight` and `meta_sgd.segment_inner_steps=true`.
+
+## Other datasets
+
+```bash
+python -m dataset.build_arc_dataset                                   # ARC-AGI-1 (settings in config/dataset/arc.yaml)
+python -m dataset.build_arc_dataset data_path=data/arc2concept-aug-1000 \
+  'subsets=[training2,evaluation2,concept]' test_set_name=evaluation2  # ARC-AGI-2
+python -m dataset.build_miniarc_dataset                               # MiniARC, all tasks (config/dataset/miniarc.yaml)
+python dataset/build_sudoku_dataset.py grid_size=4 num_train=5000 output_dir=data/sudoku-4x4  # Sudoku (config/dataset/sudoku.yaml)
+```
+
+`heldout_test_set=true` keeps the test set's demos out of training (the held-out protocol of the MiniARC runs).
+`scripts/run_arc2.sh` runs the full recipe on ARC-AGI-2 from the official ARC-AGI-1 TRM checkpoint (build, pretraining,
+meta-training and test time; see the header of the script).
+
+The ARC builders read the same dataset yaml used for training, so `python pretrain.py --config-name cfg_pretrain_arc`
+(or `cfg_pretrain_miniarc`) finds the built data without extra flags. `scale_aug=true` randomly upscales training
+examples by an integer factor, following VARC; the test split is never scaled.
+
+## Notes
+
+- **Config structure.** `cfg_pretrain.yaml` holds the training settings and picks one file from `config/arch/` and one from
+  `config/dataset/`; the `cfg_pretrain_<dataset>.yaml` files override these per dataset. Switch model with `arch=<name>`
+  and override nested fields with dots (`arch.hidden_size=256`). Fields not declared in the yaml need a leading `+`.
+- **Model / loss head.** Each model is wrapped by a loss head (`arch.loss.name`), which computes the loss and the logged
+  metrics, so the same architecture can be trained with different objectives.
+- **Multi-GPU.** `torchrun --nproc_per_node=<gpus> pretrain.py ...`; `evaluate_ttt.py` splits tasks across GPUs the same way.
+- **Resuming.** `+load_checkpoint=<path>` resumes a run; add `+load_weights_only=true` to start a new run from its weights.
+  With wandb >= 0.30, resuming a run crashes on `wandb.run._step`; use `wandb==0.27.2` (pinned in `specific_requirements.txt`).
+- **Tests.** `pytest tests/`. The Meta-SGD, reconstruction and held-out-build tests are `tests/test_meta_sgd.py`,
+  `tests/test_build_miniarc_heldout.py` and `tests/test_evaluate_ttt.py`.
