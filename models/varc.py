@@ -225,8 +225,9 @@ class VARC(nn.Module):
             config.board_width = config.board_width or config.seq_len // config.board_height
         if config.board_height * config.board_width != config.seq_len:
             raise ValueError(f"VARC needs board_height * board_width == seq_len, got {config.board_height}x{config.board_width} vs {config.seq_len}.")
-        if config.vocab_size != ARC_VOCAB_SIZE:
-            raise ValueError(f"VARC expects ARC token ids (PAD, EOS, 10 colors; vocab_size {ARC_VOCAB_SIZE}), got vocab_size {config.vocab_size}. Border-token datasets are not supported.")
+        # + 1: config.recon's mask token (id 12), which the canvas keeps as an occupied cell like a color
+        if config.vocab_size not in (ARC_VOCAB_SIZE, ARC_VOCAB_SIZE + 1):
+            raise ValueError(f"VARC expects ARC token ids (PAD, EOS, 10 colors; vocab_size {ARC_VOCAB_SIZE}, + 1 with config.recon's mask token), got vocab_size {config.vocab_size}. Border-token datasets are not supported.")
         if config.puzzle_emb_ndim not in (0, config.hidden_size):
             raise ValueError(f"VARC uses one task token: puzzle_emb_ndim must be 0 or hidden_size ({config.hidden_size}), got {config.puzzle_emb_ndim}.")
         if config.image_size % config.patch_size or max(config.board_height, config.board_width) > config.image_size:

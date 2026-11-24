@@ -27,6 +27,7 @@ class DataProcessConfig(BaseModel):
     border_tokens: bool = False # ViTARC border tokens + supervised 2D pad (arXiv 2410.06405); canvas becomes grid_size x (grid_size + 1)
     object_ids: bool = False # also save a per-cell object index of each input (ViTARC OPE, arXiv 2410.06405)
     test_aug: bool = True # False: the test split keeps only each puzzle's original test pairs; augmented copies are for training only
+    heldout_test_set: bool = False # True: the test set's tasks keep only their test pairs, their demos never reach training (Meta-SGD's held-out protocol)
     
 ARCMaxGridSize = 30
 ARCAugmentRetriesFactor = 5
@@ -276,7 +277,10 @@ def load_puzzles_arcagi(config: DataProcessConfig):
             if test_examples_dest[0] == "test":
                 test_puzzles[name] = puzzle
                 
-            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, {"train": train_examples_dest, "test": test_examples_dest}, test_aug=config.test_aug)
+            dest_mapping = {"train": train_examples_dest, "test": test_examples_dest}
+            if config.heldout_test_set and test_examples_dest[0] == "test":
+                del dest_mapping["train"]
+            convert_single_arc_puzzle(results, name, puzzle, config.num_aug, dest_mapping, test_aug=config.test_aug)
             total_puzzles += 1
 
     print (f"Total puzzles: {total_puzzles}")

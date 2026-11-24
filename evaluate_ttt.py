@@ -41,7 +41,7 @@ from evaluate import _apply_overrides, _attach_wandb_run, _dataset_path, _load_c
 from evaluators.eval_config import TTTConfig
 from evaluators.eval_fn import evaluate
 from pretrain import (
-    _adapt, _adapt_segment, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, _with_recon_rows,
+    _adapt, _adapt_segment, _episode_overrides, _meta_sgd_targets, _puzzle_emb_name, _recon_steps, _with_recon_rows,
     create_dataloader, create_evaluators, init_train_state, train_batch,
 )
 from utils.checkpoint import load_model_state_dict
@@ -127,27 +127,45 @@ def meta_sgd_adapt(
         else:
             loss, theta = _adapt(model, named, overrides, batch, alpha_step)
         losses.append(float(loss))
-
-        with torch.no_grad():
-            for name, p in targets:
-                if name == emb_name:
-                    model.get_buffer(emb_name)[ids] = theta[name]
-                elif name in theta:
-                    p.copy_(theta[name])
+        _write_back(model, targets, emb_name, ids, theta)
     return losses
+
+
+@torch.no_grad()
+def _write_back(model: torch.nn.Module, targets: List[Any], emb_name: Optional[str], ids: Optional[torch.Tensor], theta: Dict[str, torch.Tensor]) -> None:
+    """The adapted tensors into the model: the weights in place, the episode's rows into the embedding table."""
+    for name, p in targets:
+        if name == emb_name:
+            model.get_buffer(emb_name)[ids] = theta[name]
+        elif name in theta:
+            p.copy_(theta[name])
+
+
+def learned_recon_adapt(model: torch.nn.Module, test: Dict[str, torch.Tensor], steps: int, segments: int, recon: Any, shared_id: int) -> None:
+    """A stage-2 checkpoint's reconstruction phase (meta_sgd.recon_steps), as meta-trained: `steps` steps on freshly masked
+    copies of the test inputs (labels: the inputs), the weights and rows, at the learned sizes (stretched over more steps)."""
+    targets, emb_name = _meta_sgd_targets(model), _puzzle_emb_name(model)
+    trained = model.meta_sgd.recon_log_scale.shape[0]
+    shared = torch.tensor([shared_id], device=test["inputs"].device)
+    for k in range(steps):
+        named, overrides, batch, ids = _episode_overrides(model, targets, emb_name, test, extra_ids=shared)
+        local = int(torch.searchsorted(ids, shared))
+        theta = _recon_steps(model, named, overrides, batch, recon, local, segments, 1, step0=k * trained // steps)
+        _write_back(model, targets, emb_name, ids, theta)
 
 
 def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module, train_metadata: Any, eval_metadata: Any) -> None:
     """Test-time Meta-SGD on one task, as meta-trained (config/schema.py MetaSGDConfig):
       1. meta_sgd_steps steps on the demos (with config.recon, plus masked copies of their inputs);
       2. with config.recon, recon_steps reconstruction steps on masked copies of the demo and test inputs (labels: the
-         inputs, never the test outputs), the weights only, at the step sizes of 1. times recon_alpha_scale."""
+         inputs, never the test outputs), the weights only, at the step sizes of 1. times recon_alpha_scale; a stage-2
+         checkpoint (meta_sgd.recon_steps) instead takes its learned steps, as meta-trained (learned_recon_adapt)."""
     if getattr(model, "meta_sgd", None) is None:
         raise ValueError("meta_sgd_steps needs a checkpoint meta-trained with meta_sgd.enabled.")
 
     device = next(model.parameters()).device
     segment_steps, segments = config.meta_sgd.segment_inner_steps, config.arch.halt_max_steps
-    recon_args = (config.recon, train_metadata.pad_id, train_metadata.num_puzzle_identifiers)
+    recon_args = (config.recon, train_metadata.vocab_size, train_metadata.num_puzzle_identifiers)
 
     demos = _split_rows(config, "train", train_metadata, device)
     support = _with_recon_rows(demos, *recon_args) if config.recon.copies else demos
@@ -158,6 +176,11 @@ def meta_sgd_ttt(cfg: TTTConfig, config: PretrainConfig, model: torch.nn.Module,
         return
 
     test = _split_rows(config, "test", eval_metadata, device)
+    if model.meta_sgd.recon_log_scale is not None:
+        learned_recon_adapt(model, test, cfg.recon_steps, segments, config.recon, train_metadata.num_puzzle_identifiers)
+        print_info(f"TTT: {cfg.recon_steps} learned reconstruction steps on {test['inputs'].shape[0]} masked test inputs")
+        return
+
     rows = {k: torch.cat([demos[k], test[k]]) for k in ("inputs", "puzzle_identifiers")}
     rows["labels"] = rows["inputs"]
     n = rows["inputs"].shape[0]
